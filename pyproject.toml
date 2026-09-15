@@ -148,6 +148,18 @@ markers = [
     "accelerator: requires accelerator hardware",
 ]
 
+[tool.ruff]
+extend-exclude = [".claude/skills"]
+
+[tool.ruff.lint]
+select = [
+    "E722",  # Bare except clauses
+    "F403",  # Star imports
+    "F821",  # Undefined names
+    "F823",  # Local variables referenced before assignment
+    "F841",  # Unused local variables
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = [

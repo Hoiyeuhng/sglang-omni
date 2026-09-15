@@ -33,9 +33,12 @@ repos:
       - id: isort
         exclude: ^\.claude/skills/
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.10
+    rev: v0.16.7
     hooks:
-      - id: ruff
+      - id: ruff-check
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff check unused imports
         args: [--select=F401, --fixable=F401]
         files: ^(benchmarks/|docs/|examples/)
         exclude: \.ipynb$

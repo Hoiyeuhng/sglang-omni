@@ -716,7 +716,8 @@ class DecoderBlock(nn.Module):
     ):
         super().__init__()
         conv_trans_class = CausalWNConvTranspose1d if causal else WNConvTranspose1d
-        transformer_module = (
+        # Preserve initialization side effects of the unused upstream module.
+        _transformer_module = (
             nn.Identity()
             if n_t_layer == 0
             else (
