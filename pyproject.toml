@@ -152,24 +152,28 @@ markers = [
 extend-exclude = [".claude/skills"]
 
 [tool.ruff.lint]
-# Keep this list explicit: enforce objective checks without opting into
-# additional style rules when Ruff's defaults change. Black and isort handle
-# formatting; pre-commit separately checks F401 in benchmarks, docs, and examples.
+# Enable only the checks listed below. Black and isort handle formatting.
+# The pre-commit config also checks unused imports (F401) in benchmarks/docs/examples.
 select = [
-    # Require an explicit exception type. A bare except also catches
-    # KeyboardInterrupt and SystemExit, which can prevent clean shutdown.
+    # No bare `except:`. Name the exceptions you intend to catch,
+    # e.g. `except ValueError:`, so Ctrl+C and process exits are not swallowed.
     "E722",
-    # Reject star imports so names have explicit origins and undefined-name
-    # checks can reliably identify missing imports.
+
+    # No `from module import *`. Import each name explicitly so readers
+    # and tools can tell where it comes from.
     "F403",
-    # Catch references to undefined names, including missing annotation imports.
-    # Use TYPE_CHECKING imports when a dependency is needed only for typing.
+
+    # Every name must be defined or imported before use.
+    # This also catches missing imports in type hints, such as `Any`.
     "F821",
-    # Catch local variables read before assignment, which raise UnboundLocalError
-    # when the affected path executes.
+
+    # Do not read a local variable before assigning it.
+    # Example: `print(count)` followed by `count = 1` in the same function.
     "F823",
-    # Flag unused local assignments that may indicate leftover or incomplete code.
-    # Preserve calls with side effects; prefix intentionally unused bindings with _.
+
+    # Remove unused local variables. If `result = save()` never uses `result`,
+    # keep `save()` if it still needs to run. Use `_result` if keeping the
+    # unused value is intentional.
     "F841",
 ]
 
