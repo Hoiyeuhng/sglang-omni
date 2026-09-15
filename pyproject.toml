@@ -152,12 +152,25 @@ markers = [
 extend-exclude = [".claude/skills"]
 
 [tool.ruff.lint]
+# Keep this list explicit: enforce objective checks without opting into
+# additional style rules when Ruff's defaults change. Black and isort handle
+# formatting; pre-commit separately checks F401 in benchmarks, docs, and examples.
 select = [
-    "E722",  # Bare except clauses
-    "F403",  # Star imports
-    "F821",  # Undefined names
-    "F823",  # Local variables referenced before assignment
-    "F841",  # Unused local variables
+    # Require an explicit exception type. A bare except also catches
+    # KeyboardInterrupt and SystemExit, which can prevent clean shutdown.
+    "E722",
+    # Reject star imports so names have explicit origins and undefined-name
+    # checks can reliably identify missing imports.
+    "F403",
+    # Catch references to undefined names, including missing annotation imports.
+    # Use TYPE_CHECKING imports when a dependency is needed only for typing.
+    "F821",
+    # Catch local variables read before assignment, which raise UnboundLocalError
+    # when the affected path executes.
+    "F823",
+    # Flag unused local assignments that may indicate leftover or incomplete code.
+    # Preserve calls with side effects; prefix intentionally unused bindings with _.
+    "F841",
 ]
 
 [tool.setuptools.packages.find]
