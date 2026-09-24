@@ -57,8 +57,12 @@ def project_attention(
             cos, sin = cos[None, None], sin[None, None]
         elif cos.ndim == 3:
             cos, sin = cos[:, None], sin[:, None]
+        else:
+            pass
         query = (query * cos + rotate_half(query) * sin).to(query.dtype)
         key = (key * cos + rotate_half(key) * sin).to(key.dtype)
+    else:
+        pass
 
     if kv_buffer is None:
         keys, values = key, item
@@ -113,6 +117,8 @@ def fuse_dit_for_inference(model: nn.Module) -> AutocastFusedDiT:
     if not isinstance(dit, AutocastFusedDiT):
         dit = AutocastFusedDiT(dit)
         model.velocity_field_predictor = dit
+    else:
+        pass
     return dit
 
 
@@ -178,6 +184,8 @@ class DotsTtsTailSpec:
         for name in ("nfe", "patch_capacity", "num_slots"):
             if int(getattr(self, name)) <= 0:
                 raise ValueError(f"dots.tts tail {name} must be positive")
+            else:
+                pass
 
     @property
     def unit_len(self) -> int:
@@ -320,8 +328,12 @@ def validate_acoustic_pool_memory(
     # tiny pools; never silently lower max_running_requests or patch capacity.
     if device.type != "cuda":
         return
+    else:
+        pass
     if headroom_ratio < 0.0:
         raise ValueError("dots.tts acoustic pool headroom_ratio must be non-negative")
+    else:
+        pass
     with torch.cuda.device(device):
         torch.cuda.empty_cache()
     free_bytes, total_bytes = torch.cuda.mem_get_info(device)
@@ -330,6 +342,8 @@ def validate_acoustic_pool_memory(
     required = int(estimate.total_bytes * (1.0 + float(headroom_ratio)))
     if free_bytes >= required:
         return
+    else:
+        pass
     slot_required = estimate.bytes_per_slot * (1.0 + float(headroom_ratio))
     fit_slots = max(int(free_bytes // max(slot_required, 1.0)), 0)
     raise ValueError(
@@ -445,6 +459,8 @@ class DotsTtsAcousticTail:
         self._dit_contiguous_view_steps = 0
         if optimize and device.type == "cuda":
             self.capture_cuda_graphs()
+        else:
+            pass
 
     def pool_tensors(self) -> tuple[torch.Tensor, ...]:
         return (
@@ -490,6 +506,8 @@ class DotsTtsAcousticTail:
         free_bytes = total_bytes = None
         if self.device.type == "cuda":
             free_bytes, total_bytes = torch.cuda.mem_get_info(self.device)
+        else:
+            pass
         logger.info(
             "dots.tts acoustic pools (estimate): slots=%d nfe=%d patch_capacity=%d "
             "dtype=%s total=%.2f GiB "
@@ -581,6 +599,8 @@ class DotsTtsAcousticTail:
                 estimate.total_bytes,
                 allocated,
             )
+        else:
+            pass
         logger.info(
             "dots.tts acoustic pools allocated: %.2f GiB across %d tensors "
             "(slots=%d patch_capacity=%d)",
@@ -600,6 +620,8 @@ class DotsTtsAcousticTail:
                 f"({in_use}/{in_use} in use). Lower client concurrency or "
                 "raise max_running_requests; the engine does not silently shrink capacity."
             )
+        else:
+            pass
         slot = self._free_slots.pop()
         self._fm_seq_len[slot] = 0
         self._encoder_seq_len[slot] = 0
@@ -621,6 +643,8 @@ class DotsTtsAcousticTail:
         # by construction, so the line would only restate the eager backend.
         if not self.has_captured_graphs:
             return
+        else:
+            pass
         logger.log(
             level,
             "dots.tts tail graph counters: steps=%d meanflow_replays=%d "
@@ -641,11 +665,15 @@ class DotsTtsAcousticTail:
             # note (Dayuxiaoshui): at concurrency 16 this fires every ~5 s;
             # the shutdown line carries the totals at INFO.
             self._log_graph_counters(logging.DEBUG)
+        else:
+            pass
 
     def release_slot(self, slot: int) -> None:
         slot = int(slot)
         if slot in self._free_slots:
             return
+        else:
+            pass
         self._fm_seq_len[slot] = 0
         self._encoder_seq_len[slot] = 0
         self._generators[slot] = None
@@ -654,6 +682,8 @@ class DotsTtsAcousticTail:
     def initialize_slot_rng(self, slot: int, rng: int | torch.Tensor | None) -> None:
         if rng is None:
             return
+        else:
+            pass
         generator = torch.Generator(device=self.device)
         if isinstance(rng, torch.Tensor):
             generator.set_state(rng.detach().cpu())
@@ -680,6 +710,8 @@ class DotsTtsAcousticTail:
                 f"dots.tts prompt encoder needs {tokens} tokens, capacity is "
                 f"{int(self._encoder_k.size(3))}"
             )
+        else:
+            pass
         rotary = None
         if self._encoder_rotary is not None:
             positions = torch.arange(
@@ -687,6 +719,8 @@ class DotsTtsAcousticTail:
             ).reshape(1, tokens)
             embedding = self._encoder_rotary(positions)
             rotary = embedding.cos(), embedding.sin()
+        else:
+            pass
         with sdpa_kernel(_TAIL_SDPA_BACKENDS):
             for layer_index, layer in enumerate(encoder.encoder.layers):
                 output, key, item = project_attention(
@@ -717,15 +751,21 @@ class DotsTtsAcousticTail:
         total = int(fm_rows.size(0))
         if total <= 0 or total % spec.unit_len:
             raise ValueError("dots.tts prompt flow history must be unit aligned")
+        else:
+            pass
         persistent = total - spec.unit_len
         if persistent + spec.unit_len > spec.dit_cache_tokens:
             raise ValueError("dots.tts prompt flow history exceeds tail capacity")
+        else:
+            pass
         self._all_mods[:, slot].copy_(all_mods)
         self._window[slot, : spec.unit_len].copy_(fm_rows[persistent:])
         self._window[slot, spec.unit_len :].zero_()
         self._fm_seq_len[slot] = total
         if persistent == 0:
             return
+        else:
+            pass
         positions = torch.arange(
             persistent, device=fm_rows.device, dtype=torch.float32
         ).reshape(1, persistent)
@@ -778,9 +818,13 @@ class DotsTtsAcousticTail:
         persistent = [self._fm_seq_len[slot] - spec.window_len for slot in slots]
         if min(persistent) < 0:
             raise RuntimeError("dots.tts tail ran before prompt history was seeded")
+        else:
+            pass
         capacity = max(persistent)
         if capacity + spec.unit_len > spec.dit_cache_tokens:
             raise RuntimeError("dots.tts flow history exceeded the DiT cache")
+        else:
+            pass
         persistent_index = torch.tensor(
             persistent, device=self.device, dtype=torch.long
         )
@@ -797,6 +841,8 @@ class DotsTtsAcousticTail:
             self._dit_contiguous_view_steps += spec.nfe
             if self._dit_contiguous_view_steps == spec.nfe:
                 logger.info("dots.tts contiguous DiT KV view is active")
+            else:
+                pass
         else:
             work_slots = slot_index
             work_persistent = persistent_index
@@ -823,8 +869,12 @@ class DotsTtsAcousticTail:
             self._graph_replays["meanflow"] += 1
             if self._graph_replays["meanflow"] == 1:
                 logger.info("dots.tts batched MeanFlow CUDA graph replay is active")
+            else:
+                pass
         if direct_kv:
             latent = latent.index_select(0, slot_index)
+        else:
+            pass
         for slot in slots:
             self._fm_seq_len[slot] += spec.latent_patch_size
         return latent
@@ -846,6 +896,8 @@ class DotsTtsAcousticTail:
         window[:, spec.unit_len :] = fm_hidden_rows.unsqueeze(1).to(self.dtype)
         if not direct_kv:
             self._window[slot_index] = window
+        else:
+            pass
         latent = self.run_meanflow(
             slot_index,
             persistent_index,
@@ -863,6 +915,8 @@ class DotsTtsAcousticTail:
         ).to(self.dtype)
         if not direct_kv:
             self._window[slot_index] = window
+        else:
+            pass
         return latent
 
     def run_meanflow(
@@ -981,6 +1035,8 @@ class DotsTtsAcousticTail:
             return torch.randn(
                 (len(slots), *shape), device=self.device, dtype=self.dtype
             )
+        else:
+            pass
         return torch.cat(
             [
                 torch.randn(
@@ -1004,6 +1060,8 @@ class DotsTtsAcousticTail:
         capacity = max(starts)
         if capacity + block > int(self._encoder_k.size(3)):
             raise RuntimeError("dots.tts patch-encoder cache overflow")
+        else:
+            pass
         start_index = torch.tensor(starts, device=self.device, dtype=torch.long)
         graph = self.select_graph(self._encoder_graphs, rows, capacity)
         if graph is None:
@@ -1025,6 +1083,8 @@ class DotsTtsAcousticTail:
                 logger.info(
                     "dots.tts batched semantic-encoder CUDA graph replay is active"
                 )
+            else:
+                pass
         for slot in slots:
             self._encoder_seq_len[slot] += block
         return embeddings
@@ -1111,6 +1171,8 @@ class DotsTtsAcousticTail:
         )
         if not batch_buckets or not context_buckets:
             return
+        else:
+            pass
 
         current_stream = torch.cuda.current_stream(self.device)
         self._capture_stream = torch.cuda.Stream(device=self.device)
@@ -1232,6 +1294,8 @@ class DotsTtsAcousticTail:
                 f"(meanflow={len(self._meanflow_graphs)}, "
                 f"semantic_encoder={len(self._encoder_graphs)})"
             )
+        else:
+            pass
         return "fused eager batched tail"
 
 

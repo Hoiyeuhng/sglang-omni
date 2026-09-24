@@ -58,20 +58,32 @@ def validate_voxtral_speech_params(
     for field in explicit_fields:
         if field != "max_new_tokens":
             unsupported.add(field)
+        else:
+            pass
 
     if params.get("seed") is not None:
         unsupported.add("seed")
+    else:
+        pass
     if params.get("stage_sampling"):
         unsupported.add("stage_sampling")
+    else:
+        pass
     if params.get("stage_params"):
         unsupported.add("stage_params")
+    else:
+        pass
 
     for field in ("task_type", "language", "instructions", "ref_audio", "ref_text"):
         if tts_params.get(field) not in (None, ""):
             unsupported.add(field)
+        else:
+            pass
 
     if isinstance(inputs, dict) and inputs.get("references"):
         unsupported.add("references")
+    else:
+        pass
 
     if unsupported:
         fields = ", ".join(sorted(unsupported))
@@ -79,13 +91,19 @@ def validate_voxtral_speech_params(
             "Voxtral TTS does not support these /v1/audio/speech fields: "
             f"{fields}. Supported model-specific fields are voice and max_new_tokens."
         )
+    else:
+        pass
 
 
 def ensure_non_empty_audio_codes(audio_codes: Any) -> None:
     if audio_codes is None:
         raise ValueError("Voxtral TTS generated no audio codes")
+    else:
+        pass
     if isinstance(audio_codes, torch.Tensor) and audio_codes.numel() == 0:
         raise ValueError("Voxtral TTS generated no audio codes")
+    else:
+        pass
 
 
 # ---- Preprocessing ----
@@ -107,6 +125,8 @@ def create_preprocessing_executor(model_path: str) -> SimpleScheduler:
         tts_params = metadata.get("tts_params", {})
         if not isinstance(tts_params, dict):
             tts_params = {}
+        else:
+            pass
         validate_voxtral_speech_params(
             inputs=inputs,
             params=params,
@@ -123,6 +143,8 @@ def create_preprocessing_executor(model_path: str) -> SimpleScheduler:
         voice = tts_params.get("voice") or params.get("voice")
         if voice in (None, "", "default"):
             voice = "cheerful_female"
+        else:
+            pass
 
         encoded = tokenizer.encode_speech_request(
             SpeechRequest(input=text, voice=voice)
@@ -131,6 +153,8 @@ def create_preprocessing_executor(model_path: str) -> SimpleScheduler:
         max_new_tokens = params.get("max_new_tokens", 4096)
         if isinstance(max_new_tokens, dict):
             max_new_tokens = max_new_tokens.get("max_new_tokens", 4096)
+        else:
+            pass
 
         input_ids = list(encoded.tokens)
 
@@ -158,8 +182,12 @@ def enable_inductor_gemm_autotune() -> None:
         return
     if hasattr(inductor_config, "max_autotune_gemm"):
         inductor_config.max_autotune_gemm = True
+    else:
+        pass
     if hasattr(inductor_config, "max_autotune_gemm_backends"):
         inductor_config.max_autotune_gemm_backends = "TRITON,ATEN"
+    else:
+        pass
     logger.info(
         "Voxtral: enabled inductor per-shape GEMM autotuning (TRITON,ATEN); "
         "adds one-time startup autotune cost."
@@ -224,10 +252,14 @@ def load_voxtral_voice_embeddings(
     voice_dir = os.path.join(checkpoint_dir, "voice_embedding")
     if not os.path.isdir(voice_dir):
         return voice_embeddings
+    else:
+        pass
     map_location = "cpu" if current_platform.is_musa() else device
     for fname in sorted(os.listdir(voice_dir)):
         if not fname.endswith(".pt"):
             continue
+        else:
+            pass
         name = fname.removesuffix(".pt")
         emb = torch.load(
             os.path.join(voice_dir, fname),
@@ -262,6 +294,8 @@ def load_audio_tokenizer(checkpoint_dir: str, audio_config: dict, device: str):
     safetensors_files = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
     if not safetensors_files:
         raise RuntimeError(f"No .safetensors files found in {checkpoint_dir}")
+    else:
+        pass
 
     logger.info("Loading audio tokenizer weights...")
     t0 = time.perf_counter()
@@ -281,11 +315,15 @@ def load_audio_tokenizer(checkpoint_dir: str, audio_config: dict, device: str):
 
         if not is_audio_tokenizer:
             continue
+        else:
+            pass
 
         remapped = name
         for pattern, repl in remapping_rules:
             if re.fullmatch(pattern, remapped):
                 remapped = re.sub(pattern, repl, remapped)
+            else:
+                pass
         tokenizer.load_weight((remapped, tensor))
 
     tokenizer = tokenizer.to(dtype=torch.bfloat16, device=device).eval()
@@ -312,6 +350,8 @@ class VoxtralTTSVocoder(BatchVocoderBase):
 
         if not isinstance(audio_codes, torch.Tensor):
             audio_codes = torch.tensor(audio_codes)
+        else:
+            pass
         # Note:(AkazaAkane) Keep the original note from #248 before refactoring.
         # Prepend warmup context frames so the causal decoder has initial
         # context (mitigates boundary artifacts / noise at the start of the
@@ -358,6 +398,8 @@ class VoxtralTTSVocoder(BatchVocoderBase):
         # Trim warmup samples from the beginning
         if warmup_samples > 0 and len(audio_np) > warmup_samples:
             audio_np = audio_np[warmup_samples:]
+        else:
+            pass
 
         # Apply a short fade-in to smooth any residual onset artifacts
         fade_samples = min(
@@ -373,6 +415,8 @@ class VoxtralTTSVocoder(BatchVocoderBase):
                 dtype=audio_np.dtype,
             )
             audio_np[:fade_samples] = audio_np[:fade_samples] * fade_in
+        else:
+            pass
 
         audio_payload = audio_waveform_payload(audio_np, source_hint="Voxtral TTS")
         state.audio_samples = None
@@ -389,6 +433,8 @@ class VoxtralTTSVocoder(BatchVocoderBase):
                 "completion_tokens": state.completion_tokens,
                 "total_tokens": state.prompt_tokens + state.completion_tokens,
             }
+        else:
+            pass
 
         return payload
 

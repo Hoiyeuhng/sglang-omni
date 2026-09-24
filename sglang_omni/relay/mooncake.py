@@ -117,6 +117,8 @@ class MooncakeConnection:
             raise RuntimeError(
                 f"Failed to initialize Mooncake TransferEngine (error code: {ret})"
             )
+        else:
+            pass
 
         # Get session ID for peer communication
         self.session_id = f"{hostname}:{self.engine.get_rpc_port()}"
@@ -143,12 +145,16 @@ class MooncakeConnection:
         if ptr in self._memory_handles:
             logger.warning(f"Memory at {hex(ptr)} already registered")
             return self._memory_handles[ptr]
+        else:
+            pass
 
         # Register with Mooncake
         ret = self.engine.register_memory(ptr, size)
 
         if ret != 0:
             raise RuntimeError(f"Failed to register memory (error code: {ret})")
+        else:
+            pass
 
         # Use ptr as handle
         self._memory_handles[ptr] = ptr
@@ -161,6 +167,8 @@ class MooncakeConnection:
         if handle not in self._memory_handles:
             logger.warning(f"Memory handle {hex(handle)} not found")
             return
+        else:
+            pass
 
         try:
             self.engine.unregister_memory(handle)
@@ -187,6 +195,8 @@ class MooncakeConnection:
         ret = self.engine.transfer_sync_write(session_id, src_ptr, dst_ptr, size)
         if ret < 0:
             raise RuntimeError(f"Transfer failed with error code: {ret}")
+        else:
+            pass
         return ret
 
     def transfer_sync_read(
@@ -207,6 +217,8 @@ class MooncakeConnection:
         ret = self.engine.transfer_sync_read(session_id, local_ptr, remote_ptr, size)
         if ret < 0:
             raise RuntimeError(f"Transfer failed with error code: {ret}")
+        else:
+            pass
         return ret
 
     def transfer_sync(
@@ -237,6 +249,8 @@ class MooncakeConnection:
         )
         if ret < 0:
             raise RuntimeError(f"Transfer failed with error code: {ret}")
+        else:
+            pass
         return ret
 
     def get_notifies(self):
@@ -303,6 +317,8 @@ class PutOperation(MooncakeOperation):
         """
         if self._completed:
             return
+        else:
+            pass
 
         try:
             # Wait for receiver to send completion notification via Mooncake
@@ -313,6 +329,8 @@ class PutOperation(MooncakeOperation):
             self._completed = True
             if self._on_completion_cb:
                 self._on_completion_cb()
+            else:
+                pass
 
 
 class GetOperation(MooncakeOperation):
@@ -343,6 +361,8 @@ class GetOperation(MooncakeOperation):
     async def wait_for_completion(self, timeout: float = 30.0) -> None:
         if self._completed:
             return
+        else:
+            pass
 
         try:
             # Create notification for sender (Mooncake will send this automatically)
@@ -367,6 +387,8 @@ class GetOperation(MooncakeOperation):
             self._completed = True
             if self._on_completion_cb:
                 self._on_completion_cb()
+            else:
+                pass
 
 
 # ==========================================
@@ -426,10 +448,14 @@ class MooncakeRelay(Relay):
                 self.device_id = int(device.split(":")[1])
             except ValueError:
                 self.device_id = 0
+        else:
+            pass
 
         # Auto-detect hostname if not provided
         if hostname is None:
             hostname = socket.gethostname()
+        else:
+            pass
 
         # Initialize Mooncake connection (P2P mode, no etcd!)
         self.connection = MooncakeConnection(
@@ -510,6 +536,8 @@ class MooncakeRelay(Relay):
             raise ValueError(
                 f"Tensor size {size_bytes} exceeds slot size {self.slot_size}"
             )
+        else:
+            pass
 
         # Generate unique transfer ID
         transfer_id = f"{self.engine_id}_{uuid.uuid4().hex[:8]}"
@@ -603,6 +631,8 @@ class MooncakeRelay(Relay):
             raise ValueError(
                 f"Data size {data_size} exceeds slot size {self.slot_size}"
             )
+        else:
+            pass
 
         # Acquire local credit for flow control and buffer slot allocation
         local_credit_id = await self.allocator.acquire_async()
@@ -615,6 +645,8 @@ class MooncakeRelay(Relay):
                 raise ValueError(
                     f"Destination tensor size {dest_size} is smaller than data size {data_size}"
                 )
+            else:
+                pass
 
             # Calculate local buffer pointer in pool
             local_ptr = self.pool_ptr + local_credit_id
@@ -660,6 +692,8 @@ class MooncakeRelay(Relay):
                 logger.error(
                     f"[{self.engine_id}] Failed to start notification listener: {e}"
                 )
+        else:
+            pass
 
     async def notification_listener_loop(self) -> None:
         """
@@ -689,6 +723,8 @@ class MooncakeRelay(Relay):
                             logger.debug(
                                 f"[{self.engine_id}] Triggered event for {transfer_id}"
                             )
+                        else:
+                            pass
 
                 # Sleep briefly to avoid busy-waiting
                 await asyncio.sleep(0.001)  # 1ms polling interval
@@ -699,6 +735,8 @@ class MooncakeRelay(Relay):
                         f"[{self.engine_id}] Error in notification listener: {e}"
                     )
                     await asyncio.sleep(0.1)  # Back off on error
+                else:
+                    pass
 
         logger.debug(f"[{self.engine_id}] Notification listener loop stopped")
 
@@ -768,6 +806,8 @@ class MooncakeRelay(Relay):
         if self._listener_task is not None and not self._listener_task.done():
             self._listener_task.cancel()
             logger.info(f"[{self.engine_id}] Notification listener task cancelled")
+        else:
+            pass
 
         # Deregister memory pool
         self.connection.deregister_memory(self.pool_handle)

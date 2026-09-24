@@ -92,6 +92,8 @@ class HiggsTtsPipelineConfig(PipelineConfig):
                 for key in self._STREAM_CADENCE_KEYS
                 if key in vocoder_extra
             }
+        else:
+            pass
         if stage_name == "vocoder":
             return {
                 "compile_decode": False,
@@ -107,6 +109,8 @@ class HiggsTtsPipelineConfig(PipelineConfig):
                     else ()
                 ),
             }
+        else:
+            pass
         return {}
 
     def model_post_init(self, __context: Any = None) -> None:
@@ -123,6 +127,8 @@ class HiggsTtsPipelineConfig(PipelineConfig):
                     )
                 ),
             )
+        else:
+            pass
         vocoder_extra = stages["vocoder"].factory.model_extra or {}
         tts_engine_extra = stages["tts_engine"].factory.model_extra or {}
         for key in self._STREAM_CADENCE_KEYS:
@@ -131,13 +137,19 @@ class HiggsTtsPipelineConfig(PipelineConfig):
                     raise ValueError(
                         f"Higgs TTS {key!r} must be configured on the vocoder stage"
                     )
+                else:
+                    pass
                 continue
+            else:
+                pass
             if key in tts_engine_extra and tts_engine_extra[key] != vocoder_extra[key]:
                 raise ValueError(
                     f"Higgs TTS {key!r} must match between the tts_engine and "
                     "vocoder stages; omit the tts_engine value to derive it "
                     "from the vocoder"
                 )
+            else:
+                pass
 
     def requires_uploaded_voice_for_named_voice(self) -> bool:
         return True

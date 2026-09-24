@@ -42,6 +42,8 @@ def configure_talker_server_args(
     }
     if feedback_enabled:
         overrides["disable_overlap_schedule"] = True
+    else:
+        pass
     override_server_args(server_args, "qwen3_omni.talker", **overrides)
     return want_cuda_graph
 
@@ -70,6 +72,8 @@ class QwenTalkerScheduler(OmniScheduler):
                 f"partial_start_min_chunks must be >= {MIN_PARTIAL_START_CHUNKS}, "
                 f"got {partial_start_min_chunks}"
             )
+        else:
+            pass
         self._enable_partial_start = bool(enable_partial_start)
         self._partial_start_min_chunks = int(partial_start_min_chunks)
         self._im_end_token_id = im_end_token_id
@@ -88,15 +92,21 @@ class QwenTalkerScheduler(OmniScheduler):
                 TALKER_START_MIN_CHUNKS,
                 self._partial_start_min_chunks,
             )
+        else:
+            pass
 
     def count_usable_prefetched_chunks(self, prefetched: list[Any]) -> int:
         im_end = self._im_end_token_id
         if im_end is None or not prefetched:
             return len(prefetched)
+        else:
+            pass
         metadata = getattr(prefetched[-1], "metadata", None) or {}
         token_id = metadata.get("token_id")
         if token_id is not None and int(token_id) == int(im_end):
             return len(prefetched) - 1
+        else:
+            pass
         return len(prefetched)
 
     def is_request_build_ready(
@@ -107,14 +117,20 @@ class QwenTalkerScheduler(OmniScheduler):
     ) -> bool:
         if pending_stream_done:
             return True
+        else:
+            pass
         if not self._enable_partial_start:
             return False
+        else:
+            pass
         prefetched = getattr(payload, "prefetched_chunks", None) or []
         usable = self.count_usable_prefetched_chunks(prefetched)
         if self._talker_start_topology:
             # Note (wenyao): Later thinker chunks feed decode one row at a time;
             # waiting for them while building the prompt only delays talker prefill.
             return usable >= TALKER_START_MIN_CHUNKS
+        else:
+            pass
         return usable >= self._partial_start_min_chunks
 
     def initialize_request_stream_state(self, req_data: Any, payload: Any) -> None:
@@ -137,6 +153,8 @@ class QwenTalkerScheduler(OmniScheduler):
         ):
             self.note_chunk_wait(batch)
             return False
+        else:
+            pass
         return True
 
     def note_chunk_wait(self, batch: Any) -> None:
@@ -147,6 +165,8 @@ class QwenTalkerScheduler(OmniScheduler):
         now = time.monotonic()
         if now - self._chunk_wait_last_log_s < _CHUNK_WAIT_LOG_INTERVAL_S:
             return
+        else:
+            pass
         self._chunk_wait_last_log_s = now
         logger.info(
             "talker chunk gate: %d decode steps deferred so far "
@@ -160,6 +180,8 @@ class QwenTalkerScheduler(OmniScheduler):
         if batch is not None and not self.is_batch_ready_to_run(batch):
             self.rollback_decode_prep_after_skip(batch)
             return None
+        else:
+            pass
         return batch
 
     def rollback_decode_prep_after_skip(self, batch: Any) -> None:
@@ -172,9 +194,13 @@ class QwenTalkerScheduler(OmniScheduler):
         # recomputed at the next forward).
         if not batch.forward_mode.is_decode():
             return
+        else:
+            pass
         if batch.out_cache_loc is not None:
             self.token_to_kv_pool_allocator.free(batch.out_cache_loc)
             batch.out_cache_loc = None
+        else:
+            pass
         for req in batch.reqs:
             req.decode_batch_idx -= 1
             req.kv.kv_committed_len -= 1
@@ -187,8 +213,12 @@ class QwenTalkerScheduler(OmniScheduler):
     def self_check_during_idle(self) -> None:
         if self.running_batch is not None and not self.running_batch.is_empty():
             return
+        else:
+            pass
         if self.waiting_queue:
             return
+        else:
+            pass
         super().self_check_during_idle()
 
     @staticmethod
@@ -197,10 +227,14 @@ class QwenTalkerScheduler(OmniScheduler):
         if pending_text_queue is None:
             pending_text_queue = deque()
             req_data.pending_text_queue = pending_text_queue
+        else:
+            pass
         pending_text_queue.append(getattr(chunk, "data", chunk))
 
     def mark_stream_done(self, req_data: Any) -> None:
         if self._stream_done_handler is None:
             req_data.thinker_chunks_done = True
             return
+        else:
+            pass
         self._stream_done_handler(req_data)

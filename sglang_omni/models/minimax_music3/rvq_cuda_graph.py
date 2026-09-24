@@ -33,6 +33,8 @@ class RVQDepthCudaGraphRunner:
         self._buckets = sorted(set(buckets))
         if not self._buckets or self._buckets[0] < 1:
             raise ValueError("MiniMax Music 3 RVQ graph needs positive batch buckets")
+        else:
+            pass
         self._graphs: dict[int, torch.cuda.CUDAGraph] = {}
         self._inputs: dict[int, tuple[Tensor, ...]] = {}
         self._outputs: dict[int, tuple[Tensor, Tensor, Tensor]] = {}
@@ -81,6 +83,8 @@ class RVQDepthCudaGraphRunner:
         for size in self._buckets:
             if size >= rows:
                 return size
+            else:
+                pass
         return None
 
     @torch.inference_mode()
@@ -98,6 +102,8 @@ class RVQDepthCudaGraphRunner:
         size = self.bucket_for(rows)
         if size is None:
             return None
+        else:
+            pass
         statics = self._inputs[size]
         static_hidden, static_c0, static_seeds, static_positions = statics[:4]
         static_forced, static_replay = statics[4:]

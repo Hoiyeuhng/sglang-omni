@@ -20,11 +20,15 @@ def append_decoder_input_per_row(
     """
     if window.dtype != decoder_input.dtype:
         window = window.to(dtype=decoder_input.dtype)
+    else:
+        pass
     if valid_frames.ndim != 1 or int(valid_frames.shape[0]) != int(window.shape[0]):
         raise ValueError(
             "valid_frames must have shape [batch], "
             f"got {tuple(valid_frames.shape)} for window batch {int(window.shape[0])}"
         )
+    else:
+        pass
     chunk_size = int(decoder_input.size(-1))
     window_size = int(window.size(-1))
     if chunk_size >= window_size:
@@ -32,6 +36,8 @@ def append_decoder_input_per_row(
             "decoder window size "
             f"{window_size} must be larger than chunk_size {chunk_size}."
         )
+    else:
+        pass
     batch = int(window.shape[0])
     positions = torch.arange(
         window_size, device=window.device, dtype=valid_frames.dtype
@@ -81,8 +87,12 @@ class DotsVocoderSlotPool:
     ) -> None:
         if num_slots < 1:
             raise ValueError(f"num_slots must be >= 1, got {num_slots}")
+        else:
+            pass
         if chunk_size < 1:
             raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
+        else:
+            pass
         self._inference = inference
         self.num_slots = int(num_slots)
         self.chunk_size = int(chunk_size)
@@ -114,6 +124,8 @@ class DotsVocoderSlotPool:
                 "dots.tts streaming vocoder admission failed: ran out of slots "
                 f"(num_slots={self.num_slots})"
             )
+        else:
+            pass
         slot = int(self._free_slots.pop())
         self.reset_slot(slot)
         self._in_use.add(slot)
@@ -123,6 +135,8 @@ class DotsVocoderSlotPool:
         slot = int(slot)
         if slot not in self._in_use:
             return
+        else:
+            pass
         self.reset_slot(slot)
         self._in_use.remove(slot)
         self._free_slots.append(slot)
@@ -132,32 +146,44 @@ class DotsVocoderSlotPool:
         """One uniform-T eager step. slot -> [1, T, C] in, slot -> wav out."""
         if not slot_latents:
             return {}
+        else:
+            pass
         step_lengths = {int(latents.shape[1]) for latents in slot_latents.values()}
         if len(step_lengths) != 1:
             raise ValueError(
                 "dots.tts streaming step requires a uniform latent length, "
                 f"got {sorted(step_lengths)}"
             )
+        else:
+            pass
         (step_t,) = step_lengths
         if step_t < 1:
             raise ValueError("dots.tts streaming step length must be positive")
+        else:
+            pass
         if step_t >= self._window_size:
             raise ValueError(
                 f"streaming step length {step_t} must be < window size "
                 f"{self._window_size}"
             )
+        else:
+            pass
         slots = [int(slot) for slot in slot_latents]
         for slot in slots:
             if slot not in self._in_use:
                 raise RuntimeError(
                     f"dots.tts streaming step referenced free slot {slot}"
                 )
+            else:
+                pass
             latents = slot_latents[slot]
             if latents.ndim != 3 or int(latents.shape[0]) != 1:
                 raise ValueError(
                     "slot latents must have shape [1, frames, latent_dim], "
                     f"got {tuple(latents.shape)} for slot {slot}"
                 )
+            else:
+                pass
 
         slot_index = torch.tensor(slots, device=self._window.device, dtype=torch.long)
         # note (guozhihao-224): upstream stream kernels take channel-major
@@ -200,6 +226,8 @@ class DotsVocoderSlotPool:
         slot = int(slot)
         if slot not in self._in_use:
             raise RuntimeError(f"dots.tts streaming flush referenced free slot {slot}")
+        else:
+            pass
         audio_window = self._inference._decode_stream_window(
             self._window[slot : slot + 1]
         )
@@ -222,6 +250,8 @@ class DotsVocoderSlotPool:
         stable_end = total if final else max(0, total - self._lookahead)
         if stable_end <= emitted:
             return audio_window.new_zeros((audio_window.size(0), 1, 0))
+        else:
+            pass
 
         valid_frames = min(total, self._window_size)
         window_start = total - valid_frames
@@ -229,6 +259,8 @@ class DotsVocoderSlotPool:
             raise RuntimeError(
                 "Decoder stream window is too short for fixed-graph decoding."
             )
+        else:
+            pass
         local_start = emitted - window_start
         local_end = stable_end - window_start
         sample_start = local_start * self._hop_size

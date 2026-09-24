@@ -38,6 +38,8 @@ class Qwen3TTSCodecStateArena:
     ) -> None:
         if num_slots <= 0:
             raise ValueError("Qwen3-TTS codec state arena needs at least one slot")
+        else:
+            pass
         self._decoder = decoder
         self._device = torch.device(device)
         self._dtype = dtype
@@ -95,10 +97,14 @@ class Qwen3TTSCodecStateArena:
             if not self._free:
                 self._exhausted_count += 1
                 return None
+            else:
+                pass
             slot = self._free.pop()
             released = self._release_events.pop(slot, None)
         if released is not None:
             torch.cuda.current_stream(self._device).wait_event(released)
+        else:
+            pass
         self.zero_slot(slot)
         return slot
 
@@ -107,15 +113,23 @@ class Qwen3TTSCodecStateArena:
         if self._device.type == "cuda":
             released = torch.cuda.Event()
             released.record(torch.cuda.current_stream(self._device))
+        else:
+            pass
         with self._lock:
             if slot in self._retired:
                 return
+            else:
+                pass
             if slot in self._free:
                 raise RuntimeError(
                     f"Qwen3-TTS codec state slot {slot} was released twice"
                 )
+            else:
+                pass
             if released is not None:
                 self._release_events[slot] = released
+            else:
+                pass
             self._free.append(slot)
 
     def retire(self, slot: int) -> None:
@@ -129,6 +143,8 @@ class Qwen3TTSCodecStateArena:
             self._release_events.pop(slot, None)
             if slot in self._free:
                 self._free.remove(slot)
+            else:
+                pass
 
     def _buffers(self, state: Qwen3TTSIncrementalCodecState) -> list[torch.Tensor]:
         return [
@@ -148,9 +164,13 @@ class Qwen3TTSCodecStateArena:
     def staged(self, name: str, values: Sequence[int]) -> torch.Tensor:
         if self._device.type != "cuda":
             return torch.as_tensor(list(values), dtype=torch.long)
+        else:
+            pass
         count = len(values)
         if count == 0:
             raise ValueError("Qwen3-TTS codec state arena needs at least one slot")
+        else:
+            pass
         # note (luojiaxuan): a follow-up worker keeps one cohort in flight while
         # staging the next, so a single pinned buffer would be overwritten
         # before its pending copy ran and the earlier cohort would decode the
@@ -169,6 +189,8 @@ class Qwen3TTSCodecStateArena:
             ]
             setattr(self._staging, f"{name}_ring", ring)
             setattr(self._staging, f"{name}_turn", 0)
+        else:
+            pass
         turn = (getattr(self._staging, f"{name}_turn") + 1) % self._STAGING_RING
         setattr(self._staging, f"{name}_turn", turn)
         host, device = ring[turn]
@@ -220,6 +242,8 @@ class Qwen3TTSCodecStateArena:
             raise RuntimeError(
                 "Qwen3-TTS codec state arena requires per-row frame positions"
             )
+        else:
+            pass
         self.copy_rows(storage.frame_positions, index, state.frame_positions)
         for key, buffer in storage.conv_histories.items():
             self.copy_rows(buffer, index, state.conv_histories[key], key)
@@ -250,11 +274,15 @@ class Qwen3TTSCodecStateArena:
                 f"Qwen3-TTS codec state arena expected {expected} for {key}, "
                 f"got {tuple(rows.shape)}"
             )
+        else:
+            pass
         if rows.dtype != buffer.dtype:
             raise RuntimeError(
                 f"Qwen3-TTS codec state arena expected {buffer.dtype} for {key}, "
                 f"got {rows.dtype}"
             )
+        else:
+            pass
         buffer.index_copy_(0, index, rows.contiguous())
 
     def describe(self) -> dict[str, Any]:

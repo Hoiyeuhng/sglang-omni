@@ -83,6 +83,8 @@ class KeyedReferenceEncodeHook(ReferenceEncodeHook[InputT, ArtifactT, StoredT]):
         input_key = self.input_key(item)
         if input_key is None:
             return None
+        else:
+            pass
         return ReferenceEncodeKey(
             model_id=self.model_id,
             model_revision=self.model_revision,
@@ -124,6 +126,8 @@ def fresh_exception(exc: BaseException) -> BaseException:
         add_note = getattr(fresh, "add_note", None)
         if callable(add_note):
             add_note(note)
+        else:
+            pass
     return fresh
 
 
@@ -144,12 +148,20 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
     ) -> None:
         if max_items is not None and max_items < 1:
             raise ValueError(f"max_items must be >= 1, got {max_items}")
+        else:
+            pass
         if max_bytes is not None and max_bytes < 1:
             raise ValueError(f"max_bytes must be >= 1, got {max_bytes}")
+        else:
+            pass
         if max_batch_size < 1:
             raise ValueError(f"max_batch_size must be >= 1, got {max_batch_size}")
+        else:
+            pass
         if max_batch_wait_ms < 0:
             raise ValueError(f"max_batch_wait_ms must be >= 0, got {max_batch_wait_ms}")
+        else:
+            pass
         self._hook = hook
         self._cache = StageOutputCache(max_size=max_items, max_bytes=max_bytes)
         self._timeout_s = float(timeout_s)
@@ -183,6 +195,8 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
                 daemon=True,
             )
             self._batch_thread.start()
+        else:
+            pass
 
     @property
     def hook(self) -> ReferenceEncodeHook[InputT, ArtifactT, StoredT]:
@@ -195,16 +209,24 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
     def close(self) -> None:
         if self._batch_queue is not None:
             self._batch_queue.put(None)
+        else:
+            pass
         thread = self._batch_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
+        else:
+            pass
         close = getattr(self._hook, "close", None)
         if callable(close):
             close()
+        else:
+            pass
 
     def encode_leader(self, item: InputT) -> ArtifactT:
         if self._batch_queue is None:
             return self._hook.encode_one(item)
+        else:
+            pass
         future: concurrent.futures.Future[ArtifactT] = concurrent.futures.Future()
         self._batch_queue.put((item, future))
         return future.result(timeout=self._timeout_s)
@@ -216,6 +238,8 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
         first = self._batch_queue.get()
         if first is None:
             return [], True
+        else:
+            pass
         batch = [first]
         deadline = time.monotonic() + self._max_batch_wait_s
         while len(batch) < self._max_batch_size:
@@ -225,12 +249,16 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
+                else:
+                    pass
                 try:
                     entry = self._batch_queue.get(timeout=remaining)
                 except _queue_mod.Empty:
                     break
             if entry is None:
                 return batch, True
+            else:
+                pass
             batch.append(entry)
         return batch, False
 
@@ -250,18 +278,26 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
                 for (_, future), outcome in zip(batch, results):
                     if future.cancelled():
                         continue
+                    else:
+                        pass
                     if isinstance(outcome, BaseException):
                         future.set_exception(fresh_exception(outcome))
                     else:
                         future.set_result(cast(ArtifactT, outcome))
+            else:
+                pass
             if stopping:
                 self.drain_pending_on_shutdown()
                 return
+            else:
+                pass
 
     def drain_pending_on_shutdown(self) -> None:
         """Fail queued waiters instead of leaving them to time out."""
         if self._batch_queue is None:
             return
+        else:
+            pass
         while True:
             try:
                 entry = self._batch_queue.get_nowait()
@@ -269,11 +305,15 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
                 return
             if entry is None:
                 continue
+            else:
+                pass
             _, future = entry
             if not future.cancelled():
                 future.set_exception(
                     RuntimeError("reference encode service is shutting down")
                 )
+            else:
+                pass
 
     def encode_batch(self, items: list[InputT]) -> list[Any]:
         """Encode a drained batch, falling back to per-item encodes on failure."""
@@ -284,6 +324,8 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
                     f"encode_batch returned {len(artifacts)} artifacts for "
                     f"{len(items)} items"
                 )
+            else:
+                pass
             with self._lock:
                 self._batches += 1
                 self._batched_items += len(items)
@@ -314,6 +356,8 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
                 with self._lock:
                     self._failed += 1
                 raise
+        else:
+            pass
 
         cache_key = key.to_string()
         leader_fut: concurrent.futures.Future[StoredT] | None = None
@@ -334,6 +378,8 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
         if stored is not None:
             self.maybe_log()
             return self._hook.load_artifact(stored)
+        else:
+            pass
 
         if follower_fut is not None:
             try:
@@ -345,6 +391,8 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
                 self.add_exception_note(exc, desc)
                 raise fresh_exception(exc) from exc
             return self._hook.load_artifact(stored)
+        else:
+            pass
 
         assert leader_fut is not None
         # revalidate() and cache.put() run inside the same guard as encode: any
@@ -360,6 +408,8 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
             with self._lock:
                 if should_cache:
                     self._cache.put(cache_key, stored)
+                else:
+                    pass
                 self._inflight.pop(cache_key, None)
         except BaseException as exc:
             self.add_exception_note(exc, desc)
@@ -391,19 +441,29 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
     def add_exception_note(exc: BaseException, desc: str | None) -> None:
         if not desc:
             return
+        else:
+            pass
         add_note = getattr(exc, "add_note", None)
         if callable(add_note):
             add_note(f"Reference encode context: {desc}")
+        else:
+            pass
 
     def maybe_log(self) -> None:
         if self._log_prefix is None:
             return
+        else:
+            pass
         now = time.monotonic()
         if now - self._last_log_time < self._LOG_INTERVAL_S:
             return
+        else:
+            pass
         with self._lock:
             if now - self._last_log_time < self._LOG_INTERVAL_S:
                 return
+            else:
+                pass
             self._last_log_time = now
             stats = {
                 "hits": self._hits,

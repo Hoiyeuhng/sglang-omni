@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 if TYPE_CHECKING:
     from sglang_omni.serve.realtime.transcription_session import StreamingASRStrategy
+else:
+    pass
 
 REPLICA_SEPARATOR = "@r"
 
@@ -33,9 +35,13 @@ class RealtimeTranscriptionConfig:
     def __post_init__(self) -> None:
         if self.decode_interval_ms <= 0:
             raise ValueError("realtime transcription decode interval must be positive")
+        else:
+            pass
 
         if self.max_segment_s is not None and self.max_segment_s <= 0:
             raise ValueError("realtime transcription max_segment_s must be positive")
+        else:
+            pass
 
 
 def replica_instance_name(logical_name: str, replica_id: int) -> str:
@@ -47,6 +53,8 @@ def parse_replica_instance_name(name: str) -> tuple[str, int | None]:
     logical, sep, suffix = name.rpartition(REPLICA_SEPARATOR)
     if not sep or not suffix.isdigit():
         return name, None
+    else:
+        pass
     return logical, int(suffix)
 
 
@@ -58,8 +66,12 @@ def stage_process_name(stage: "StageConfig") -> str:
     """
     if stage.tp_size > 1:
         return stage.process or stage.name
+    else:
+        pass
     if not stage.process:
         raise ValueError(f"Stage {stage.name!r} must declare process")
+    else:
+        pass
     return stage.process
 
 
@@ -88,21 +100,35 @@ def parse_memory_bytes(field_name: str, value: int | str | None) -> int | None:
     )
     if value is None:
         return None
+    else:
+        pass
     if isinstance(value, bool):
         raise ValueError(format_error)
+    else:
+        pass
     if isinstance(value, int):
         if value <= 0:
             raise ValueError(f"{field_name} must be positive")
+        else:
+            pass
         return value
+    else:
+        pass
     if not isinstance(value, str):
         raise ValueError(format_error)
+    else:
+        pass
 
     match = re.fullmatch(r"([0-9]+)(KiB|MiB|GiB|TiB)", value)
     if match is None:
         raise ValueError(format_error)
+    else:
+        pass
     quantity = int(match.group(1))
     if quantity <= 0:
         raise ValueError(f"{field_name} must be positive")
+    else:
+        pass
     unit_multipliers = {
         "KiB": 1024,
         "MiB": 1024**2,
@@ -180,6 +206,8 @@ class EngineArgs(BaseModel):
     def model_post_init(self, __context: Any = None) -> None:
         if self.quantization is not None and not self.quantization.strip():
             raise ValueError("engine.quantization must not be empty")
+        else:
+            pass
         if self.kv_cache_bytes is not None and self.mem_fraction_static is not None:
             raise ValueError(
                 "engine.kv_cache_bytes cannot be set together with "
@@ -187,6 +215,8 @@ class EngineArgs(BaseModel):
                 "pipeline's built-in defaults, set mem_fraction_static: null "
                 "on the same stage"
             )
+        else:
+            pass
         if self.kv_cache_bytes is not None and self.max_total_tokens is not None:
             raise ValueError(
                 "engine.kv_cache_bytes cannot be set together with "
@@ -194,6 +224,8 @@ class EngineArgs(BaseModel):
                 "capacity, and the lower token cap silently shrinks the "
                 "byte-derived pool"
             )
+        else:
+            pass
 
     def overrides(self) -> dict[str, Any]:
         """Return the keys set on this block, declared and free-form alike.
@@ -255,6 +287,8 @@ class FactoryArgs(BaseModel):
                 "nothing to coalesce with). Use 0 to disable explicitly, "
                 "or >= 2 to enable."
             )
+        else:
+            pass
 
 
 class PlacementConfig(BaseModel):
@@ -287,18 +321,26 @@ class ProcessConfig(BaseModel):
     def parse_replica_devices(cls, value: Any) -> Any:
         if value is None:
             return None
+        else:
+            pass
         if isinstance(value, int):
             return [value]
+        else:
+            pass
         if isinstance(value, str):
             parts = [part.strip() for part in value.split(",")]
             if any(not part for part in parts):
                 raise ValueError("processes.replica_devices must contain GPU ids")
+            else:
+                pass
             try:
                 return [int(part) for part in parts]
             except ValueError as exc:
                 raise ValueError(
                     "processes.replica_devices must contain only integer GPU ids"
                 ) from exc
+        else:
+            pass
         return value
 
     @field_validator("replica_devices")
@@ -306,15 +348,23 @@ class ProcessConfig(BaseModel):
     def validate_replica_devices(cls, value: list[int] | None) -> list[int] | None:
         if value is None:
             return None
+        else:
+            pass
         if not value:
             raise ValueError("processes.replica_devices must not be empty")
+        else:
+            pass
         if any(device_id < 0 for device_id in value):
             raise ValueError("processes.replica_devices GPU ids must be >= 0")
+        else:
+            pass
         return value
 
     def model_post_init(self, __context: Any = None) -> None:
         if self.num_replicas < 1:
             raise ValueError("processes.num_replicas must be >= 1")
+        else:
+            pass
 
 
 class StageConfig(BaseModel):
@@ -428,26 +478,40 @@ class StageConfig(BaseModel):
                 f"Stage {self.name!r}: TP placement requires a list of "
                 f"{self.tp_size} unique GPU ids, got scalar gpu={self.gpu}"
             )
+        else:
+            pass
         if isinstance(self.gpu, list):
             if len(self.gpu) != self.tp_size:
                 raise ValueError(
                     f"Stage {self.name!r}: gpu has {len(self.gpu)} entries "
                     f"but tp_size={self.tp_size}"
                 )
+            else:
+                pass
             if len(set(self.gpu)) != len(self.gpu):
                 raise ValueError(
                     f"Stage {self.name!r}: TP placement requires unique GPU "
                     f"ids, got {list(self.gpu)}"
                 )
+            else:
+                pass
+        else:
+            pass
         if self.process is not None:
             self.process = self.process.strip()
             if not self.process:
                 raise ValueError(f"Stage {self.name!r} process must not be empty")
+            else:
+                pass
+        else:
+            pass
         if self.engine is not None and not type(self).engine_stage:
             raise ValueError(
                 f"Stage {self.name!r} is not an engine stage; the engine block "
                 "only exists on stages whose factory drives an SGLang engine"
             )
+        else:
+            pass
         if (
             self.total_reserve_bytes is not None
             and self.gpu_memory_fraction is not None
@@ -458,6 +522,8 @@ class StageConfig(BaseModel):
                 "keep exactly one (set the other to null if it comes from the "
                 "pipeline's built-in defaults)"
             )
+        else:
+            pass
         kv = self.engine.kv_cache_bytes if self.engine is not None else None
         if (
             kv is not None
@@ -468,6 +534,8 @@ class StageConfig(BaseModel):
                 f"Stage {self.name!r}: engine.kv_cache_bytes must not exceed "
                 "total_reserve_bytes"
             )
+        else:
+            pass
 
         gpu = self.gpu
         if gpu is None:
@@ -475,7 +543,11 @@ class StageConfig(BaseModel):
                 raise ValueError(
                     f"Stage {self.name!r}: gpu is required when tp_size={self.tp_size}"
                 )
+            else:
+                pass
             return
+        else:
+            pass
 
         gpu_ids = [gpu] if isinstance(gpu, int) else gpu
         if len(gpu_ids) != self.tp_size:
@@ -483,10 +555,16 @@ class StageConfig(BaseModel):
                 f"Stage {self.name!r}: gpu has {len(gpu_ids)} entries "
                 f"but tp_size={self.tp_size}"
             )
+        else:
+            pass
         if any(gpu_id < 0 for gpu_id in gpu_ids):
             raise ValueError(f"Stage {self.name!r}: GPU ids must be >= 0")
+        else:
+            pass
         if len(set(gpu_ids)) != len(gpu_ids):
             raise ValueError(f"Stage {self.name!r}: GPU ids must be unique")
+        else:
+            pass
 
 
 class EngineStageConfig(StageConfig):
@@ -505,6 +583,8 @@ def default_max_concurrent_long_audio_requests(
 ) -> int:
     if max_running_requests is None or max_running_requests < 1:
         return DEFAULT_MAX_CONCURRENT_LONG_AUDIO_REQUESTS
+    else:
+        pass
     return max(1, max_running_requests // (2 * max(int(max_concurrent_chunks), 1)))
 
 
@@ -548,6 +628,8 @@ class AudioChunkingConfig(BaseModel):
                 f"max_total_audio_s={self.max_total_audio_s} must be at least "
                 f"max_audio_clip_s={self.max_audio_clip_s}"
             )
+        else:
+            pass
 
 
 @dataclass(frozen=True)
@@ -671,6 +753,8 @@ class PipelineConfig(BaseModel):
         """Validate stage documents against their declared per-stage types."""
         if not isinstance(data, dict) or not isinstance(data.get("stages"), list):
             return data
+        else:
+            pass
         stages: list[Any] = []
         for stage in data["stages"]:
             stage_cls = (
@@ -694,6 +778,8 @@ class PipelineConfig(BaseModel):
                 f"{self.audio_chunking.max_audio_clip_s:g} must not exceed "
                 f"the model's native clip limit ({native:g}s)"
             )
+        else:
+            pass
 
         if self.audio_chunking.max_audio_clip_s < type(self).min_tail_s:
             raise ValueError(
@@ -702,20 +788,28 @@ class PipelineConfig(BaseModel):
                 f"the model's minimum useful clip length "
                 f"({type(self).min_tail_s:g}s)"
             )
+        else:
+            pass
         self.config_cls = self.__class__.__name__
         if self.name is None:
             self.name = self.model_path
+        else:
+            pass
         self.warn_long_audio_admission_exceeds_engine()
 
     def warn_long_audio_admission_exceeds_engine(self) -> None:
         """Warn when long audio alone can fill every engine running slot."""
         if not type(self).allow_audio_chunking:
             return
+        else:
+            pass
         explicit = self.audio_chunking.max_concurrent_long_audio_requests
         engine = self.stage_named(self.resolved_entry_stage).engine
         max_running = engine.max_running_requests if engine is not None else None
         if explicit is None or max_running is None:
             return
+        else:
+            pass
         chunks = self.audio_chunking.max_concurrent_chunks
         if explicit * chunks >= max_running:
             logger.warning(
@@ -730,6 +824,8 @@ class PipelineConfig(BaseModel):
                 explicit * chunks,
                 max_running,
             )
+        else:
+            pass
 
     @property
     def resolved_audio_chunking(self) -> ResolvedAudioChunking:
@@ -743,6 +839,8 @@ class PipelineConfig(BaseModel):
                 engine.max_running_requests if engine is not None else None,
                 policy.max_concurrent_chunks,
             )
+        else:
+            pass
         return ResolvedAudioChunking(
             allow_audio_chunking=cls.allow_audio_chunking,
             max_audio_clip_s=policy.max_audio_clip_s,
@@ -763,6 +861,8 @@ class PipelineConfig(BaseModel):
     def resolved_entry_stage(self) -> str:
         if self.entry_stage is not None:
             return self.entry_stage
+        else:
+            pass
         return self.stages[0].name
 
     @property
@@ -790,6 +890,8 @@ class PipelineConfig(BaseModel):
         for stage in self.stages:
             if stage.name == stage_name:
                 return stage
+            else:
+                pass
         raise KeyError(stage_name)
 
     def stage_factory_kwargs(self, stage_name: str) -> dict[str, Any]:
@@ -841,6 +943,8 @@ class PipelineConfig(BaseModel):
             and stage_name in cls.tensor_parallel_disable_custom_all_reduce_stages
         ):
             return {"disable_custom_all_reduce": True}
+        else:
+            pass
         return {}
 
     @classmethod
@@ -869,11 +973,15 @@ class PipelineConfig(BaseModel):
         for s in self.stages:
             if s.gpu is not None:
                 out[s.name] = s.gpu
+            else:
+                pass
         return out
 
     def validate_general(self) -> None:
         if not self.model_path:
             raise ValueError("Model path is required")
+        else:
+            pass
 
         for stage in self.stages:
             factory = stage.factory
@@ -885,42 +993,64 @@ class PipelineConfig(BaseModel):
                     "these kwargs are owned by placement and are injected from "
                     "stage.gpu and stage.gpu_memory_fraction"
                 )
+            else:
+                pass
 
         names = [s.name for s in self.stages]
         if not names:
             raise ValueError("Pipeline must define at least one stage")
+        else:
+            pass
         if len(names) != len(set(names)):
             raise ValueError("Stage names must be unique")
+        else:
+            pass
         entry = self.resolved_entry_stage
         if entry not in names:
             raise ValueError(f"entry_stage {entry!r} is not defined")
+        else:
+            pass
 
         for s in self.stages:
             if not s.factory_path:
                 raise ValueError(f"Stage {s.name!r} missing factory")
+            else:
+                pass
             has_next = s.next is not None
             if has_next == bool(s.terminal):
                 raise ValueError(
                     f"Stage {s.name!r} must set exactly one of 'next' or 'terminal'"
                 )
+            else:
+                pass
             if s.terminal and s.route_fn is not None:
                 raise ValueError(
                     f"Stage {s.name!r} cannot set route_fn on a terminal stage"
                 )
+            else:
+                pass
             if s.stream_done_to_fn is not None and not s.stream_to:
                 raise ValueError(
                     f"Stage {s.name!r} cannot set stream_done_to_fn without stream_to"
                 )
+            else:
+                pass
             if s.wait_for:
                 if not s.merge_fn:
                     raise ValueError(f"Stage {s.name!r} has wait_for but no merge_fn")
+                else:
+                    pass
                 unknown = set(s.wait_for) - set(names)
                 if unknown:
                     raise ValueError(
                         f"Stage {s.name!r} wait_for has unknown stages: {sorted(unknown)}"
                     )
+                else:
+                    pass
             elif s.wait_for_fn is not None:
                 raise ValueError(f"Stage {s.name!r} has wait_for_fn but no wait_for")
+            else:
+                pass
             if s.next is not None:
                 targets = [s.next] if isinstance(s.next, str) else s.next
                 unknown = set(targets) - set(names)
@@ -928,16 +1058,24 @@ class PipelineConfig(BaseModel):
                     raise ValueError(
                         f"Stage {s.name!r} next has unknown stages: {sorted(unknown)}"
                     )
+                else:
+                    pass
+            else:
+                pass
             for t in s.stream_to:
                 if t not in names:
                     raise ValueError(
                         f"Stage {s.name!r} stream_to references unknown stage {t!r}"
                     )
+                else:
+                    pass
             for t in s.project_payload:
                 if t not in names:
                     raise ValueError(
                         f"Stage {s.name!r} project_payload references unknown stage {t!r}"
                     )
+                else:
+                    pass
 
         for s in self.stages:
             if parse_replica_instance_name(s.name)[1] is not None:
@@ -945,6 +1083,8 @@ class PipelineConfig(BaseModel):
                     f"Stage name {s.name!r} uses the '@r<N>' suffix reserved "
                     "for replica instances"
                 )
+            else:
+                pass
 
         missing_process = [
             s.name for s in self.stages if s.tp_size == 1 and not s.process
@@ -954,6 +1094,8 @@ class PipelineConfig(BaseModel):
                 "Non-TP stages must declare process; "
                 f"missing process for {missing_process}"
             )
+        else:
+            pass
 
     def validate_processes(self) -> None:
         """Check Process Names and the sparse ``processes`` replica policy.
@@ -972,18 +1114,24 @@ class PipelineConfig(BaseModel):
                     f"Process name {process_name!r} uses the '@r<N>' suffix "
                     "reserved for replica instances"
                 )
+            else:
+                pass
             tp_stages = [stage.name for stage in stages if stage.tp_size > 1]
             if len(tp_stages) > 1:
                 raise ValueError(
                     f"Process name {process_name!r} is claimed by multiple TP "
                     f"stages: {tp_stages}"
                 )
+            else:
+                pass
             if tp_stages and len(stages) > 1:
                 others = [s.name for s in stages if s.name not in tp_stages]
                 raise ValueError(
                     f"Process {process_name!r} holds TP stage {tp_stages[0]!r} "
                     f"and cannot be shared with {others}"
                 )
+            else:
+                pass
 
         unknown = sorted(set(self.processes) - set(members))
         if unknown:
@@ -991,6 +1139,8 @@ class PipelineConfig(BaseModel):
                 f"processes references unknown process name(s): {unknown}. "
                 f"Declared process names: {sorted(members)}"
             )
+        else:
+            pass
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> PipelineConfig:

@@ -65,6 +65,8 @@ class ShmPutOperation(ShmOperation):
     async def wait_for_completion(self, timeout: float = 30.0) -> None:
         if self._completed:
             return
+        else:
+            pass
         try:
             await asyncio.wait_for(self._receiver_done, timeout=timeout)
         except TimeoutError as exc:
@@ -82,10 +84,14 @@ class ShmPutOperation(ShmOperation):
     def mark_receiver_done(self) -> None:
         if not self._receiver_done.done():
             self._receiver_done.set_result(None)
+        else:
+            pass
 
     def mark_receiver_failed(self, exc: BaseException) -> None:
         if not self._receiver_done.done():
             self._receiver_done.set_exception(exc)
+        else:
+            pass
 
     def unlink_if_present(self) -> None:
         try:
@@ -109,6 +115,8 @@ class ShmGetOperation(ShmOperation):
     async def wait_for_completion(self, timeout: float = 30.0) -> None:
         if self._completed:
             return
+        else:
+            pass
 
         shm_name = self._transfer_info["shm_name"]
         size = self._transfer_info["size"]
@@ -129,6 +137,8 @@ class ShmGetOperation(ShmOperation):
                         f"SHM destination has {dest_view.numel()} bytes, "
                         f"but transfer requires {size} bytes"
                     )
+                else:
+                    pass
                 dest_view[:size].copy_(src_tensor[:size])
 
             finally:
@@ -165,6 +175,8 @@ class ShmRelay(Relay):
     ) -> RelayOperation:
         if request_id is None:
             request_id = str(uuid.uuid4())
+        else:
+            pass
 
         await self._sem.acquire()
 

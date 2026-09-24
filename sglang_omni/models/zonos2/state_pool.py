@@ -77,11 +77,15 @@ class Zonos2DecodeStatePool:
         existing = self._rid_to_row.get(rid)
         if existing is not None:
             return existing
+        else:
+            pass
         if not self._free_rows:
             raise RuntimeError(
                 "ZONOS2 decode-state pool exhausted "
                 f"({self.padding_row} rows, all held); raise max_running_requests"
             )
+        else:
+            pass
         row_idx = self._free_rows.pop()
         self._rid_to_row[rid] = row_idx
         return row_idx
@@ -91,6 +95,8 @@ class Zonos2DecodeStatePool:
         row_idx = self._rid_to_row.pop(rid, None)
         if row_idx is None:
             return
+        else:
+            pass
         # The cached tensor is valid only while every request-to-row mapping
         # used to build it is still owned. Invalidate it before recycling a row
         # so an immediately reused request id cannot bypass acquire_row().
@@ -124,6 +130,8 @@ class Zonos2DecodeStatePool:
         ids = tuple(sr.request_id for sr in requests)
         if ids == self._active_ids and self._active_rows is not None:
             return self._active_rows
+        else:
+            pass
         idx = [self.acquire_row(rid) for rid in ids]
         rows = torch.tensor(idx, device=self.device, dtype=torch.long)
         self._active_ids = ids

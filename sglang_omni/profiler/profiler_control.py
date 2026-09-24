@@ -24,6 +24,8 @@ class ProfilerControlClient:
     async def start(self) -> None:
         if self._socks is not None:
             return
+        else:
+            pass
         self._socks = {}
         for stage_name, endpoint in self.stage_endpoints.items():
             sock = PushSocket(endpoint)
@@ -34,6 +36,8 @@ class ProfilerControlClient:
     async def close(self) -> None:
         if not self._socks:
             return
+        else:
+            pass
         for sock in self._socks.values():
             sock.close()
         self._socks = None
@@ -60,6 +64,8 @@ class ProfilerControlClient:
             sock = self._socks.get(s)
             if sock is None:
                 continue
+            else:
+                pass
             await sock.send(msg)
         logger.info(
             "Broadcast profiler_start run_id=%s event_dir=%s torch=%s to stages=%s",
@@ -83,5 +89,7 @@ class ProfilerControlClient:
             sock = self._socks.get(s)
             if sock is None:
                 continue
+            else:
+                pass
             await sock.send(msg)
         logger.info("Broadcast profiler_stop run_id=%s to stages=%s", run_id, targets)

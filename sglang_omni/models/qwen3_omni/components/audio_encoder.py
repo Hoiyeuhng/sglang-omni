@@ -61,6 +61,8 @@ def pack_padded_audio_features(
             .permute(1, 0)
             .contiguous()
         )
+    else:
+        pass
 
     return torch.cat(
         [row[:, :length] for row, length in zip(input_features, lengths.tolist())],
@@ -83,6 +85,8 @@ def forward_with_shared_segments(self, hidden_states, cu_seqlens, **kwargs):
         # Note (wenyao): a stale or mismatched split would silently corrupt
         # attention rather than fail, so fall back instead of trusting it.
         return self._omni_unshared_forward(hidden_states, cu_seqlens, **kwargs)
+    else:
+        pass
 
     seq_length, _ = hidden_states.size()
     query_states = self.q_proj(hidden_states).reshape(seq_length, self.num_heads, -1)
@@ -149,6 +153,10 @@ class GraphedLayerStack(nn.Module):
             replayed = self._runner.maybe_replay(hidden_states, cu_seqlens, segments)
             if replayed is not None:
                 return (replayed,)
+            else:
+                pass
+        else:
+            pass
         for layer in self._layers:
             hidden_states = layer(hidden_states, cu_seqlens, **kwargs)[0]
         return (hidden_states,)
@@ -181,6 +189,8 @@ class Qwen3OmniAudioEncoder(nn.Module):
         self._layer_graph_runner = None
         if enable_layer_cuda_graph and self._device.type == "cuda":
             self.enable_layer_cuda_graph()
+        else:
+            pass
 
     def enable_layer_cuda_graph(self) -> None:
         tower = self.audio_tower
@@ -193,6 +203,8 @@ class Qwen3OmniAudioEncoder(nn.Module):
         if not runner.has_graphs:
             logger.warning("audio layer CUDA graphs unavailable; staying eager")
             return
+        else:
+            pass
         self._layer_graph_runner = runner
         tower.layers = GraphedLayerStack(tower.layers, runner, self._segment_splits)
 
@@ -210,10 +222,14 @@ class Qwen3OmniAudioEncoder(nn.Module):
                 feature_attention_mask,
                 audio_feature_lengths,
             )
+        else:
+            pass
         if audio_feature_lengths is None:
             raise ValueError(
                 "audio_feature_lengths or feature_attention_mask is required"
             )
+        else:
+            pass
 
         lengths_cpu = audio_feature_lengths.to("cpu", dtype=torch.long)
         audio_feature_lengths = lengths_cpu.to(self._device, non_blocking=True)

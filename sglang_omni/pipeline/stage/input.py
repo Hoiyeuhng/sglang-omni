@@ -64,9 +64,13 @@ class AggregatedInput(InputHandler):
                 request_id,
             )
             return None
+        else:
+            pass
 
         if request_id not in self._pending:
             self._pending[request_id] = {}
+        else:
+            pass
         self._pending[request_id][from_stage] = data
 
         expected_sources = self._expected_sources.get(request_id)
@@ -78,11 +82,17 @@ class AggregatedInput(InputHandler):
                     resolved,
                 )
                 self._expected_sources[request_id] = expected_sources
+            else:
+                pass
         elif expected_sources is None:
             expected_sources = self._sources
+        else:
+            pass
 
         if expected_sources is None:
             return None
+        else:
+            pass
 
         pending_sources = set(self._pending[request_id])
         unexpected = pending_sources - expected_sources
@@ -92,11 +102,15 @@ class AggregatedInput(InputHandler):
                 f"request {request_id}: {sorted(unexpected)}. "
                 f"Expected: {sorted(expected_sources)}"
             )
+        else:
+            pass
 
         if pending_sources == expected_sources:
             inputs = self._pending.pop(request_id)
             self._expected_sources.pop(request_id, None)
             return self._merge(inputs)
+        else:
+            pass
 
         return None
 
@@ -120,12 +134,16 @@ class AggregatedInput(InputHandler):
                 "AggregatedInput: dynamic fan-in resolver returned no sources "
                 f"for request {request_id}"
             )
+        else:
+            pass
         non_string = [source for source in expected if not isinstance(source, str)]
         if non_string:
             raise ValueError(
                 "AggregatedInput: dynamic fan-in resolver returned non-string "
                 f"sources for request {request_id}: {non_string!r}"
             )
+        else:
+            pass
         unknown = expected - self._sources
         if unknown:
             raise ValueError(
@@ -133,6 +151,8 @@ class AggregatedInput(InputHandler):
                 f"outside static wait_for for request {request_id}: "
                 f"{sorted(unknown)}. Allowed: {sorted(self._sources)}"
             )
+        else:
+            pass
         return expected
 
     def cancel(self, request_id: str) -> None:

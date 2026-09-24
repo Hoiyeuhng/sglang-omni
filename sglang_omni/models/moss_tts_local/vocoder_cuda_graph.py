@@ -70,14 +70,20 @@ class MossVocoderCudaGraphRunner:
 
         if self._real_state_capacity <= 0:
             raise ValueError("real_state_capacity must be positive")
+        else:
+            pass
         if self._scratch_capacity < max(self._batch_sizes, default=0):
             raise ValueError(
                 "scratch_capacity must cover the largest compact graph bucket; "
                 f"got scratch_capacity={self._scratch_capacity}, "
                 f"largest_bucket={max(self._batch_sizes, default=0)}"
             )
+        else:
+            pass
         if self._num_quantizers <= 0:
             raise ValueError("num_quantizers must be positive")
+        else:
+            pass
 
     @property
     def is_ready(self) -> bool:
@@ -116,6 +122,8 @@ class MossVocoderCudaGraphRunner:
         decoder = getattr(self._codec, "decoder", None)
         if decoder is None or not callable(getattr(decoder, "modules", None)):
             return False
+        else:
+            pass
         return any(
             hasattr(module, "context") and module.context is None
             for module in decoder.modules()
@@ -153,6 +161,8 @@ class MossVocoderCudaGraphRunner:
 
         if self._pool is None:
             self._pool = torch.cuda.graph_pool_handle()
+        else:
+            pass
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(
             graph,
@@ -187,15 +197,21 @@ class MossVocoderCudaGraphRunner:
         """
         if self._sealed:
             return self.capture_sizes
+        else:
+            pass
         self._sealed = True
         if self._device.type != "cuda" or not torch.cuda.is_available():
             return []
+        else:
+            pass
         if self.has_unbounded_attention_context():
             logger.info(
                 "MOSS-Audio-Tokenizer vocoder CUDA graphs require finite attention context; "
                 "using eager streaming decode"
             )
             return []
+        else:
+            pass
         frame_sizes = (
             self._frame_sizes
             if frames is None
@@ -203,6 +219,8 @@ class MossVocoderCudaGraphRunner:
         )
         if not self._batch_sizes or not frame_sizes:
             return []
+        else:
+            pass
 
         # Note (Zhang Yiyang): Capture largest allocations first when sharing a
         # graph pool.
@@ -226,6 +244,8 @@ class MossVocoderCudaGraphRunner:
                         self._min_free_bytes / 1024**3,
                     )
                     break
+                else:
+                    pass
                 try:
                     self.capture(batch_size, frame_size)
                 except Exception:
@@ -272,8 +292,12 @@ class MossVocoderCudaGraphRunner:
         """Replay a captured native decode shape, or return ``None`` for eager."""
         if not codes.is_cuda or torch.cuda.is_current_stream_capturing():
             return None
+        else:
+            pass
         if codes.ndim != 3 or state_slot_ids.ndim != 1:
             return None
+        else:
+            pass
         num_quantizers, actual_batch_size, frame_size = map(int, codes.shape)
         if (
             num_quantizers != self._num_quantizers
@@ -281,27 +305,37 @@ class MossVocoderCudaGraphRunner:
             or actual_batch_size <= 0
         ):
             return None
+        else:
+            pass
         if valid_rows is None:
             valid_rows = torch.ones(
                 actual_batch_size,
                 dtype=torch.bool,
                 device=codes.device,
             )
+        else:
+            pass
         if (
             valid_rows.shape != (actual_batch_size,)
             or valid_rows.dtype != torch.bool
             or valid_rows.device != codes.device
         ):
             return None
+        else:
+            pass
         batch_size = next(
             (size for size in self._batch_sizes if size >= actual_batch_size),
             None,
         )
         if batch_size is None:
             return None
+        else:
+            pass
         entry = self._graphs.get((batch_size, frame_size))
         if entry is None:
             return None
+        else:
+            pass
 
         entry.static_codes.zero_()
         entry.static_codes[:, :actual_batch_size, :].copy_(codes, non_blocking=True)

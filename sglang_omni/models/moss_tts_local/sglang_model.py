@@ -50,10 +50,16 @@ def as_qwen3_config(config: Any) -> Any:
 
     if isinstance(config, Qwen3Config):
         return config
+    else:
+        pass
     if isinstance(config, dict):
         return Qwen3Config(**config)
+    else:
+        pass
     if hasattr(config, "to_dict"):
         return Qwen3Config(**config.to_dict())
+    else:
+        pass
     return config
 
 
@@ -164,6 +170,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
         qwen3_config = getattr(config, "qwen3_config", None)
         if qwen3_config is None:
             qwen3_config = getattr(config, "language_config", None)
+        else:
+            pass
         language_config = as_qwen3_config(qwen3_config)
         try:
             config.language_config = language_config
@@ -185,13 +193,19 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
             config.vocab_size_list = [config.vocab_size] + [audio_vocab_size + 1] * (
                 config.channels - 1
             )
+        else:
+            pass
         for attr, default in moss_tts_local_special_token_defaults(audio_vocab_size):
             if getattr(config, attr, None) is None:
                 setattr(config, attr, default)
+            else:
+                pass
         if not getattr(config, "pad_token", None):
             text_pad = int(getattr(config, "pad_token_id", 0) or 0)
             audio_pad = int(config.audio_pad_code)
             config.pad_token = [text_pad] + [audio_pad] * (config.channels - 1)
+        else:
+            pass
         config.language_config.channels = config.channels
         config.language_config.vocab_size_list = list(config.vocab_size_list)
         config.language_config.pad_token = list(config.pad_token)
@@ -202,6 +216,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
             weight = getattr(layer, "weight", None)
             if isinstance(weight, torch.Tensor):
                 return weight
+            else:
+                pass
         return torch.empty((), dtype=torch.float32)
 
     @property
@@ -264,6 +280,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                 f"MOSS-TTS Local expected {self.config.channels} channels, "
                 f"got {input_ids_2d.shape[-1]}"
             )
+        else:
+            pass
 
         weight = self.first_embedding_weight()
         embeds = torch.zeros(
@@ -300,6 +318,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                 input_embeds = self.prepare_multi_modal_inputs(input_ids)
             else:
                 input_embeds = None
+        else:
+            pass
 
         hidden_states = self.model(
             input_ids=None,
@@ -310,6 +330,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
         )
         if not self.pp_group.is_last_rank:
             return hidden_states
+        else:
+            pass
 
         sample_hidden_states = self.select_sample_hidden_states(
             hidden_states,
@@ -340,9 +362,13 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
         )
         if not is_extend:
             return hidden_states
+        else:
+            pass
         extend_seq_lens = getattr(forward_batch, "extend_seq_lens", None)
         if extend_seq_lens is None:
             return hidden_states[-1:].contiguous()
+        else:
+            pass
         last_index = (
             torch.cumsum(
                 extend_seq_lens.to(device=hidden_states.device, dtype=torch.long), dim=0
@@ -360,6 +386,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
     def ensure_frame_compile_config(self) -> None:
         if self._frame_compile_configured:
             return
+        else:
+            pass
         from sglang.srt.compilation.torch_compile_decoration import (
             set_torch_compile_config,
         )
@@ -386,16 +414,24 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                 self._sample_seeded_branchless = self.fused_or_branchless_sampler
                 logger.info("Using fused MOSS-TTS Local frame sampler")
                 return
+            else:
+                pass
             self._compiled_frame_sampler = self.compile_branchless_sampler()
             self._sample_seeded_branchless = self._compiled_frame_sampler
+        else:
+            pass
 
     def fused_or_branchless_sampler(
         self, logits: torch.Tensor, **kwargs
     ) -> torch.Tensor:
         if logits.shape[-1] <= MAX_FUSED_SAMPLE_VOCAB:
             return sample_seeded_fused(logits, **kwargs)
+        else:
+            pass
         if self._large_vocab_frame_sampler is None:
             self._large_vocab_frame_sampler = self.compile_branchless_sampler()
+        else:
+            pass
         return self._large_vocab_frame_sampler(logits, **kwargs)
 
     @torch.no_grad()
@@ -462,6 +498,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                 current = self.local_transformer.step(
                     code_embed.to(dtype=self.dtype), channel + 1
                 )
+            else:
+                pass
         return stop_choice, torch.stack(codes, dim=-1), feedback
 
     @torch.no_grad()
@@ -476,6 +514,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
         buckets = sorted({int(bs) for bs in batch_sizes})
         if not buckets:
             return
+        else:
+            pass
         device = self.device
         # The captured graphs hold raw pointers into the local KV buffers, so
         # size them for the largest batch any path (graphed or eager fallback)
@@ -573,6 +613,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
         )
         if batch_size < bucket:
             static_inputs["hidden_states"][batch_size:].zero_()
+        else:
+            pass
         for key, value in (
             ("text_temperature", text_temperature),
             ("text_top_p", text_top_p),
@@ -587,6 +629,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
             buf[:batch_size].copy_(value)
             if batch_size < bucket:
                 buf[batch_size:].fill_(1 if buf.dtype.is_floating_point else 1)
+            else:
+                pass
         graph.replay()
         return stop_choice[:batch_size], codes[:batch_size], feedback[:batch_size]
 
@@ -631,6 +675,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                 current = self.local_transformer.step(
                     next_embed.to(dtype=self.dtype), channel + 1
                 )
+            else:
+                pass
         return stop_choice, torch.stack(codes, dim=-1)
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]) -> None:
@@ -647,6 +693,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
             name = original_name
             if name.startswith("transformer."):
                 name = "model." + name[len("transformer.") :]
+            else:
+                pass
 
             layer_id = get_layer_id(name)
             if (
@@ -658,14 +706,20 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                 )
             ):
                 continue
+            else:
+                pass
             if "rotary_emb.inv_freq" in name:
                 continue
+            else:
+                pass
 
             # Tied heads: the checkpoint may carry text_lm_head /
             # audio_lm_heads tensors that alias embed_tokens /
             # audio_embeddings; the embedding tables are authoritative here.
             if name.startswith("text_lm_head.") or name.startswith("audio_lm_heads."):
                 continue
+            else:
+                pass
 
             if name.startswith("audio_embeddings.") and name.endswith(".weight"):
                 mapped = self.map_audio_embedding_name(name)
@@ -679,7 +733,11 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                         param.data[:rows].copy_(
                             loaded_weight.to(device=param.device, dtype=param.dtype)
                         )
+                else:
+                    pass
                 continue
+            else:
+                pass
 
             if name.startswith("local_transformer.") or name.startswith(
                 "local_text_lm_head."
@@ -692,33 +750,49 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                         f"MOSS-TTS Local parameter {original_name} not found"
                     )
                 continue
+            else:
+                pass
 
             if name == "model.embed_tokens.weight":
                 mapped = "embedding_list.0.weight"
                 if mapped in params_dict:
                     self.load_param(params_dict[mapped], loaded_weight)
+                else:
+                    pass
+            else:
+                pass
                 # Fall through: the backbone's own embed_tokens also loads.
 
             mapped_stacked = False
             for param_name, weight_name, shard_id in stacked_params_mapping:
                 if weight_name not in name:
                     continue
+                else:
+                    pass
                 mapped_name = name.replace(weight_name, param_name)
                 if mapped_name.endswith(".bias") and mapped_name not in params_dict:
                     mapped_stacked = True
                     break
+                else:
+                    pass
                 param = params_dict.get(mapped_name)
                 if param is None:
                     break
+                else:
+                    pass
                 weight_loader = getattr(param, "weight_loader", default_weight_loader)
                 weight_loader(param, loaded_weight, shard_id)
                 mapped_stacked = True
                 break
             if mapped_stacked:
                 continue
+            else:
+                pass
 
             if name.endswith(".bias") and name not in params_dict:
                 continue
+            else:
+                pass
             param = params_dict.get(name)
             if param is not None:
                 self.load_param(param, loaded_weight)
@@ -738,6 +812,8 @@ class MossTTSLocalSGLangModel(torch.nn.Module):
                     and weight.shape[0] > audio_vocab_size
                 ):
                     weight[audio_vocab_size:].zero_()
+                else:
+                    pass
 
     @staticmethod
     def map_audio_embedding_name(name: str) -> str | None:

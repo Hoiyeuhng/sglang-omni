@@ -33,6 +33,8 @@ class DotsTTSSGLangModel(nn.Module):
             raise ValueError(
                 "dots.tts requires its top-level config and checkpoint path"
             )
+        else:
+            pass
         self.qwen2 = Qwen2ForCausalLM(
             llm_config,
             quant_config=quant_config,
@@ -66,6 +68,8 @@ class DotsTTSSGLangModel(nn.Module):
         """
         if max_batch_size <= 0:
             raise ValueError("dots.tts graph feedback buffer needs a positive size")
+        else:
+            pass
         parameter = next(self.qwen2.parameters())
         self._graph_feedback_buffer = torch.zeros(
             (int(max_batch_size), int(self.qwen2.config.hidden_size)),
@@ -81,6 +85,8 @@ class DotsTTSSGLangModel(nn.Module):
             if name.startswith("llm."):
                 qwen_weights.append((name.removeprefix("llm."), tensor))
                 continue
+            else:
+                pass
             if name.startswith(
                 (
                     "audio_encoder.",
@@ -94,6 +100,8 @@ class DotsTTSSGLangModel(nn.Module):
                 )
             ):
                 continue
+            else:
+                pass
             parameter = flow_params.get(name)
             assert parameter is not None, (
                 f"Unexpected dots.tts checkpoint weight {name!r}; expected an "
@@ -123,6 +131,8 @@ class DotsTTSSGLangModel(nn.Module):
             input_embeds = self._graph_feedback_buffer[: input_ids.shape[0]]
         elif input_embeds is None:
             input_embeds = forward_batch.input_embeds
+        else:
+            pass
         hidden_states = self.qwen2.model(
             input_ids=input_ids,
             positions=positions,
