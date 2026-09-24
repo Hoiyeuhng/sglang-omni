@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Literal
 
 import pytest
 
@@ -30,8 +31,8 @@ def run_checker(*args: str) -> subprocess.CompletedProcess[str]:
 def probe_model_file(source: str) -> Iterator[Path]:
     with TemporaryDirectory(
         prefix=PROBE_PACKAGE, dir=REPO_ROOT / "sglang_omni" / "models"
-    ) as directory:
-        probe = Path(directory) / "runner.py"
+    ) as probe_directory:
+        probe = Path(probe_directory) / "runner.py"
         probe.write_text(source, encoding="utf-8")
         yield probe
 
@@ -110,7 +111,7 @@ def test_new_bare_if_fails_the_default_scan() -> None:
 
 
 @pytest.mark.parametrize(
-    ("source", "expected_status"),
+    ("source", "expected_exit_code"),
     [
         pytest.param(
             "if outer:\n    if inner:\n        pass\n    else:\n        pass\n",
@@ -155,13 +156,13 @@ def test_new_bare_if_fails_the_default_scan() -> None:
     ],
 )
 def test_check_branch_structure_without_rewriting(
-    source: str, expected_status: int
+    source: str, expected_exit_code: Literal[0, 1]
 ) -> None:
     with probe_model_file(source) as probe:
-        original = probe.read_bytes()
+        original_source = probe.read_bytes()
         result = run_checker(str(probe))
-        assert result.returncode == expected_status, result.stderr
-        assert probe.read_bytes() == original
+        assert result.returncode == expected_exit_code, result.stderr
+        assert probe.read_bytes() == original_source
 
 
 @pytest.mark.parametrize(
@@ -190,7 +191,7 @@ def test_check_branch_structure_without_rewriting(
     ],
 )
 def test_fix_preserves_execution_and_is_idempotent(source: str) -> None:
-    original = subprocess.run(
+    original_execution = subprocess.run(
         [sys.executable, "-c", source],
         check=True,
         capture_output=True,
@@ -199,20 +200,20 @@ def test_fix_preserves_execution_and_is_idempotent(source: str) -> None:
     with probe_model_file(source) as probe:
         result = run_checker("--fix", str(probe))
         assert result.returncode == 0, result.stderr
-        rewritten = probe.read_bytes()
-        actual = subprocess.run(
+        rewritten_source = probe.read_bytes()
+        rewritten_execution = subprocess.run(
             [sys.executable, str(probe)],
             check=True,
             capture_output=True,
             text=True,
         )
-        assert actual.stdout == original.stdout
-        assert actual.stderr == original.stderr
-        checked = run_checker(str(probe))
-        assert checked.returncode == 0, checked.stderr
-        again = run_checker("--fix", str(probe))
-        assert again.returncode == 0, again.stderr
-        assert probe.read_bytes() == rewritten
+        assert rewritten_execution.stdout == original_execution.stdout
+        assert rewritten_execution.stderr == original_execution.stderr
+        check_result = run_checker(str(probe))
+        assert check_result.returncode == 0, check_result.stderr
+        second_fix_result = run_checker("--fix", str(probe))
+        assert second_fix_result.returncode == 0, second_fix_result.stderr
+        assert probe.read_bytes() == rewritten_source
 
 
 def test_fix_preserves_crlf_newlines() -> None:
@@ -220,21 +221,21 @@ def test_fix_preserves_crlf_newlines() -> None:
         probe.write_bytes(b"if True:\r\n    print('value')\r\n")
         result = run_checker("--fix", str(probe))
         assert result.returncode == 0, result.stderr
-        rewritten = probe.read_bytes()
-        assert b"\r\n" in rewritten
-        assert b"\n" not in rewritten.replace(b"\r\n", b"")
+        rewritten_source = probe.read_bytes()
+        assert b"\r\n" in rewritten_source
+        assert b"\n" not in rewritten_source.replace(b"\r\n", b"")
 
 
 def test_fix_never_leaves_invalid_python_on_disk() -> None:
     source = "if (\n    True\n): print('value')\n"
     compile(source, "probe.py", "exec")
     with probe_model_file(source) as probe:
-        original = probe.read_bytes()
+        original_source = probe.read_bytes()
         result = run_checker("--fix", str(probe))
         assert result.returncode in (0, 2), result.stderr
         if result.returncode == 2:
-            assert probe.read_bytes() == original
+            assert probe.read_bytes() == original_source
         else:
             compile(probe.read_bytes(), str(probe), "exec")
-            checked = run_checker(str(probe))
-            assert checked.returncode == 0, checked.stderr
+            check_result = run_checker(str(probe))
+            assert check_result.returncode == 0, check_result.stderr
