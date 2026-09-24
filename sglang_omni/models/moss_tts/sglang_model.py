@@ -583,15 +583,16 @@ class MossTTSDelaySGLangModel(torch.nn.Module):
         if is_audio:
             token_ids = self._text_control_token_ids.to(
                 device=logits[0].device
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             logits[0] = logits[0].index_select(-1, token_ids)
         return logits
 
     @property
     def text_control_token_ids(self) -> torch.Tensor:
         return (
+            # ast-grep-ignore: leading-underscore
             self._text_control_token_ids
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @staticmethod
     def is_sampling_cuda_graph_compatible(data: Any) -> bool:

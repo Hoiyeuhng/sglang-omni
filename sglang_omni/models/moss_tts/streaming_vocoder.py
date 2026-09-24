@@ -74,13 +74,10 @@ class MossStreamingVocoderScheduler(StreamingVocoderBase[MossStreamState, None])
         self.stream_holdback_tokens = int(stream_holdback_tokens)
         self.default_initial_chunk_frames = max(0, int(initial_chunk_frames))
         self.default_n_vq = int(
-            getattr(getattr(vocoder.processor, "model_config", None), "n_vq", 0)
-            or 0  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            getattr(getattr(vocoder.processor, "model_config", None), "n_vq", 0) or 0
         )
         self.default_audio_pad_code = resolve_moss_audio_pad_code(
-            getattr(
-                vocoder.processor, "model_config", None
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            getattr(vocoder.processor, "model_config", None)
         )
         sample_rate = int(self.audio_vocoder.sample_rate)
         self.default_samples_per_frame = self.resolve_samples_per_frame(

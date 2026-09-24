@@ -61,11 +61,11 @@ def cached_fbank(
         window_shift,
         window_size,
         padded_window_size,
-    ) = kaldi._get_waveform_and_window_properties(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    ) = kaldi._get_waveform_and_window_properties(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         waveform, 0, sample_frequency, frame_shift, frame_length, True, 0.97
     )
     strided_input, _ = (
-        kaldi._get_window(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        kaldi._get_window(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             wav,
             padded_window_size,
             window_size,
@@ -84,7 +84,6 @@ def cached_fbank(
     banks = mel_banks(num_mel_bins, padded_window_size, sample_frequency, device, dtype)
     return torch.max(
         torch.mm(spectrum, banks.T),
-        kaldi._get_epsilon(
-            device, dtype
-        ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        # ast-grep-ignore: leading-underscore
+        kaldi._get_epsilon(device, dtype),
     ).log()

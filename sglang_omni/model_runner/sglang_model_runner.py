@@ -89,6 +89,7 @@ class OmniKVCacheConfigurator(KVCacheConfigurator):
     total_gpu_memory_fraction: float | None = None
     kv_cache_bytes: int | None = None
 
+    # ast-grep-ignore: leading-underscore
     def _profile_available_bytes(self, pre_model_load_memory: float) -> int:
         """Profile KV-cache headroom for colocated SGLang AR stages.
 
@@ -144,6 +145,7 @@ class OmniKVCacheConfigurator(KVCacheConfigurator):
             return self.kv_cache_bytes
 
         if self.total_gpu_memory_fraction is None:
+            # ast-grep-ignore: leading-underscore
             return KVCacheConfigurator._profile_available_bytes(
                 self, pre_model_load_memory
             )
@@ -308,6 +310,7 @@ class SGLModelRunner(ModelRunner):
             server_args=server_args,
         )
 
+    # ast-grep-ignore: leading-underscore
     def _extend_forward_kwargs(self, forward_batch, pp_proxy_tensors):
         """Expose Omni's private prefill sidecar after graph admission.
 
@@ -316,6 +319,7 @@ class SGLModelRunner(ModelRunner):
         contracts; model kwargs are the supported late-bound transport used by
         both eager execution and breakable prefill graph capture/replay.
         """
+        # ast-grep-ignore: leading-underscore
         kwargs = super()._extend_forward_kwargs(forward_batch, pp_proxy_tensors)
         prefill_inputs = get_omni_prefill_inputs(forward_batch)
         if prefill_inputs is None:
@@ -341,6 +345,7 @@ class SGLModelRunner(ModelRunner):
             )
         return kwargs
 
+    # ast-grep-ignore: leading-underscore
     def _resolve_draft_load_format(self) -> str | None:
         """A weight-share follower builds its module tree with dummy weights.
 
@@ -353,6 +358,7 @@ class SGLModelRunner(ModelRunner):
         ws = ipc_weights.get_weight_share_config()
         if ws is not None and ws.role == "follower":
             return "dummy"
+        # ast-grep-ignore: leading-underscore
         return super()._resolve_draft_load_format()
 
     def load_model(self):

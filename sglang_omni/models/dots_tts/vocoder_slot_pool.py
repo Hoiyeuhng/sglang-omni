@@ -95,8 +95,9 @@ class DotsVocoderSlotPool:
         _, channels, window_size = window.shape
         self.window_size = int(window_size)
         self.lookahead = int(
+            # ast-grep-ignore: leading-underscore
             inference._decoder_stream_lookahead()
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
         self.hop_size = int(inference.vocoder.hop_size)
         self.lstm_h = hidden_h.new_zeros(int(layers), self.num_slots, int(hidden))
         self.lstm_c = hidden_c.new_zeros(int(layers), self.num_slots, int(hidden))
@@ -181,16 +182,16 @@ class DotsVocoderSlotPool:
         # lockstep-only. Expect breakage if upstream renames these.
         inference._validate_stream_latents(
             packed
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         decoder_input, (hidden_h, hidden_c) = (
-            inference._decode_stream_latents(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            inference._decode_stream_latents(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
                 packed, (hidden_h, hidden_c)
             )
         )
         new_window = append_decoder_input_per_row(decoder_input, window, valid)
         audio_window = inference._decode_stream_window(
             new_window
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
         self.lstm_h[:, slot_index, :] = hidden_h
         self.lstm_c[:, slot_index, :] = hidden_c
@@ -206,7 +207,7 @@ class DotsVocoderSlotPool:
         slot = int(slot)
         if slot not in self.in_use:
             raise RuntimeError(f"dots.tts streaming flush referenced free slot {slot}")
-        audio_window = self.inference._decode_stream_window(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        audio_window = self.inference._decode_stream_window(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             self.window[slot : slot + 1]
         )
         return self.slice_audio(slot, audio_window, final=True)

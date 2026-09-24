@@ -104,39 +104,44 @@ class WhisperPreLMEncoderService(PreLMEncoderService[Any, torch.Tensor, torch.Te
         )
 
         self.encoder_token_count = int(encoder_token_count)
-        self._entry_bytes = (  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._entry_bytes = (  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             self.encoder_token_count * self.hidden_size * self.dtype.itemsize
         )
         derived_bytes = (
-            int(cache_max_entries) * self._entry_bytes
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        self._cache_max_bytes = (  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            int(cache_max_entries)
+            # ast-grep-ignore: leading-underscore
+            * self._entry_bytes
+        )
+        self._cache_max_bytes = (  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             derived_bytes
             if cache_max_bytes is None
             else min(derived_bytes, int(cache_max_bytes))
         )
-        self._cache_capacity_entries = min(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._cache_capacity_entries = min(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             int(cache_max_entries),
+            # ast-grep-ignore: leading-underscore
             self._cache_max_bytes
-            // self._entry_bytes,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            // self._entry_bytes,  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         )
         self._pin_host_memory = (
             pin_host_memory and self.device.type == "cuda"
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.cache = StageOutputCache(
             max_size=cache_max_entries,
-            max_bytes=self._cache_max_bytes,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            max_bytes=self._cache_max_bytes,  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             cache_device="cpu",
-            pin_memory=self._pin_host_memory,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            pin_memory=self._pin_host_memory,  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         )
         self.pin_failures = 0
         self.prewarm_s = 0.0
         if (
+            # ast-grep-ignore: leading-underscore
             self._pin_host_memory
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        ):
             self.prewarm_pinned_pool(
+                # ast-grep-ignore: leading-underscore
                 self._cache_capacity_entries
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )
         self.namespace = cache_namespace
         self.max_batch_size = max(int(max_batch_size), 1)
         self.max_batch_wait_s = max(float(max_batch_wait_ms), 0.0) / 1000.0
@@ -160,29 +165,33 @@ class WhisperPreLMEncoderService(PreLMEncoderService[Any, torch.Tensor, torch.Te
     def entry_bytes(self) -> int:
         """Bytes of one cached encoder state."""
         return (
+            # ast-grep-ignore: leading-underscore
             self._entry_bytes
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @property
     def cache_max_bytes(self) -> int:
         """Effective byte budget after applying the optional cap."""
         return (
+            # ast-grep-ignore: leading-underscore
             self._cache_max_bytes
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @property
     def cache_capacity_entries(self) -> int:
         """How many encoder states the cache can hold at once."""
         return (
+            # ast-grep-ignore: leading-underscore
             self._cache_capacity_entries
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @property
     def pin_host_memory(self) -> bool:
         """Whether cached states are held in page-locked host memory."""
         return (
+            # ast-grep-ignore: leading-underscore
             self._pin_host_memory
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     def new_pinned_host(self, tokens: int) -> torch.Tensor:
         return torch.empty(
@@ -225,17 +234,18 @@ class WhisperPreLMEncoderService(PreLMEncoderService[Any, torch.Tensor, torch.Te
             "(%.1f MB) in %.2fs",
             warmed,
             warmed
-            * self._entry_bytes
-            / 1e6,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            * self._entry_bytes / 1e6,
             self.prewarm_s,
         )
 
     def disable_pinning(self, exc: Exception) -> None:
         if (
+            # ast-grep-ignore: leading-underscore
             not self._pin_host_memory
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        ):
             return
-        self._pin_host_memory = False  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._pin_host_memory = False  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.cache.pin_memory = False
         logger.warning(
             "Whisper pre-LM cache: pinned host allocation failed (%s); "
@@ -373,10 +383,10 @@ class WhisperPreLMEncoderService(PreLMEncoderService[Any, torch.Tensor, torch.Te
                 "queue_wait_max_s": self.queue_wait_max_s,
                 "encoder_time_s": self.encoder_time_s,
                 "cache_entries": len(self.cache),
-                "cache_capacity_entries": self._cache_capacity_entries,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                "cache_capacity_entries": self._cache_capacity_entries,  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
                 "cache_bytes": self.cache.current_bytes,
                 "cache_evictions": self.cache.eviction_count,
-                "pin_host_memory": self._pin_host_memory,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                "pin_host_memory": self._pin_host_memory,  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
                 "pin_failures": self.pin_failures,
                 "pin_prewarm_s": self.prewarm_s,
             }
@@ -489,8 +499,10 @@ class WhisperPreLMEncoderService(PreLMEncoderService[Any, torch.Tensor, torch.Te
         Returns None when pinning is off or the item has no cache key.
         """
         if (
-            not self._pin_host_memory or self.cache_key(item) is None
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            not self._pin_host_memory
+            or self.cache_key(item) is None
+        ):
             return None
         try:
             host = self.new_pinned_host(int(embedding.shape[0]))

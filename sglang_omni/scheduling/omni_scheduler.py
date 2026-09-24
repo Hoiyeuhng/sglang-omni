@@ -98,7 +98,7 @@ def compact_decode_input_history(data: ARRequestData) -> None:
 
 def detach_request_data(req: Any) -> None:
     """Break Req -> data; async snapshots retain the one-way data -> Req edge."""
-    req._omni_data = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._omni_data = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
 
 class NoOpSender:
@@ -837,7 +837,7 @@ class OmniScheduler:
             # the way every other abort does.
             for (
                 timeout_abort
-            ) in self._poll_timeout_aborts():  # noqa: leading-underscore
+            ) in self._poll_timeout_aborts():  # ast-grep-ignore: leading-underscore
                 if timeout_abort.rid in self.aborted_request_ids:
                     continue
                 self.emit_request_error(
@@ -1256,9 +1256,10 @@ class OmniScheduler:
             if req_id in self.aborted_request_ids:
                 return
             # note (guozhihao): Priority defaulting must run before the queued-limit abort.
-            if not self._set_or_validate_priority(req):  # noqa: leading-underscore
+            # ast-grep-ignore: leading-underscore
+            if not self._set_or_validate_priority(req):
                 return
-            if self._abort_on_queued_limit(req):  # noqa: leading-underscore
+            if self._abort_on_queued_limit(req):  # ast-grep-ignore: leading-underscore
                 logger.warning(
                     "Rejecting request %s: waiting queue is full "
                     "(max_queued_requests=%s, waiting=%s)",
@@ -1275,9 +1276,9 @@ class OmniScheduler:
             )
             req._coalesce_enqueue_t = (
                 time.perf_counter()
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-            req._omni_terminal_claimed = False  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-            req._omni_data = req_data  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+            req._omni_terminal_claimed = False  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+            req._omni_data = req_data  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             self.waiting_queue.append(req)
 
         if request_admission_lock_held:
@@ -1288,8 +1289,11 @@ class OmniScheduler:
 
     def apply_prompt_cache_epoch(self, req: Any) -> None:
         cache_key = getattr(
-            req, "_omni_prompt_cache_key", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req,
+            # ast-grep-ignore: leading-underscore
+            "_omni_prompt_cache_key",
+            None,
+        )
         if cache_key is not None:
             req.extra_key = f"{cache_key}:weights:{self.prompt_cache_epoch}"
 
@@ -1442,12 +1446,14 @@ class OmniScheduler:
         oldest = now
         for req in waiting:
             t = getattr(
-                req, "_coalesce_enqueue_t", None
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                req,
+                # ast-grep-ignore: leading-underscore
+                "_coalesce_enqueue_t",
+                None,
+            )
             if t is None:
-                t = req._coalesce_enqueue_t = (
-                    now  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-                )
+                # ast-grep-ignore: leading-underscore
+                t = req._coalesce_enqueue_t = now
             oldest = min(oldest, t)
         if now - oldest >= self.prefill_coalesce_wait_s:
             return _Upstream.get_new_batch_prefill(self, running_batch)
@@ -1455,6 +1461,7 @@ class OmniScheduler:
 
     def run_batch(self, batch, pp_proxy_tensors=None):
         try:
+            # ast-grep-ignore: leading-underscore
             return self._run_batch(batch, pp_proxy_tensors)
         except Exception as exc:
             self.handle_batch_failure(batch, exc)
@@ -1465,8 +1472,11 @@ class OmniScheduler:
         # note (Richard Wang): cache prompt before blocking tail inserts
         for req in batch.reqs:
             if req.output_ids and getattr(
-                req, "_omni_prompt_only_radix", False
-            ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                req,
+                # ast-grep-ignore: leading-underscore
+                "_omni_prompt_only_radix",
+                False,
+            ):
                 req.skip_radix_cache_insert = True
 
     def stamp_batch_launch(self, batch) -> None:
@@ -1479,6 +1489,7 @@ class OmniScheduler:
         if batch.extend_num_tokens:
             self.processed_tokens_counter += batch.extend_num_tokens
 
+    # ast-grep-ignore: leading-underscore
     def _run_batch(self, batch, pp_proxy_tensors=None):
         """Run a batch through the model runner.
 
@@ -1504,8 +1515,10 @@ class OmniScheduler:
 
         sched_reqs = [
             SchedulerRequest(
-                request_id=req.rid, data=req._omni_data
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                request_id=req.rid,
+                # ast-grep-ignore: leading-underscore
+                data=req._omni_data,
+            )
             for req in batch.reqs
         ]
         return SchedulerOutput(requests=sched_reqs, batch_data=batch)
@@ -1692,12 +1705,14 @@ class OmniScheduler:
                 )
                 if not is_aborted:
                     if (
+                        # ast-grep-ignore: leading-underscore
                         req._omni_terminal_claimed
-                    ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    ):
                         continue
                     data = (
+                        # ast-grep-ignore: leading-underscore
                         req._omni_data
-                    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    )
                     if data is None:
                         logger.error(
                             f"OmniScheduler: terminal request {rid!r} has no "
@@ -1709,7 +1724,7 @@ class OmniScheduler:
                     # terminal request under the shared lock makes normal
                     # terminalization its sole cleanup owner without hiding
                     # request data from stream ingress before cleanup finishes.
-                    req._omni_terminal_claimed = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    req._omni_terminal_claimed = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
             if is_aborted:
                 # note (Gaokai): an abort landing mid-step finishes here via
@@ -2277,11 +2292,14 @@ class OmniScheduler:
         )
         return bool(engine_paused and self.last_pause_mode == "retract")
 
+    # ast-grep-ignore: leading-underscore
     def _add_request_to_queue(self, req: Any, is_retracted: bool = False) -> None:
         if req.is_retracted:
             compact_decode_input_history(
+                # ast-grep-ignore: leading-underscore
                 req._omni_data
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )
+        # ast-grep-ignore: leading-underscore
         _Upstream._add_request_to_queue(self, req, is_retracted=is_retracted)
 
     def retract_running_requests(self) -> int:
@@ -2303,6 +2321,7 @@ class OmniScheduler:
         )
         batch.reqs = []
         for req in retracted_reqs:
+            # ast-grep-ignore: leading-underscore
             self._add_request_to_queue(req)
         batch.batch_is_full = False
         self.chunked_req = None
@@ -2337,12 +2356,15 @@ class OmniScheduler:
                 if req.rid != request_id:
                     continue
                 if (
+                    # ast-grep-ignore: leading-underscore
                     req._omni_terminal_claimed
-                ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                ):
                     # stream_output already owns final cleanup for this request.
                     if (
-                        req._omni_data is not None
-                    ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                        # ast-grep-ignore: leading-underscore
+                        req._omni_data
+                        is not None
+                    ):
                         marked = True
                     continue
                 if req.finished() or req.is_retracted:
@@ -2765,13 +2787,15 @@ class OmniScheduler:
             for req in batch.reqs:
                 if req.rid == request_id:
                     return (
+                        # ast-grep-ignore: leading-underscore
                         req._omni_data
-                    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    )
         for req in self.waiting_queue:
             if req.rid == request_id:
                 return (
+                    # ast-grep-ignore: leading-underscore
                     req._omni_data
-                )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                )
         return None
 
     @staticmethod

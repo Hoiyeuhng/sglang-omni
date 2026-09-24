@@ -105,8 +105,10 @@ class OmniPlatform(DeviceMixin):
         """
         if device.type != self.device_type:
             return None
+        # ast-grep-ignore: leading-underscore
         return self._get_device_graph_backend()
 
+    # ast-grep-ignore: leading-underscore
     def _get_device_graph_backend(self) -> DeviceGraphBackend | None:
         return None
 

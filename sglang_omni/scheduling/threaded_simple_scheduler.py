@@ -23,19 +23,25 @@ _ABORTED_REQUEST_ID_RETAINED = 5000
 class CountingInbox(_queue_mod.Queue):
     """Track queued and claimed ``new_request`` ids."""
 
+    # ast-grep-ignore: leading-underscore
     def _init(self, maxsize: int) -> None:
+        # ast-grep-ignore: leading-underscore
         super()._init(maxsize)
         self.request_counts: dict[str, int] = {}
         self.claimed_counts: dict[str, int] = {}
 
+    # ast-grep-ignore: leading-underscore
     def _put(self, item: IncomingMessage) -> None:
+        # ast-grep-ignore: leading-underscore
         super()._put(item)
         if item.type != "new_request":
             return
         request_id = item.request_id
         self.request_counts[request_id] = self.request_counts.get(request_id, 0) + 1
 
+    # ast-grep-ignore: leading-underscore
     def _get(self) -> IncomingMessage:
+        # ast-grep-ignore: leading-underscore
         item = super()._get()
         if item.type != "new_request":
             return item

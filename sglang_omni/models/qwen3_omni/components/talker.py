@@ -416,7 +416,7 @@ class Qwen3OmniMoeTalkerDecoderLayer(Qwen3OmniMoeThinkerTextDecoderLayer):
         )
 
         if should_allreduce_fusion:
-            hidden_states._sglang_needs_allreduce_fusion = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            hidden_states._sglang_needs_allreduce_fusion = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         else:
             hidden_states, residual = self.layer_communicator.postprocess_layer(
                 hidden_states, residual, forward_batch
@@ -1114,8 +1114,10 @@ class Qwen3OmniTalker(nn.Module):
                     rep_toks.extend(unique)
 
             suppress_tokens = (
-                data.suppress_tokens or req._codec_suppress_tokens
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                data.suppress_tokens
+                # ast-grep-ignore: leading-underscore
+                or req._codec_suppress_tokens
+            )
             if suppress_tokens:
                 valid_sup = [
                     t

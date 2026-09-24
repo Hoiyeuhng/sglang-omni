@@ -256,5 +256,5 @@ def instantiate_module(module_cls: type[nn.Module], config: Any) -> nn.Module:
         if hasattr(module_cls, "_from_config"):
             return module_cls._from_config(
                 config
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         return module_cls(config)

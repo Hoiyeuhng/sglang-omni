@@ -264,7 +264,7 @@ def create_mlx_model_worker(
             if get_schedule().max_total_tokens is not None:
                 init_kwargs["pool_size"] = get_schedule().max_total_tokens
             self.mlx_runner = runner_class(**init_kwargs)
-            self._model_runner = MlxModelRunnerStub(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            self._model_runner = MlxModelRunnerStub(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
                 model_config=self.model_config,
                 mem_fraction_static=get_schedule().mem_fraction_static,
                 gpu_id=self.gpu_id,

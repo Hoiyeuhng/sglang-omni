@@ -102,6 +102,7 @@ class Qwen3TTSReferenceEncoderCudaGraphRunner:
         self.stream.wait_stream(torch.cuda.current_stream(self.device))
         with torch.inference_mode(), torch.cuda.stream(self.stream):
             for _ in range(2):
+                # ast-grep-ignore: leading-underscore
                 self._encode(static_input)
         graph = torch.cuda.CUDAGraph()
         with (
@@ -113,12 +114,14 @@ class Qwen3TTSReferenceEncoderCudaGraphRunner:
                 capture_error_mode="thread_local",
             ),
         ):
+            # ast-grep-ignore: leading-underscore
             static_codes = self._encode(static_input)
         self.stream.synchronize()
         return CapturedEncoderGraph(
             graph=graph, static_input=static_input, static_codes=static_codes
         )
 
+    # ast-grep-ignore: leading-underscore
     def _encode(self, values: torch.Tensor) -> torch.Tensor:
         return self.encoder.encode(
             values, num_quantizers=self.num_quantizers, return_dict=True

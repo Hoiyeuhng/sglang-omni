@@ -51,6 +51,7 @@ def is_fp8_cutlass_moe_supported() -> bool:
 
 
 class CUDAOmniPlatform(CudaDeviceMixin, OmniPlatform):
+    # ast-grep-ignore: leading-underscore
     def _get_device_graph_backend(self) -> DeviceGraphBackend:
         from sglang_omni.platforms.device_graph import CudaDeviceGraphBackend
 

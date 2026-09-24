@@ -198,8 +198,10 @@ class AudioVAEFixedStreamingTransition:
             raise TypeError("capacity and max_step_latents must be integers")
         if capacity <= 0 or max_step_latents <= 0:
             raise ValueError("capacity and max_step_latents must be positive")
-        self._capacity = int(capacity)  # noqa: leading-underscore
-        self._max_step_latents = int(max_step_latents)  # noqa: leading-underscore
+        self._capacity = int(capacity)  # ast-grep-ignore: leading-underscore
+        self._max_step_latents = int(
+            max_step_latents
+        )  # ast-grep-ignore: leading-underscore
         patch_size = int(decoder.patch_size)
         if patch_size <= 0:
             raise ValueError(
@@ -216,8 +218,11 @@ class AudioVAEFixedStreamingTransition:
         sliding_window = getattr(config, "sliding_window", None)
         layer_types = tuple(getattr(config, "layer_types", ()))
         attention_backend = getattr(
-            config, "_attn_implementation", None
-        )  # noqa: leading-underscore
+            config,
+            # ast-grep-ignore: leading-underscore
+            "_attn_implementation",
+            None,
+        )
         if (
             sliding_window is None
             or sliding_window <= 1
@@ -273,9 +278,9 @@ class AudioVAEFixedStreamingTransition:
             raise ValueError(
                 f"AudioVAE fixed streaming requires an eval-mode CUDA BF16 decoder for serving or an eval-mode CPU FP32 decoder for internal verification, got device={device}, dtype={input_dtype}, training={decoder.training}"
             )
-        self._latent_dim = latent_dim  # noqa: leading-underscore
-        self._device = device  # noqa: leading-underscore
-        self._input_dtype = input_dtype  # noqa: leading-underscore
+        self._latent_dim = latent_dim  # ast-grep-ignore: leading-underscore
+        self._device = device  # ast-grep-ignore: leading-underscore
+        self._input_dtype = input_dtype  # ast-grep-ignore: leading-underscore
         self.decoder = decoder
         self.upsampler = upsampler
         self.scale_factor = patch_size
@@ -289,7 +294,7 @@ class AudioVAEFixedStreamingTransition:
         self.max_raw_samples = self.max_frames * hop_length + overlap
         self._max_output_samples = (
             self.max_raw_samples - self.pad
-        )  # noqa: leading-underscore
+        )  # ast-grep-ignore: leading-underscore
         reference_context = (
             torch.autocast(device_type="cuda", dtype=input_dtype)
             if device.type == "cuda"
@@ -358,27 +363,27 @@ class AudioVAEFixedStreamingTransition:
 
     @property
     def capacity(self) -> int:
-        return self._capacity  # noqa: leading-underscore
+        return self._capacity  # ast-grep-ignore: leading-underscore
 
     @property
     def max_step_latents(self) -> int:
-        return self._max_step_latents  # noqa: leading-underscore
+        return self._max_step_latents  # ast-grep-ignore: leading-underscore
 
     @property
     def latent_dim(self) -> int:
-        return self._latent_dim  # noqa: leading-underscore
+        return self._latent_dim  # ast-grep-ignore: leading-underscore
 
     @property
     def max_output_samples(self) -> int:
-        return self._max_output_samples  # noqa: leading-underscore
+        return self._max_output_samples  # ast-grep-ignore: leading-underscore
 
     @property
     def device(self) -> torch.device:
-        return self._device  # noqa: leading-underscore
+        return self._device  # ast-grep-ignore: leading-underscore
 
     @property
     def input_dtype(self) -> torch.dtype:
-        return self._input_dtype  # noqa: leading-underscore
+        return self._input_dtype  # ast-grep-ignore: leading-underscore
 
     def decode(
         self,

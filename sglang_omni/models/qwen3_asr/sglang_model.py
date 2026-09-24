@@ -64,7 +64,7 @@ def fused_asr_forward_prepare_native(
     hidden_states: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if hidden_states.dtype != torch.bfloat16 or fused_qk_norm_rope is None:
-        return attention._asr_unfused_forward_prepare_native(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        return attention._asr_unfused_forward_prepare_native(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             positions,
             hidden_states,
         )
@@ -109,7 +109,7 @@ def enable_fused_asr_qk_norm_rope(language_model: nn.Module) -> None:
             continue
         attention._asr_unfused_forward_prepare_native = (
             attention.forward_prepare_native
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         attention.forward_prepare_native = MethodType(
             fused_asr_forward_prepare_native,
             attention,

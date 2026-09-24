@@ -55,6 +55,7 @@ class XPUOmniPlatform(OmniPlatform):
         # Capture leaves the scheduler thread's stream recording; host reads fail.
         return False
 
+    # ast-grep-ignore: leading-underscore
     def _get_device_graph_backend(self) -> DeviceGraphBackend:
         from sglang_omni.platforms.device_graph import XpuDeviceGraphBackend
 

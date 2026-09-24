@@ -73,6 +73,7 @@ class DllmScheduler:
 
     def start(self) -> None:
         self.running = True
+        # ast-grep-ignore: leading-underscore
         self._event_loop()
 
     def event_loop(self) -> None:
@@ -85,6 +86,7 @@ class DllmScheduler:
         with self.abort_lock:
             self.aborted_request_ids.add(request_id)
 
+    # ast-grep-ignore: leading-underscore
     def _event_loop(self) -> None:
         while self.running:
             self.drain_and_purge()

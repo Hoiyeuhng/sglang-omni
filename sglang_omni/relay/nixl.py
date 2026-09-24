@@ -51,14 +51,15 @@ class NixlOperation(RelayOperation):
 
     def __init__(self, connection: Connection, metadata: Any = None):
         self.conn = connection
-        self._metadata = metadata  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._metadata = metadata  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.completed = False
 
     @property
     def metadata(self) -> Any:
         return (
+            # ast-grep-ignore: leading-underscore
             self._metadata
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
 
 class PutOperation(NixlOperation):

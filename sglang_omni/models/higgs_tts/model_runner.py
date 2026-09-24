@@ -595,7 +595,7 @@ class HiggsTTSModelRunner(ModelRunner):
             else:
                 codes.append(
                     torch.zeros(
-                        model._num_codebooks,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                        model._num_codebooks,  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
                         dtype=torch.long,
                         device=logits_BNV.device,
                     )

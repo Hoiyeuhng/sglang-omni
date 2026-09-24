@@ -738,12 +738,12 @@ def build_sglang_moss_tts_request(
         extra_key="moss_tts:prompt:v1",
     )
     req.tokenizer = None
-    req._input_embeds_are_projected = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-    req._omni_prompt_only_radix = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._input_embeds_are_projected = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+    req._omni_prompt_only_radix = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     req._omni_prompt_cache_key = (
         req.extra_key
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-    req._codec_suppress_tokens = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+    req._codec_suppress_tokens = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     data = MossTTSSGLangRequestData(
         input_ids=prepared.input_ids,

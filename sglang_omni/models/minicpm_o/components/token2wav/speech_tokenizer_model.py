@@ -56,7 +56,9 @@ class Linear(nn.Linear):
 
 class Conv1d(nn.Conv1d):
 
+    # ast-grep-ignore: leading-underscore
     def _conv_forward(self, x: Tensor, weight: Tensor, bias: Tensor | None) -> Tensor:
+        # ast-grep-ignore: leading-underscore
         return super()._conv_forward(
             x, weight.to(x.dtype), None if bias is None else bias.to(x.dtype)
         )

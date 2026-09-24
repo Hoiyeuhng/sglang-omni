@@ -191,8 +191,11 @@ class Qwen3OmniThinkerModelRunner(ThinkerModelRunner):
 
         prefix, length = chunk_span
         consumed = getattr(
-            req, "_omni_consumed", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req,
+            # ast-grep-ignore: leading-underscore
+            "_omni_consumed",
+            None,
+        )
         if consumed is None:
             cached_audio = positions["audio"][positions["audio"] < prefix]
             future_audio = positions["audio"][positions["audio"] >= prefix]

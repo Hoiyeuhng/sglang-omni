@@ -133,8 +133,11 @@ def prepare_weight_share_process_compat() -> None:
     monkey_patch_torch_reductions()
     # The NPU branch of the SGLang patch never installs a CUDA reducer.
     original = getattr(
-        reductions, "_reduce_tensor_original", None
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        reductions,
+        # ast-grep-ignore: leading-underscore
+        "_reduce_tensor_original",
+        None,
+    )
     if original is None or hasattr(reductions, "_sglang_omni_cpu_reduce_original"):
         return
 
@@ -150,7 +153,7 @@ def prepare_weight_share_process_compat() -> None:
             return original(tensor, *args, **kwargs)
         return patched(tensor, *args, **kwargs)
 
-    reductions._sglang_omni_cpu_reduce_original = original  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    reductions._sglang_omni_cpu_reduce_original = original  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     reductions.reduce_tensor = reduce_tensor
     reductions.init_reductions()
 
@@ -489,7 +492,7 @@ class LeaderLivenessMonitor:
         self.exit_code = exit_code
         self._stop = (
             threading.Event()
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.thread: threading.Thread | None = None
 
     def leader_present(self) -> bool:
@@ -510,15 +513,14 @@ class LeaderLivenessMonitor:
         self.thread.start()
 
     def stop(self) -> None:
-        self._stop.set()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._stop.set()  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         if self.thread is not None:
             self.thread.join(timeout=2.0)
             self.thread = None
 
     def run(self) -> None:
-        while not self._stop.wait(
-            self.poll_interval_s
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        # ast-grep-ignore: leading-underscore
+        while not self._stop.wait(self.poll_interval_s):
             if self.leader_present():
                 continue
             logger.critical(
@@ -527,7 +529,7 @@ class LeaderLivenessMonitor:
             )
             os._exit(
                 self.exit_code
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
 
 def atomic_write(file_path: str, data: bytes) -> None:
@@ -1095,14 +1097,15 @@ def rebind_buffer(
     module_path, _, leaf = dotted_name.rpartition(".")
     module = model.get_submodule(module_path) if module_path else model
     if (
-        leaf not in module._buffers
-    ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        leaf
+        # ast-grep-ignore: leading-underscore
+        not in module._buffers
+    ):
         raise WeightShareError(
             f"{dotted_name!r} is not a registered buffer on the follower model"
         )
-    module._buffers[leaf] = (
-        tensor  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-    )
+    # ast-grep-ignore: leading-underscore
+    module._buffers[leaf] = tensor
 
 
 def raise_manifest_mismatch(

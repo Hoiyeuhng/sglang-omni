@@ -272,6 +272,7 @@ class DiffusionTransformer(nn.Module):
             self.latent_zeros_cache[key] = zeros
         return zeros
 
+    # ast-grep-ignore: leading-underscore
     def _transformer(self, x: Tensor, t: Tensor, align_cond: Tensor) -> Tensor:
         zeros = self.latent_zeros(x)
         full = torch.cat((x, zeros, align_cond), dim=1)
@@ -284,6 +285,7 @@ class DiffusionTransformer(nn.Module):
 
     def forward(self, *, x: Tensor, t: Tensor, align_cond: Tensor) -> Tensor:
         """Keyword-only entry point used by the diffusion BCG runner."""
+        # ast-grep-ignore: leading-underscore
         return self._transformer(x, t, align_cond)
 
 
@@ -480,6 +482,7 @@ class MiniMaxMusic3DIT(nn.Module):
             t_cfg = t.expand(2)
             with set_forward_context(step, None):
                 if self.bcg_runner is None:
+                    # ast-grep-ignore: leading-underscore
                     d = self.diffusion_transformer._transformer(x_cfg, t_cfg, cond_cfg)
                 else:
                     d = self.bcg_runner(

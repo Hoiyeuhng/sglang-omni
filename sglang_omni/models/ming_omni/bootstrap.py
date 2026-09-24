@@ -194,8 +194,8 @@ def make_thinker_scheduler_adapters(
         capture_keys = thinker_inputs.get("capture_model_output_keys", ())
 
         req.omni_model_inputs = model_inputs if model_inputs else None
-        req._omni_consumed = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        req._codec_suppress_tokens = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        req._omni_consumed = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+        req._codec_suppress_tokens = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
         attention_mask = prompt.get("attention_mask")
         req_data = SGLangARRequestData(
@@ -368,14 +368,20 @@ def make_thinker_stream_output_builder(
         # Per-request state lives on ``req`` so it is automatically GC'd when
         # the SGLang scheduler drops the request.
         token_ids = getattr(
-            req, "_ming_stream_token_ids", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req,
+            # ast-grep-ignore: leading-underscore
+            "_ming_stream_token_ids",
+            None,
+        )
         if token_ids is None:
             token_ids = []
-            req._ming_stream_token_ids = token_ids  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req._ming_stream_token_ids = token_ids  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         emitted = getattr(
-            req, "_ming_stream_emitted_text", ""
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req,
+            # ast-grep-ignore: leading-underscore
+            "_ming_stream_emitted_text",
+            "",
+        )
 
         is_eos = eos_token_id is not None and token_id == int(eos_token_id)
         if not is_eos:
@@ -397,7 +403,7 @@ def make_thinker_stream_output_builder(
         if not delta:
             return []
 
-        req._ming_stream_emitted_text = decoded  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        req._ming_stream_emitted_text = decoded  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
         text_tensor = torch.tensor(
             list(delta.encode("utf-8")),

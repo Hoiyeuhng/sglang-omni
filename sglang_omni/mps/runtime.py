@@ -329,10 +329,12 @@ class MpsPipelineRuntime:
     async def start(self) -> None:
         async with self.operation_lock:
             try:
+                # ast-grep-ignore: leading-underscore
                 await self.run_blocking(self._start)
             except asyncio.CancelledError as cancellation:
                 try:
                     await self.run_blocking(
+                        # ast-grep-ignore: leading-underscore
                         self._close,
                         frozenset(),
                     )
@@ -342,6 +344,7 @@ class MpsPipelineRuntime:
                     raise cancellation from rollback_error
                 raise
 
+    # ast-grep-ignore: leading-underscore
     def _start(self) -> None:
         """Acquire every GPU transactionally, rolling back in reverse order."""
 
@@ -422,8 +425,10 @@ class MpsPipelineRuntime:
 
     async def verify(self) -> None:
         async with self.operation_lock:
+            # ast-grep-ignore: leading-underscore
             await self.run_blocking(self._verify)
 
+    # ast-grep-ignore: leading-underscore
     def _verify(self) -> None:
         for gpu_uuid, lease in self.leases.items():
             self.managers[gpu_uuid].verify(lease)
@@ -433,10 +438,12 @@ class MpsPipelineRuntime:
 
         async with self.operation_lock:
             return await self.run_blocking(
+                # ast-grep-ignore: leading-underscore
                 self._retire_process_clients,
                 process_name,
             )
 
+    # ast-grep-ignore: leading-underscore
     def _retire_process_clients(self, process_name: str) -> set[MpsClientRef]:
         gpu_uuid = self.client_uuid.get(process_name)
         lease = self.leases.get(gpu_uuid) if gpu_uuid is not None else None
@@ -446,8 +453,10 @@ class MpsPipelineRuntime:
 
     async def probe_failures(self) -> dict[str, str]:
         async with self.operation_lock:
+            # ast-grep-ignore: leading-underscore
             return await self.run_blocking(self._probe_failures)
 
+    # ast-grep-ignore: leading-underscore
     def _probe_failures(self) -> dict[str, str]:
         failures: dict[str, str] = {}
         for gpu_uuid, lease in self.leases.items():
@@ -470,10 +479,12 @@ class MpsPipelineRuntime:
         )
         async with self.operation_lock:
             await self.run_blocking(
+                # ast-grep-ignore: leading-underscore
                 self._close,
                 attempts,
             )
 
+    # ast-grep-ignore: leading-underscore
     def _close(self, process_start_attempts: frozenset[str] | None) -> None:
         errors: list[tuple[str, MpsError]] = []
         for gpu_uuid in reversed(list(self.leases)):

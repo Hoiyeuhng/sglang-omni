@@ -117,8 +117,8 @@ class HiggsTTSModel(nn.Module):
         num_codebooks: int = int(enc_cfg["num_codebooks"])
         vocab_size: int = int(enc_cfg["vocab_size"])
         hidden_size: int = int(enc_cfg.get("out_dim", text_config.hidden_size))
-        self._num_codebooks = num_codebooks  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        self._codebook_vocab_size = vocab_size  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._num_codebooks = num_codebooks  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+        self._codebook_vocab_size = vocab_size  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.tie_modality = bool(enc_cfg.get("tie_word_embeddings", True))
 
         self.multimodal_embedding = HiggsMultimodalEmbedding(
@@ -142,23 +142,27 @@ class HiggsTTSModel(nn.Module):
 
         self._sampler_pool_max_running_requests = (
             get_schedule().max_running_requests
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         pool_size = (
-            self._sampler_pool_max_running_requests + 1
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._sampler_pool_max_running_requests
+            + 1
+        )
         self.sampler_pool = HiggsBatchedSamplerState(
             max_batch_size=pool_size,
             num_codebooks=num_codebooks,
             device=self.backbone.model.embed_tokens.weight.device,
         )
         self.padding_row = (
+            # ast-grep-ignore: leading-underscore
             self._sampler_pool_max_running_requests
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
         self.rid_to_row: dict[str, int] = {}
         self.free_rows: list[int] = list(
             range(
+                # ast-grep-ignore: leading-underscore
                 self._sampler_pool_max_running_requests
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )
         )
         self.output_codes: dict[str, list[torch.Tensor]] = {}
         cg_device = self.backbone.model.embed_tokens.weight.device
@@ -219,20 +223,23 @@ class HiggsTTSModel(nn.Module):
     @property
     def num_codebooks(self) -> int:
         return (
+            # ast-grep-ignore: leading-underscore
             self._num_codebooks
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @property
     def codebook_vocab_size(self) -> int:
         return (
+            # ast-grep-ignore: leading-underscore
             self._codebook_vocab_size
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @property
     def sampler_pool_max_running_requests(self) -> int:
         return (
+            # ast-grep-ignore: leading-underscore
             self._sampler_pool_max_running_requests
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     def acquire_row(self, req_id: str) -> int:
         """Allocate or look up the sampler-pool row for ``req_id``. Idempotent."""
@@ -241,8 +248,9 @@ class HiggsTTSModel(nn.Module):
             return row
         if not self.free_rows:
             max_running_requests = (
+                # ast-grep-ignore: leading-underscore
                 self._sampler_pool_max_running_requests
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )
             raise RuntimeError(
                 f"HiggsTTSModel sampler pool exhausted "
                 f"(max_running_requests={max_running_requests}); raise "
@@ -280,8 +288,9 @@ class HiggsTTSModel(nn.Module):
             return torch.empty(
                 (
                     0,
+                    # ast-grep-ignore: leading-underscore
                     self._num_codebooks,
-                ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                ),
                 dtype=torch.long,
                 device=self.multimodal_embedding.modality_embedding_0.weight.device,
             )

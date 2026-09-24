@@ -80,8 +80,11 @@ class ThinkerModelRunner(ModelRunner):
         """Prompt-absolute placeholder positions per modality, as CPU int64
         tensors so the merge never reads placement off a GPU mask."""
         positions = getattr(
-            req, "_omni_mm_positions", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req,
+            # ast-grep-ignore: leading-underscore
+            "_omni_mm_positions",
+            None,
+        )
         if positions is not None:
             return positions
         prompt_ids = torch.as_tensor(req.origin_input_ids, dtype=torch.long)
@@ -95,7 +98,7 @@ class ThinkerModelRunner(ModelRunner):
                 ("audio", self.audio_token_id),
             )
         }
-        req._omni_mm_positions = positions  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        req._omni_mm_positions = positions  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         return positions
 
     @staticmethod
@@ -121,11 +124,12 @@ class ThinkerModelRunner(ModelRunner):
     @staticmethod
     def ensure_consumed_cursor(req: Any) -> dict[str, Any]:
         consumed = (
+            # ast-grep-ignore: leading-underscore
             req._omni_consumed
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
         if consumed is None:
             consumed = {}
-            req._omni_consumed = consumed  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req._omni_consumed = consumed  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         elif not isinstance(consumed, dict):
             raise TypeError(
                 "req._omni_consumed must be None or a dict, "
@@ -320,8 +324,8 @@ class ThinkerModelRunner(ModelRunner):
 
             if req.inflight_middle_chunks == 0:
                 req.omni_model_inputs = None
-                req._omni_consumed = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-                req._omni_mm_positions = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                req._omni_consumed = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+                req._omni_mm_positions = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
         if scatter_rows:
             # note (chenrui): one index_copy_ keeps the kernel count independent
@@ -427,8 +431,9 @@ class ThinkerModelRunner(ModelRunner):
             # so a hidden-capture batch can never slip onto the async path.
             try:
                 data = (
+                    # ast-grep-ignore: leading-underscore
                     req._omni_data
-                )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                )
             except AttributeError:
                 data = None
             if data is None or should_generate_audio_output(data.stage_payload):

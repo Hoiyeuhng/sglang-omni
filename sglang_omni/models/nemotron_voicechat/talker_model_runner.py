@@ -142,7 +142,7 @@ class NemotronVoiceChatTalkerModelRunner(ModelRunner):
             len(req._omni_data.pending_text_queue) > 0
             or self.is_terminating(
                 req
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             for req in schedule_batch.reqs
         )
 

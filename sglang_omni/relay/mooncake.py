@@ -229,12 +229,12 @@ class MooncakeOperation(RelayOperation):
 
     def __init__(self, connection: MooncakeConnection, metadata: Any = None):
         self.conn = connection
-        self._metadata = metadata  # noqa: leading-underscore
+        self._metadata = metadata  # ast-grep-ignore: leading-underscore
         self.completed = False
 
     @property
     def metadata(self) -> Any:
-        return self._metadata  # noqa: leading-underscore
+        return self._metadata  # ast-grep-ignore: leading-underscore
 
 
 class PutOperation(MooncakeOperation):

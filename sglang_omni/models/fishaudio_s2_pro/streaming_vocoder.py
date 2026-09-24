@@ -116,6 +116,7 @@ def flush_stream_vocoder_chunk(
     )
 
 
+# ast-grep-ignore: leading-underscore
 def _build_stream_vocoder_chunk(
     state: StreamVocoderState,
     *,
@@ -317,6 +318,7 @@ class S2ProVocoderScheduler(StreamingSimpleScheduler):
         self.payloads = self.stream_payloads
 
     def is_streaming_payload(self, payload: StagePayload) -> bool:
+        # ast-grep-ignore: leading-underscore
         return self._is_streaming_payload(payload)
 
     def validate_non_streaming_payload(self, payload: StagePayload) -> None:
@@ -483,5 +485,6 @@ class S2ProVocoderScheduler(StreamingSimpleScheduler):
         )
 
     @staticmethod
+    # ast-grep-ignore: leading-underscore
     def _is_streaming_payload(payload: StagePayload) -> bool:
         return bool(payload.request.params.get("stream"))

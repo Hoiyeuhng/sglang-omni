@@ -40,6 +40,7 @@ class AudioVAE(PreTrainedModel):
 
         self.post_init()
 
+    # ast-grep-ignore: leading-underscore
     def _init_weights(self, module):
         std = 0.02
         if isinstance(module, nn.Linear):

@@ -123,8 +123,8 @@ class ModelRunner:
         # Note (wenyao): pinned host copy staged once at sample time so downstream
         # .tolist() never triggers a blocking pageable D2H; next_token_ids stays device-side
         if not (isinstance(ids, torch.Tensor) and ids.is_cuda):
-            result._host_token_ids = ids  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-            result._host_token_ids_event = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            result._host_token_ids = ids  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+            result._host_token_ids_event = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             return
         n = ids.shape[0]
         buf = self.next_token_id_host_buf(ids, n)
@@ -133,8 +133,8 @@ class ModelRunner:
         event.record()
         result._host_token_ids = buf[
             :n
-        ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        result._host_token_ids_event = event  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+        result._host_token_ids_event = event  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     def next_token_id_host_buf(self, like: torch.Tensor, n: int) -> torch.Tensor:
         # Note (wenyao): two buffers ping-ponged so a step's host read never races
@@ -184,14 +184,20 @@ class ModelRunner:
 
     def resolve_host_token_ids(self, result: Any) -> Any:
         event = getattr(
-            result, "_host_token_ids_event", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            result,
+            # ast-grep-ignore: leading-underscore
+            "_host_token_ids_event",
+            None,
+        )
         if event is not None:
             event.synchronize()
-            result._host_token_ids_event = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            result._host_token_ids_event = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         return getattr(
-            result, "_host_token_ids", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            result,
+            # ast-grep-ignore: leading-underscore
+            "_host_token_ids",
+            None,
+        )
 
     def bind_execution_bridge(self, bridge: Any) -> None:
         """Bind the scheduler-owned SGLang execution-contract adapter."""
@@ -994,18 +1000,22 @@ class ModelRunner:
                 req = data.req
                 try:
                     suppress_tokens = (
+                        # ast-grep-ignore: leading-underscore
                         req._codec_suppress_tokens
-                    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    )
                 except AttributeError:
                     suppress_tokens = None
             if not suppress_tokens:
                 continue
             content = getattr(
-                data, "_suppress_content", None
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                data,
+                # ast-grep-ignore: leading-underscore
+                "_suppress_content",
+                None,
+            )
             if content is None:
                 content = tuple(int(t) for t in suppress_tokens)
-                data._suppress_content = content  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                data._suppress_content = content  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             key = (content, vocab, str(device))
             toks_t = cache.get(key)
             if key not in cache:

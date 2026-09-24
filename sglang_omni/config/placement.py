@@ -196,6 +196,7 @@ def resolve_gpu_stage_names(plan: StagePlacementPlan) -> set[str]:
     return set(plan.stages.keys())
 
 
+# ast-grep-ignore: leading-underscore
 def _resolve_stage_gpu_ids(stage: StageConfig) -> tuple[int, ...]:
     # Shape rules (scalar vs list, length == tp_size, unique ids) are
     # enforced by StageConfig validation, but launcher helpers mutate

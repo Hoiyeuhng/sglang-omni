@@ -96,8 +96,10 @@ class MingThinkerModelRunner(ModelRunner):
             end = start + extend_lens[i]
             req_input_ids = forward_batch.input_ids[start:end]
             consumed = (
-                getattr(req, "_omni_consumed", None) or {}
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                # ast-grep-ignore: leading-underscore
+                getattr(req, "_omni_consumed", None)
+                or {}
+            )
             pad_values = omni_inputs.get("pad_values", {})
             is_final_chunk = req.inflight_middle_chunks == 0
             req_id = self.request_id(req)
@@ -143,13 +145,13 @@ class MingThinkerModelRunner(ModelRunner):
                 input_embeds[torch.where(mask)[0] + start] = chunk_embeds
                 consumed[modality] = offset + n_tokens
 
-            req._omni_consumed = consumed  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req._omni_consumed = consumed  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
             if is_final_chunk:
                 # Skip strict consumed==total validation: radix prefix cache may
                 # have absorbed placeholder positions. Mirrors qwen3 path.
                 req.omni_model_inputs = None
-                req._omni_consumed = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                req._omni_consumed = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
         return input_embeds
 

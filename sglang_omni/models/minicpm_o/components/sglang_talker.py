@@ -195,7 +195,7 @@ class MiniCPMOTalkerForCausalLM(nn.Module):
             )
         restored = torch._weight_norm(
             head_v, head_g, dim=0
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.head_code.weight.data.copy_(
             restored.to(
                 device=self.head_code.weight.device,
