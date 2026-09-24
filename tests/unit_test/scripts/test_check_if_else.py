@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal
+from textwrap import dedent
 
 import pytest
 
@@ -33,7 +33,7 @@ def probe_model_file(source: str) -> Iterator[Path]:
         prefix=PROBE_PACKAGE, dir=REPO_ROOT / "sglang_omni" / "models"
     ) as probe_directory:
         probe = Path(probe_directory) / "runner.py"
-        probe.write_text(source, encoding="utf-8")
+        probe.write_text(dedent(source), encoding="utf-8")
         yield probe
 
 
@@ -111,57 +111,63 @@ def test_new_bare_if_fails_the_default_scan() -> None:
 
 
 @pytest.mark.parametrize(
-    ("source", "expected_exit_code"),
+    "source",
     [
         pytest.param(
-            "if outer:\n    if inner:\n        pass\n    else:\n        pass\n",
-            1,
+            """\
+            if outer:
+                if inner:
+                    pass
+                else:
+                    pass
+            """,
             id="inner-else-does-not-complete-outer-if",
         ),
         pytest.param(
-            "if outer:\n    if inner:\n        pass\nelse:\n    pass\n",
-            1,
+            """\
+            if outer:
+                if inner:
+                    pass
+            else:
+                pass
+            """,
             id="outer-else-does-not-complete-inner-if",
         ),
         pytest.param(
-            "if flag:\n    for value in values:\n        pass\n    else:\n        pass\n",
-            1,
+            """\
+            if flag:
+                for value in values:
+                    pass
+                else:
+                    pass
+            """,
             id="loop-else-does-not-complete-if",
         ),
         pytest.param(
-            "if first:\n    pass\nelif second:\n    pass\nelif third:\n    pass\n",
-            1,
+            """\
+            if first:
+                pass
+            elif second:
+                pass
+            elif third:
+                pass
+            """,
             id="elif-chain-needs-final-else",
         ),
         pytest.param(
-            "if flag:\n    raise ValueError('invalid')\n",
-            1,
+            """\
+            if flag:
+                raise ValueError("invalid")
+            """,
             id="raise-still-needs-else",
-        ),
-        pytest.param(
-            "if outer:\n    if inner:\n        pass\n    else:\n        pass\nelse:\n    pass\n",
-            0,
-            id="complete-nested-branches",
-        ),
-        pytest.param(
-            "if (\n    flag\n): value = 1\nelse: value = 2\n",
-            0,
-            id="multiline-condition-with-inline-suites",
-        ),
-        pytest.param(
-            "value = 1 if flag else 2\nvalues = [x for x in items if x]\n",
-            0,
-            id="expressions-are-not-if-statements",
         ),
     ],
 )
-def test_check_branch_structure_without_rewriting(
-    source: str, expected_exit_code: Literal[0, 1]
-) -> None:
+def test_check_rejects_missing_else(source: str) -> None:
     with probe_model_file(source) as probe:
         original_source = probe.read_bytes()
         result = run_checker(str(probe))
-        assert result.returncode == expected_exit_code, result.stderr
+        assert result.returncode == 1, result.stderr
         assert probe.read_bytes() == original_source
 
 
@@ -169,7 +175,52 @@ def test_check_branch_structure_without_rewriting(
     "source",
     [
         pytest.param(
-            "if (\n    True\n): print('value')\n",
+            """\
+            if outer:
+                if inner:
+                    pass
+                else:
+                    pass
+            else:
+                pass
+            """,
+            id="complete-nested-branches",
+        ),
+        pytest.param(
+            """\
+            if (
+                flag
+            ): value = 1
+            else: value = 2
+            """,
+            id="multiline-condition-with-inline-suites",
+        ),
+        pytest.param(
+            """\
+            value = 1 if flag else 2
+            values = [value for value in candidates if value]
+            """,
+            id="expressions-are-not-if-statements",
+        ),
+    ],
+)
+def test_check_accepts_valid_branches(source: str) -> None:
+    with probe_model_file(source) as probe:
+        original_source = probe.read_bytes()
+        result = run_checker(str(probe))
+        assert result.returncode == 0, result.stderr
+        assert probe.read_bytes() == original_source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            """\
+            if (
+                True
+            ): print("value")
+            """,
             id="multiline-condition-with-inline-suite",
         ),
         pytest.param(
@@ -181,7 +232,11 @@ def test_check_branch_structure_without_rewriting(
             id="form-feed-in-indentation",
         ),
         pytest.param(
-            "if True:\n    if True:\n        print('value')\n",
+            """\
+            if True:
+                if True:
+                    print("value")
+            """,
             id="nested-ifs-share-end-line",
         ),
         pytest.param(
@@ -191,6 +246,7 @@ def test_check_branch_structure_without_rewriting(
     ],
 )
 def test_fix_preserves_execution_and_is_idempotent(source: str) -> None:
+    source = dedent(source)
     original_execution = subprocess.run(
         [sys.executable, "-c", source],
         check=True,
@@ -209,8 +265,10 @@ def test_fix_preserves_execution_and_is_idempotent(source: str) -> None:
         )
         assert rewritten_execution.stdout == original_execution.stdout
         assert rewritten_execution.stderr == original_execution.stderr
+
         check_result = run_checker(str(probe))
         assert check_result.returncode == 0, check_result.stderr
+
         second_fix_result = run_checker("--fix", str(probe))
         assert second_fix_result.returncode == 0, second_fix_result.stderr
         assert probe.read_bytes() == rewritten_source
@@ -227,7 +285,13 @@ def test_fix_preserves_crlf_newlines() -> None:
 
 
 def test_fix_never_leaves_invalid_python_on_disk() -> None:
-    source = "if (\n    True\n): print('value')\n"
+    source = dedent(
+        """\
+        if (
+            True
+        ): print("value")
+        """
+    )
     compile(source, "probe.py", "exec")
     with probe_model_file(source) as probe:
         original_source = probe.read_bytes()
