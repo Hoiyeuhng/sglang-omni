@@ -14,6 +14,7 @@ from sglang_omni.models.weight_loader import (
     resolve_dtype,
     resolve_model_path,
 )
+from sglang_omni.platforms import current_platform
 
 STACKED_QKV = [
     ("self_attn.qkv_proj", "self_attn.q_proj", "q"),
@@ -62,15 +63,15 @@ def init_sglang_tp() -> None:
         set_global_server_args_for_scheduler(ServerArgs(model_path="dummy"))
 
     parallel_state.init_distributed_environment(
-        backend="nccl",
+        backend=current_platform.get_torch_distributed_backend_str(),
         world_size=1,
         rank=0,
         local_rank=0,
     )
     parallel_state.initialize_model_parallel(tensor_model_parallel_size=1)
 
-    dp._ATTN_TP_SIZE = 1
-    dp._ATTN_TP_RANK = 0
+    dp._ATTN_TP_SIZE = 1  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    dp._ATTN_TP_RANK = 0  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
 
 
 def load_srt_weights(module: nn.Module, weights: dict[str, torch.Tensor]) -> None:
@@ -146,7 +147,9 @@ class MiniCPMOImageEncoder(nn.Module):
         self.eval()
         self.to(device=self.device, dtype=torch_dtype)
         # note (MayDomine): rebuild the positional cache in fp32 after the bf16 cast.
-        self.resampler._set_2d_pos_cache(self.resampler.max_size, device=device)
+        self.resampler._set_2d_pos_cache(
+            self.resampler.max_size, device=device
+        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
 
         self.vision_batch_size = int(getattr(config, "vision_batch_size", 16))
 

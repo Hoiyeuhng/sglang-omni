@@ -22,7 +22,7 @@ from sglang.srt.sampling.sampling_params import SamplingParams
 
 from sglang_omni.preprocessing.transcription import prepare_audio
 from sglang_omni.proto import EXPLICIT_GENERATION_PARAMS_KEY, StagePayload
-from sglang_omni.scheduling.messages import OutgoingMessage
+from sglang_omni.scheduling.message import OutgoingMessage
 from sglang_omni.scheduling.sglang_backend import SGLangARRequestData
 from sglang_omni.scheduling.token_text_streaming import (
     make_token_text_stream_output_builder,
@@ -403,7 +403,9 @@ def make_moss_transcribe_diarize_scheduler_adapters(
                 tokenizer,
                 audio_token,
             )
-        audio_span_ids = processor._audio_span_ids(audio_token_count)
+        audio_span_ids = processor._audio_span_ids(
+            audio_token_count
+        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
         if len(prefix_ids) + len(audio_span_ids) + len(suffix_ids) > max_length:
             raise ValueError(f"Prompt/audio sequence exceeds max_length={max_length}")
         offsets = [
@@ -524,7 +526,7 @@ def make_moss_transcribe_diarize_scheduler_adapters(
             extra_key=fingerprint,
         )
         req.multimodal_inputs = mm_inputs
-        req._codec_suppress_tokens = None
+        req._codec_suppress_tokens = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
 
         logger.debug(
             f"[moss-td] prompt_tokens={len(padded_input_ids)} "

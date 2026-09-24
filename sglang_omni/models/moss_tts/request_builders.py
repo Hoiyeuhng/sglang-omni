@@ -25,7 +25,7 @@ from sglang_omni.models.moss_tts.payload_types import (
 )
 from sglang_omni.proto import StagePayload
 from sglang_omni.sampling.seed import derive_sampling_seed, new_random_sampling_seed
-from sglang_omni.scheduling.messages import OutgoingMessage
+from sglang_omni.scheduling.message import OutgoingMessage
 from sglang_omni.scheduling.prepared_request_queue import PreparedRequestQueue
 from sglang_omni.scheduling.streaming_vocoder import INITIAL_CODEC_CHUNK_FRAMES_PARAM
 from sglang_omni.scheduling.types import ARRequestData
@@ -738,10 +738,12 @@ def build_sglang_moss_tts_request(
         extra_key="moss_tts:prompt:v1",
     )
     req.tokenizer = None
-    req._input_embeds_are_projected = True
-    req._omni_prompt_only_radix = True
-    req._omni_prompt_cache_key = req.extra_key
-    req._codec_suppress_tokens = None
+    req._input_embeds_are_projected = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._omni_prompt_only_radix = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._omni_prompt_cache_key = (
+        req.extra_key
+    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._codec_suppress_tokens = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
 
     data = MossTTSSGLangRequestData(
         input_ids=prepared.input_ids,
