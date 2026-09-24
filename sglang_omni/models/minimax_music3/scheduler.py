@@ -43,10 +43,11 @@ class MiniMaxMusic3Scheduler(OmniScheduler):
         req = uncond.req
         self.normalize_req_token_arrays(req)
         req._coalesce_enqueue_t = (
+            # ast-grep-ignore: leading-underscore
             cond_req._coalesce_enqueue_t
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        req._omni_terminal_claimed = False  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        req._omni_data = uncond  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+        req._omni_terminal_claimed = False  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+        req._omni_data = uncond  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.waiting_queue.append(req)
 
     def get_new_batch_prefill(self, running_batch: Any) -> Any:
@@ -100,8 +101,11 @@ class MiniMaxMusic3Scheduler(OmniScheduler):
     @staticmethod
     def is_cfg_uncond(req: Any) -> bool:
         data = getattr(
-            req, "_omni_data", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req,
+            # ast-grep-ignore: leading-underscore
+            "_omni_data",
+            None,
+        )
         return data is not None and data.is_cfg_uncond
 
 

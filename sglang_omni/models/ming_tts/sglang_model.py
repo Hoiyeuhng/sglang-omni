@@ -521,6 +521,7 @@ class MingBailingMoeDecoderLayer(nn.Module):
             quant_config=quant_config,
             prefix=add_prefix("attention", prefix),
         )
+        # ast-grep-ignore: leading-underscore
         self.is_layer_sparse = self._is_layer_sparse(config, layer_id)
         if self.is_layer_sparse:
             self.mlp = MingBailingMoeSparseMoeBlock(
@@ -548,7 +549,9 @@ class MingBailingMoeDecoderLayer(nn.Module):
             layer_id=layer_id,
             num_layers=int(config.num_hidden_layers),
             is_layer_sparse=self.is_layer_sparse,
+            # ast-grep-ignore: leading-underscore
             is_previous_layer_sparse=self._is_layer_sparse(config, layer_id - 1),
+            # ast-grep-ignore: leading-underscore
             is_next_layer_sparse=self._is_layer_sparse(config, layer_id + 1),
         )
         self.layer_communicator = LayerCommunicator(
@@ -560,6 +563,7 @@ class MingBailingMoeDecoderLayer(nn.Module):
         )
 
     @staticmethod
+    # ast-grep-ignore: leading-underscore
     def _is_layer_sparse(config: Any, layer_id: int) -> bool:
         return getattr(config, "num_experts", None) is not None and layer_id >= int(
             getattr(config, "first_k_dense_replace", 0) or 0
@@ -601,7 +605,7 @@ class MingBailingMoeDecoderLayer(nn.Module):
             hidden_states = self.mlp(hidden_states, forward_batch)
 
         if fuse_mlp_allreduce:
-            hidden_states._sglang_needs_allreduce_fusion = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            hidden_states._sglang_needs_allreduce_fusion = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         else:
             hidden_states, residual = self.layer_communicator.postprocess_layer(
                 hidden_states,

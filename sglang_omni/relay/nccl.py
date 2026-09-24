@@ -91,14 +91,15 @@ class NcclOperation(RelayOperation):
         self.conn = connection
         self.work = work_handle
         self.tensor_ref = tensor_ref
-        self._metadata = metadata  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._metadata = metadata  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.completed = False
 
     @property
     def metadata(self) -> Any:
         return (
+            # ast-grep-ignore: leading-underscore
             self._metadata
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
 
 class PutOperation(NcclOperation):

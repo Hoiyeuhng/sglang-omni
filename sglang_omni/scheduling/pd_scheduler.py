@@ -335,6 +335,7 @@ class OmniDecodeScheduler(PDKVLifecycle):
             self.running_batch = plan.running_batch
             return plan.batch_to_run
 
+    # ast-grep-ignore: leading-underscore
     def _add_request_to_queue(self, req, is_retracted=False):
         # Upstream retraction frees KV and expects its own rebootstrap queues.
         # This handoff has no re-prefill protocol; fail only the affected request.

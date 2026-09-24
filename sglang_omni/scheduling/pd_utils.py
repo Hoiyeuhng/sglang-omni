@@ -160,12 +160,14 @@ def continuation_from_req(
     if req.custom_logit_processor:
         raise NotImplementedError("PD does not support custom logit processors")
     data = (
+        # ast-grep-ignore: leading-underscore
         req._omni_data
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    )
     if data.input_embeds_are_projected or getattr(
         req,
+        # ast-grep-ignore: leading-underscore
         "_input_embeds_are_projected",
-        False,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        False,
     ):
         raise NotImplementedError("PD does not support projected input embeddings")
     sampling = sampling_params_to_dict(req.sampling_params)
@@ -283,7 +285,7 @@ def req_from_continuation(
         return_logprob=continuation.return_logprob,
         output_token_logprobs=list(continuation.output_token_logprobs),
     )
-    req._omni_data = data  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._omni_data = data  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     state_restorer(req, data, continuation.multimodal_resume)
     if req.tokenizer is None and (
         sampling_params.stop_strs or sampling_params.stop_regex_strs
@@ -303,8 +305,8 @@ def req_from_continuation(
     req.kv.kv_committed_len = allocation.seq_len
     req.kv.kv_allocated_len = allocation.seq_len
     req.set_extend_range(allocation.seq_len, allocation.seq_len)
-    req._omni_terminal_claimed = False  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-    req._coalesce_enqueue_t = 0.0  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._omni_terminal_claimed = False  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+    req._coalesce_enqueue_t = 0.0  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     return req
 
 
@@ -353,8 +355,11 @@ def defer_first_token_finish(reqs: list[Any]):
 
 def build_kv_pool(token_to_kv_pool: Any, *, pool_id: str) -> KVPool:
     getter = getattr(
-        token_to_kv_pool, "_pd_registerable_tensors", None
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        token_to_kv_pool,
+        # ast-grep-ignore: leading-underscore
+        "_pd_registerable_tensors",
+        None,
+    )
     if callable(getter):
         tensors = tuple(getter())
     else:

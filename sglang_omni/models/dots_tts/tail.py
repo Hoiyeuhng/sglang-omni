@@ -162,9 +162,10 @@ class SemanticEncoderDecodeStep(nn.Module):
             value = value + output
             value = value + layer.ffn(layer.ffn_norm(value))
         return (
+            # ast-grep-ignore: leading-underscore
             encoder._project_embeddings(value),
             raw[..., -projection.left_padding :],
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
 
 @dataclass(frozen=True)
@@ -436,7 +437,7 @@ class DotsTtsAcousticTail:
         self.encoder_layer_index = torch.arange(self.encoder_layers, device=device)
         self._fm_seq_len = [
             0
-        ] * spec.num_slots  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        ] * spec.num_slots  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.encoder_seq_len = [0] * spec.num_slots
         self.generators: list[torch.Generator | None] = [None] * spec.num_slots
         self.free_slots = list(reversed(range(spec.num_slots)))
@@ -606,9 +607,8 @@ class DotsTtsAcousticTail:
                 "raise max_running_requests; the engine does not silently shrink capacity."
             )
         slot = self.free_slots.pop()
-        self._fm_seq_len[slot] = (
-            0  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._fm_seq_len[slot] = 0
         self.encoder_seq_len[slot] = 0
         self.generators[slot] = None
         self.encoder_conv_tail[slot].zero_()
@@ -620,8 +620,10 @@ class DotsTtsAcousticTail:
         return bool(self.meanflow_graphs or self.encoder_graphs)
 
     def log_graph_counters(self) -> None:
+        # ast-grep-ignore: leading-underscore
         self._log_graph_counters(logging.INFO)
 
+    # ast-grep-ignore: leading-underscore
     def _log_graph_counters(self, level: int) -> None:
         # note (Dayuxiaoshui): the counters answer whether serving shapes hit
         # the captured buckets. Without captured graphs every step is a miss
@@ -647,15 +649,15 @@ class DotsTtsAcousticTail:
         if self.tail_steps % _TAIL_STEP_LOG_INTERVAL == 0:
             # note (Dayuxiaoshui): at concurrency 16 this fires every ~5 s;
             # the shutdown line carries the totals at INFO.
+            # ast-grep-ignore: leading-underscore
             self._log_graph_counters(logging.DEBUG)
 
     def release_slot(self, slot: int) -> None:
         slot = int(slot)
         if slot in self.free_slots:
             return
-        self._fm_seq_len[slot] = (
-            0  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._fm_seq_len[slot] = 0
         self.encoder_seq_len[slot] = 0
         self.generators[slot] = None
         self.free_slots.append(slot)
@@ -677,7 +679,7 @@ class DotsTtsAcousticTail:
     def fm_seq_len(self, slot: int) -> int:
         return self._fm_seq_len[
             int(slot)
-        ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     @torch.no_grad()
     def encode_prompt_patches(
@@ -685,8 +687,9 @@ class DotsTtsAcousticTail:
     ) -> torch.Tensor:
         encoder = self.encoder
         value = encoder.in_proj(
+            # ast-grep-ignore: leading-underscore
             encoder._downsample(prompt_latents)
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
         tokens = int(value.size(1))
         if tokens > int(self.encoder_k.size(3)):
             raise ValueError(
@@ -722,7 +725,7 @@ class DotsTtsAcousticTail:
         self.encoder_seq_len[slot] = tokens
         return encoder._project_embeddings(value)[
             0
-        ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     @torch.no_grad()
     def seed_fm_history(
@@ -738,9 +741,8 @@ class DotsTtsAcousticTail:
         self.all_mods[:, slot].copy_(all_mods)
         self.window[slot, : spec.unit_len].copy_(fm_rows[persistent:])
         self.window[slot, spec.unit_len :].zero_()
-        self._fm_seq_len[slot] = (
-            total  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._fm_seq_len[slot] = total
         if persistent == 0:
             return
         positions = torch.arange(
@@ -795,10 +797,12 @@ class DotsTtsAcousticTail:
                 slot
             ] += (
                 spec.hidden_patch_size
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         persistent = [
-            self._fm_seq_len[slot] - spec.window_len for slot in slots
-        ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._fm_seq_len[slot] - spec.window_len
+            for slot in slots
+        ]
         if min(persistent) < 0:
             raise RuntimeError("dots.tts tail ran before prompt history was seeded")
         capacity = max(persistent)
@@ -853,7 +857,7 @@ class DotsTtsAcousticTail:
                 slot
             ] += (
                 spec.latent_patch_size
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         return latent
 
     def sample_patches_core(

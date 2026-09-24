@@ -53,12 +53,12 @@ class MossVocoderCudaGraphRunner:
         self.real_state_capacity = int(real_state_capacity)
         self._scratch_capacity = int(
             scratch_capacity
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.device = next(codec.parameters()).device
         self.num_quantizers = int(num_quantizers)
         self.warmup_iters = max(int(warmup_iters), 1)
         self.min_free_bytes = int(float(min_free_gb) * (1024**3))
-        self._batch_sizes = sorted(  # noqa: leading-underscore
+        self._batch_sizes = sorted(  # ast-grep-ignore: leading-underscore
             {
                 int(size)
                 for size in batch_sizes
@@ -67,20 +67,19 @@ class MossVocoderCudaGraphRunner:
         )
         self._frame_sizes = sorted(
             {int(size) for size in frame_sizes if int(size) > 0}
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.graphs: dict[tuple[int, int], CapturedVocoderGraph] = {}
         self.pool = None
         self.sealed = False
 
         if self.real_state_capacity <= 0:
             raise ValueError("real_state_capacity must be positive")
-        if self._scratch_capacity < max(
-            self.batch_sizes, default=0
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        # ast-grep-ignore: leading-underscore
+        if self._scratch_capacity < max(self.batch_sizes, default=0):
             raise ValueError(
                 "scratch_capacity must cover the largest compact graph bucket; "
-                f"got scratch_capacity={self._scratch_capacity}, "  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-                f"largest_bucket={max(self.batch_sizes, default=0)}"  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                f"got scratch_capacity={self._scratch_capacity}, "  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+                f"largest_bucket={max(self.batch_sizes, default=0)}"
             )
         if self.num_quantizers <= 0:
             raise ValueError("num_quantizers must be positive")
@@ -95,19 +94,21 @@ class MossVocoderCudaGraphRunner:
 
     @property
     def batch_sizes(self) -> list[int]:
-        return list(self._batch_sizes)  # noqa: leading-underscore
+        return list(self._batch_sizes)  # ast-grep-ignore: leading-underscore
 
     @property
     def frame_sizes(self) -> list[int]:
         return list(
+            # ast-grep-ignore: leading-underscore
             self._frame_sizes
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @property
     def scratch_capacity(self) -> int:
         return (
+            # ast-grep-ignore: leading-underscore
             self._scratch_capacity
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     def capture_state_slots(
         self, batch_size: int, *, device: torch.device
@@ -207,13 +208,11 @@ class MossVocoderCudaGraphRunner:
             )
             return []
         frame_sizes = (
-            self._frame_sizes  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            self._frame_sizes  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             if frames is None
             else sorted({int(frame) for frame in frames if int(frame) > 0})
         )
-        if (
-            not self.batch_sizes or not frame_sizes
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        if not self.batch_sizes or not frame_sizes:
             return []
 
         # Note (Zhang Yiyang): Capture largest allocations first when sharing a
@@ -221,7 +220,7 @@ class MossVocoderCudaGraphRunner:
         keys = sorted(
             (
                 (batch_size, frame_size)
-                for batch_size in self.batch_sizes  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                for batch_size in self.batch_sizes
                 for frame_size in frame_sizes
             ),
             reverse=True,
@@ -306,9 +305,7 @@ class MossVocoderCudaGraphRunner:
         ):
             return None
         batch_size = next(
-            (
-                size for size in self.batch_sizes if size >= actual_batch_size
-            ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            (size for size in self.batch_sizes if size >= actual_batch_size),
             None,
         )
         if batch_size is None:

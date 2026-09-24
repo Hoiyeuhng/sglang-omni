@@ -176,8 +176,11 @@ def warmup_flow(
             step_graph.capture_declared(
                 lambda shape: flow.sample_batch(
                     warmup_items(
-                        flow, device, **shape._asdict()
-                    ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                        flow,
+                        device,
+                        # ast-grep-ignore: leading-underscore
+                        **shape._asdict(),
+                    ),
                     **one_step,
                     step_graph=step_graph,
                 )

@@ -59,7 +59,7 @@ def fused_apply_qk_norm_rope(
     if not gate.enabled or qkv.dtype != torch.bfloat16 or not qkv.is_contiguous():
         return attn._omni_unfused_apply_qk_norm_rope(
             qkv, positions, forward_batch
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     q, k, v = qkv.split([attn.q_size, attn.kv_size, attn.kv_size], dim=-1)
     tokens = qkv.shape[0]
@@ -148,7 +148,7 @@ def install_thinker_fused_rope(
 
         attn._omni_unfused_apply_qk_norm_rope = (
             attn.apply_qk_norm_rope
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
         def _bound(
             attn_self,

@@ -235,7 +235,7 @@ class FunAsrNanoAudioEncoder(nn.Module):
         layer_norm_eps: float = 1e-5,
     ) -> None:
         super().__init__()
-        self._output_size = output_size  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._output_size = output_size  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.embed = SinusoidalPositionEncoder()
 
         if num_blocks < 1 or tp_blocks < 0:
@@ -264,15 +264,18 @@ class FunAsrNanoAudioEncoder(nn.Module):
 
     def output_size(self) -> int:
         return (
+            # ast-grep-ignore: leading-underscore
             self._output_size
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     def forward(
         self, xs: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         xs = xs * (
-            self._output_size**0.5
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._output_size
+            ** 0.5
+        )
         xs = self.embed(xs)
         for layer in self.layers:
             xs = layer(xs, mask)

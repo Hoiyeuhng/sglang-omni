@@ -44,9 +44,8 @@ class DotsTTSSGLangModel(nn.Module):
             latent_stats_path=str(Path(checkpoint) / "latent_stats.pt"),
             optimize=False,
         )
-        self._graph_feedback_buffer: torch.Tensor | None = (
-            None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._graph_feedback_buffer: torch.Tensor | None = None
 
     def get_input_embeddings(self):
         return self.qwen2.get_input_embeddings()
@@ -54,8 +53,9 @@ class DotsTTSSGLangModel(nn.Module):
     @property
     def graph_feedback_buffer(self) -> torch.Tensor | None:
         return (
+            # ast-grep-ignore: leading-underscore
             self._graph_feedback_buffer
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     def enable_graph_feedback(self, max_batch_size: int) -> None:
         """Route decode feedback embeddings through a persistent buffer.
@@ -71,7 +71,7 @@ class DotsTTSSGLangModel(nn.Module):
         if max_batch_size <= 0:
             raise ValueError("dots.tts graph feedback buffer needs a positive size")
         parameter = next(self.qwen2.parameters())
-        self._graph_feedback_buffer = torch.zeros(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._graph_feedback_buffer = torch.zeros(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             (int(max_batch_size), int(self.qwen2.config.hidden_size)),
             device=parameter.device,
             dtype=parameter.dtype,
@@ -120,14 +120,14 @@ class DotsTTSSGLangModel(nn.Module):
         del kwargs
         if (
             self._graph_feedback_buffer
-            is not None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            is not None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             and forward_batch.forward_mode.is_decode()
         ):
             # note (luojiaxuan): same source for capture, replay, and eager decode; rows beyond
             # the live batch are padding and their outputs are discarded.
             input_embeds = self._graph_feedback_buffer[
                 : input_ids.shape[0]
-            ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         elif input_embeds is None:
             input_embeds = forward_batch.input_embeds
         hidden_states = self.qwen2.model(

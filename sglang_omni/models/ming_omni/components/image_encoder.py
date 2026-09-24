@@ -115,12 +115,13 @@ class MingImageEncoder(nn.Module):
 
         dp_tp_ready = (
             getattr(dp, "_ATTN_TP_SIZE", None) is not None
-            and dp._ATTN_TP_SIZE > 0  # noqa: leading-underscore
+            # ast-grep-ignore: leading-underscore
+            and dp._ATTN_TP_SIZE > 0  # ast-grep-ignore: leading-underscore
         )
         if dp_tp_ready and parallel_state.model_parallel_is_initialized():
-            if dp._ATTN_TP_SIZE != tp_size:  # noqa: leading-underscore
+            if dp._ATTN_TP_SIZE != tp_size:  # ast-grep-ignore: leading-underscore
                 raise RuntimeError(
-                    f"TP already initialized with tp_size={dp._ATTN_TP_SIZE}, cannot reinitialize with tp_size={tp_size}"  # noqa: leading-underscore
+                    f"TP already initialized with tp_size={dp._ATTN_TP_SIZE}, cannot reinitialize with tp_size={tp_size}"  # ast-grep-ignore: leading-underscore
                 )
             return
         os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
@@ -150,8 +151,8 @@ class MingImageEncoder(nn.Module):
             )
             parallel_state.initialize_model_parallel(tensor_model_parallel_size=tp_size)
             cls.did_init_tp = True
-        dp._ATTN_TP_SIZE = tp_size  # noqa: leading-underscore
-        dp._ATTN_TP_RANK = tp_rank  # noqa: leading-underscore
+        dp._ATTN_TP_SIZE = tp_size  # ast-grep-ignore: leading-underscore
+        dp._ATTN_TP_RANK = tp_rank  # ast-grep-ignore: leading-underscore
 
     @classmethod
     def cleanup_sglang_tp(cls):

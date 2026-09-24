@@ -242,8 +242,9 @@ class QwenTalkerModelRunner(ModelRunner):
             return True
         return all(
             self.data_has_next_decode_input(
+                # ast-grep-ignore: leading-underscore
                 getattr(req, "_omni_data", None)
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )
             for req in schedule_batch.reqs
         )
 

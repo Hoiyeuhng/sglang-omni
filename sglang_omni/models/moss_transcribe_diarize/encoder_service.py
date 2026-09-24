@@ -62,6 +62,7 @@ class BatchedAudioEncoderService(PreLMEncoderService[Any, torch.Tensor, torch.Te
             return
         expected_tokens = int(feature_lengths.sum())
         key = self.cache_key(item)
+        # ast-grep-ignore: leading-underscore
         cached = self._lookup_cached_embedding(key, expected_tokens)
         if cached is not None:
             self.attach_embedding(item, cached)
@@ -75,8 +76,10 @@ class BatchedAudioEncoderService(PreLMEncoderService[Any, torch.Tensor, torch.Te
         expected_tokens: int,
     ) -> torch.Tensor | None:
         """Return a validated cached embedding without starting an encode."""
+        # ast-grep-ignore: leading-underscore
         return self._lookup_cached_embedding(str(audio_fingerprint), expected_tokens)
 
+    # ast-grep-ignore: leading-underscore
     def _lookup_cached_embedding(
         self,
         key: str | None,

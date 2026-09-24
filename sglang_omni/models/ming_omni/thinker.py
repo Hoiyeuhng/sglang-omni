@@ -562,7 +562,7 @@ class BailingMoeV2DecoderLayer(nn.Module):
         )
 
         if should_allreduce_fusion:
-            hidden_states._sglang_needs_allreduce_fusion = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            hidden_states._sglang_needs_allreduce_fusion = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         else:
             hidden_states, residual = self.layer_communicator.postprocess_layer(
                 hidden_states,
@@ -855,8 +855,11 @@ class BailingMoeV2ForCausalLM(nn.Module):
         if not hasattr(config, "audio_token_id"):
             # audio_patch_token is NOT in config.json — resolve from tokenizer
             model_path = getattr(
-                config, "_name_or_path", None
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                config,
+                # ast-grep-ignore: leading-underscore
+                "_name_or_path",
+                None,
+            )
             if model_path:
                 try:
                     from sglang_omni.models.ming_omni.components.common import (

@@ -693,12 +693,12 @@ def build_instruct_id(wrapper: Any, instructions: str | None) -> torch.Tensor | 
     if hasattr(wrapper, "_build_instruct_text"):
         instruct_text = wrapper._build_instruct_text(
             instructions
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     else:
         instruct_text = f"<|im_start|>user\n{instructions}<|im_end|>\n"
     return wrapper._tokenize_texts([instruct_text])[
         0
-    ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
 
 def qwen3_tts_uploaded_voice_cache_key(state: Qwen3TTSState) -> SpeakerCacheKey | None:
@@ -876,7 +876,7 @@ class Qwen3TTSRefCodeBatcher:
 
     def encode_waveform(self, waveform: Any, sample_rate: int) -> torch.Tensor:
         """Codes (frames, quantizers) of one reference, frames = ceil(samples / hop)."""
-        audio = self.speech_tokenizer._normalize_audio_inputs(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        audio = self.speech_tokenizer._normalize_audio_inputs(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             [waveform], sr=sample_rate
         )
         samples = torch.from_numpy(audio[0])
@@ -993,7 +993,7 @@ class Qwen3TTSAdhocReferenceHook(
         with torch.no_grad():
             normalized = self.wrapper._normalize_audio_inputs(
                 [item.ref_audio]
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             if len(normalized) != 1:
                 raise ValueError("Qwen3-TTS expects exactly one reference audio")
             waveform, sample_rate = normalized[0]
@@ -1064,13 +1064,19 @@ def qwen3_tts_model_revision(model: Any, wrapper: Any) -> str:
     candidates = (
         getattr(model, "name_or_path", None),
         getattr(
-            getattr(model, "config", None), "_name_or_path", None
-        ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            getattr(model, "config", None),
+            # ast-grep-ignore: leading-underscore
+            "_name_or_path",
+            None,
+        ),
         getattr(getattr(model, "config", None), "name_or_path", None),
         getattr(processor, "name_or_path", None),
         getattr(
-            processor, "_name_or_path", None
-        ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            processor,
+            # ast-grep-ignore: leading-underscore
+            "_name_or_path",
+            None,
+        ),
     )
     for candidate in candidates:
         if candidate:
@@ -1086,8 +1092,9 @@ def qwen3_tts_encoder_config_hash(model: Any, wrapper: Any) -> str:
         type(processor).__module__ + "." + type(processor).__qualname__,
         str(getattr(processor, "name_or_path", "")),
         str(
+            # ast-grep-ignore: leading-underscore
             getattr(processor, "_name_or_path", "")
-        ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        ),
     ]
     return _hash_bytes("|".join(parts).encode("utf-8"))
 
@@ -1200,11 +1207,11 @@ def prepare_qwen3_tts_base_request(
 
     input_id = wrapper._tokenize_texts([wrapper._build_assistant_text(state.text)])[
         0
-    ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     ref_id = (
         wrapper._tokenize_texts([wrapper._build_ref_text(ref_text)])[
             0
-        ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         if ref_text
         else None
     )
@@ -1228,7 +1235,7 @@ def prepare_qwen3_tts_custom_voice_request(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     input_id = wrapper._tokenize_texts([wrapper._build_assistant_text(state.text)])[
         0
-    ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     # Note(yzxiao): QwenLM/Qwen3-TTS (qwen-tts 0.1.1) drops 0.6B instructions
     # in its wrapper. Preserve this path's existing prompt passthrough for both
     # sizes; accepting an instruction does not guarantee 0.6B style control.
@@ -1251,7 +1258,7 @@ def prepare_qwen3_tts_voice_design_request(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     input_id = wrapper._tokenize_texts([wrapper._build_assistant_text(state.text)])[
         0
-    ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    ]  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     instruct_id = build_instruct_id(wrapper, state.instructions)
     with torch.no_grad():
         return model.build_voice_design_inputs(
@@ -1276,7 +1283,7 @@ def prepare_qwen3_tts_request(
     validate_qwen3_tts_model_task(model, state)
     gen_kwargs = wrapper._merge_generate_kwargs(
         **state.generation_kwargs
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     if state.task_type == QWEN3_TTS_TASK_BASE:
         (
             input_embeds,
@@ -1520,11 +1527,11 @@ def build_sglang_qwen3_tts_request(
         extra_key="qwen3_tts:prompt:v1",
     )
     req.tokenizer = None
-    req._input_embeds_are_projected = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-    req._omni_prompt_only_radix = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._input_embeds_are_projected = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+    req._omni_prompt_only_radix = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     req._omni_prompt_cache_key = (
         req.extra_key
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     ref_code_len = (
         int(prepared.ref_code.shape[0]) if prepared.ref_code is not None else 0

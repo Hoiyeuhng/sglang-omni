@@ -452,9 +452,8 @@ class Qwen3TTSIncrementalDecoder:
                 )
         self.decoder = decoder
         self.total_upsample = int(decoder.total_upsample)
-        self._state_spec: Qwen3TTSIncrementalCodecStateSpec | None = (
-            None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._state_spec: Qwen3TTSIncrementalCodecStateSpec | None = None
         self.compiled_kernel: Any = None
         self.compiled_shapes: set[tuple[int, int]] = set()
 
@@ -476,14 +475,17 @@ class Qwen3TTSIncrementalDecoder:
         ``decode`` does and derives every key and shape statically.
         """
         if (
-            self._state_spec is None
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._state_spec
+            is None
+        ):
             self._state_spec = (
                 self.build_state_spec()
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         return (
+            # ast-grep-ignore: leading-underscore
             self._state_spec
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     def build_state_spec(self) -> Qwen3TTSIncrementalCodecStateSpec:
         decoder = self.decoder
@@ -701,10 +703,12 @@ class Qwen3TTSIncrementalDecoder:
             return
         # note (luojiaxuan): one trace per (batch, width) pair, past the default
         # 8; ``decode`` never compiles a new shape, so the limit only matters here.
-        with torch._dynamo.config.patch(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        with torch._dynamo.config.patch(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             recompile_limit=max(
-                torch._dynamo.config.recompile_limit, 64
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                # ast-grep-ignore: leading-underscore
+                torch._dynamo.config.recompile_limit,
+                64,
+            )
         ):
             self.compiled_kernel(codes, state)
         self.compiled_shapes.add(shape)

@@ -149,7 +149,7 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
             raise ValueError(f"max_batch_size must be >= 1, got {max_batch_size}")
         if max_batch_wait_ms < 0:
             raise ValueError(f"max_batch_wait_ms must be >= 0, got {max_batch_wait_ms}")
-        self._hook = hook  # noqa: leading-underscore
+        self._hook = hook  # ast-grep-ignore: leading-underscore
         self.cache = StageOutputCache(max_size=max_items, max_bytes=max_bytes)
         self.timeout_s = float(timeout_s)
         self.log_prefix = log_prefix
@@ -180,7 +180,7 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
 
     @property
     def hook(self) -> ReferenceEncodeHook[InputT, ArtifactT, StoredT]:
-        return self._hook  # noqa: leading-underscore
+        return self._hook  # ast-grep-ignore: leading-underscore
 
     @property
     def batching_enabled(self) -> bool:
@@ -192,13 +192,18 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
         thread = self.batch_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
-        close = getattr(self._hook, "close", None)  # noqa: leading-underscore
+        close = getattr(
+            # ast-grep-ignore: leading-underscore
+            self._hook,
+            "close",
+            None,
+        )
         if callable(close):
             close()
 
     def encode_leader(self, item: InputT) -> ArtifactT:
         if self.batch_queue is None:
-            return self._hook.encode_one(item)  # noqa: leading-underscore
+            return self._hook.encode_one(item)  # ast-grep-ignore: leading-underscore
         future: concurrent.futures.Future[ArtifactT] = concurrent.futures.Future()
         self.batch_queue.put((item, future))
         return future.result(timeout=self.timeout_s)
@@ -272,7 +277,9 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
     def encode_batch(self, items: list[InputT]) -> list[Any]:
         """Encode a drained batch, falling back to per-item encodes on failure."""
         try:
-            artifacts = self._hook.encode_batch(items)  # noqa: leading-underscore
+            artifacts = self._hook.encode_batch(
+                items
+            )  # ast-grep-ignore: leading-underscore
             if len(artifacts) != len(items):
                 raise RuntimeError(
                     f"encode_batch returned {len(artifacts)} artifacts for {len(items)} items"
@@ -289,14 +296,19 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
         results: list[Any] = []
         for item in items:
             try:
-                results.append(self._hook.encode_one(item))  # noqa: leading-underscore
+                results.append(
+                    # ast-grep-ignore: leading-underscore
+                    self._hook.encode_one(item)
+                )
             except Exception as exc:
                 results.append(exc)
         return results
 
     def get_or_encode(self, raw_input: Any, *, desc: str | None = None) -> ArtifactT:
-        item = self._hook.normalize_input(raw_input)  # noqa: leading-underscore
-        key = self._hook.cache_key(item)  # noqa: leading-underscore
+        item = self._hook.normalize_input(
+            raw_input
+        )  # ast-grep-ignore: leading-underscore
+        key = self._hook.cache_key(item)  # ast-grep-ignore: leading-underscore
         if key is None:
             with self.lock:
                 self.uncacheable += 1
@@ -324,7 +336,9 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
                 self.inflight[cache_key] = leader_fut
         if stored is not None:
             self.maybe_log()
-            return self._hook.load_artifact(stored)  # noqa: leading-underscore
+            return self._hook.load_artifact(
+                stored
+            )  # ast-grep-ignore: leading-underscore
         if follower_fut is not None:
             try:
                 stored = follower_fut.result(timeout=self.timeout_s)
@@ -334,12 +348,18 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
             except BaseException as exc:
                 self.add_exception_note(exc, desc)
                 raise fresh_exception(exc) from exc
-            return self._hook.load_artifact(stored)  # noqa: leading-underscore
+            return self._hook.load_artifact(
+                stored
+            )  # ast-grep-ignore: leading-underscore
         assert leader_fut is not None
         try:
             artifact = self.encode_leader(item)
-            stored = self._hook.store_artifact(artifact)  # noqa: leading-underscore
-            should_cache = self._hook.revalidate(item, key)  # noqa: leading-underscore
+            stored = self._hook.store_artifact(
+                artifact
+            )  # ast-grep-ignore: leading-underscore
+            should_cache = self._hook.revalidate(
+                item, key
+            )  # ast-grep-ignore: leading-underscore
             with self.lock:
                 if should_cache:
                     self.cache.put(cache_key, stored)
@@ -353,7 +373,7 @@ class ReferenceEncodeService(Generic[InputT, ArtifactT, StoredT]):
             raise
         leader_fut.set_result(stored)
         self.maybe_log()
-        return self._hook.load_artifact(stored)  # noqa: leading-underscore
+        return self._hook.load_artifact(stored)  # ast-grep-ignore: leading-underscore
 
     def stats(self) -> dict[str, int]:
         with self.lock:

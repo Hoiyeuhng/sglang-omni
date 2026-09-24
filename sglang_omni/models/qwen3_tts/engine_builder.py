@@ -160,7 +160,7 @@ class Qwen3TtsEngineBuilder(TtsEngineBuilder):
         # note(ratish): the bucket warmups also build cuDNN's attention plans,
         # which otherwise land inside the first serving step of each batch size.
         subtalker = request_builders.resolve_subtalker_sampling(
-            self.wrapper._merge_generate_kwargs()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            self.wrapper._merge_generate_kwargs()  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         )
         model.capture_predictor_graphs(
             do_sample=subtalker.do_sample,

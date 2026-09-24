@@ -274,6 +274,7 @@ class DownsampleResidualVectorQuantize(nn.Module):
                 for idx, factor in reversed(list(enumerate(downsample_factor)))
             ]
         )
+        # ast-grep-ignore: leading-underscore
         self.apply(self._init_weights)
         self.pre_module = (
             pre_module if pre_module is not None else nn.Identity()
@@ -285,6 +286,7 @@ class DownsampleResidualVectorQuantize(nn.Module):
             else nn.Identity()
         )
 
+    # ast-grep-ignore: leading-underscore
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv1d, nn.Linear)):
             nn.init.trunc_normal_(m.weight, std=0.02)

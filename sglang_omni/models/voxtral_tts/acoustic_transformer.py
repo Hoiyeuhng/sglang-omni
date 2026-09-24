@@ -235,7 +235,7 @@ class BidirectionalAttention(nn.Module):
 class AcousticTransformerBlock(nn.Module):
     def __init__(self, layer_id: int, args: AcousticTransformerArgs) -> None:
         super().__init__()
-        self._layer_id = layer_id  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._layer_id = layer_id  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.n_heads = args.n_heads
         self.dim = args.dim
         self.attention = BidirectionalAttention(args, layer_id=layer_id)
@@ -247,8 +247,9 @@ class AcousticTransformerBlock(nn.Module):
     @property
     def layer_id(self) -> int:
         return (
+            # ast-grep-ignore: leading-underscore
             self._layer_id
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         r = self.attention.forward(self.attention_norm(x))

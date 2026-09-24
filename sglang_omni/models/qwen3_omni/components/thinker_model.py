@@ -591,7 +591,7 @@ class Qwen3OmniMoeThinkerTextDecoderLayer(nn.Module):
         )
 
         if should_allreduce_fusion:
-            hidden_states._sglang_needs_allreduce_fusion = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            hidden_states._sglang_needs_allreduce_fusion = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         else:
             hidden_states, residual = self.layer_communicator.postprocess_layer(
                 hidden_states, residual, forward_batch

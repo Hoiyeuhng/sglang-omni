@@ -104,8 +104,11 @@ def cosyvoice3_model_revision(model: Any) -> str:
     for candidate in (
         getattr(model, "name_or_path", None),
         getattr(
-            config, "_name_or_path", None
-        ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            config,
+            # ast-grep-ignore: leading-underscore
+            "_name_or_path",
+            None,
+        ),
         getattr(config, "name_or_path", None),
     ):
         if candidate:
@@ -823,14 +826,14 @@ def build_sglang_cosyvoice3_request(
         vocab_size=TOTAL_VOCAB_SIZE,
     )
     req.tokenizer = _COSYVOICE3_NULL_TOKENIZER
-    req._input_embeds_are_projected = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-    req._codec_suppress_tokens = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    req._input_embeds_are_projected = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+    req._codec_suppress_tokens = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     req._cosyvoice3_text_token_ids = list(
         prepared.text_token_ids
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
     req._cosyvoice3_prompt_speech_token_ids = list(
         prepared.llm_prompt_speech_token_ids
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     data = CosyVoice3SGLangRequestData(
         input_ids=prepared.input_ids,

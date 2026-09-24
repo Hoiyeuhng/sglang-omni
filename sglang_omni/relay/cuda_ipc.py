@@ -140,8 +140,9 @@ def dump_cuda_storage_handle(tensor: torch.Tensor) -> dict[str, Any]:
         event_handle,
         event_sync_required,
     ) = (
+        # ast-grep-ignore: leading-underscore
         tensor.untyped_storage()._share_cuda_()
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    )
     return {
         "storage_device": int(storage_device),
         "storage_handle": storage_handle,
@@ -214,7 +215,7 @@ class ReceiverAckOperation(RelayOperation):
         *,
         held_references: tuple[Any, ...] = (),
     ) -> None:
-        self._metadata = metadata  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._metadata = metadata  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.receiver_done = asyncio.get_running_loop().create_future()
         self.receiver_done_mark_ns: int | None = None
         self.held_references = held_references
@@ -223,8 +224,9 @@ class ReceiverAckOperation(RelayOperation):
     @property
     def metadata(self) -> dict[str, Any]:
         return (
+            # ast-grep-ignore: leading-underscore
             self._metadata
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     async def wait_for_receiver(self, timeout: float) -> None:
         await asyncio.wait_for(self.receiver_done, timeout=timeout)

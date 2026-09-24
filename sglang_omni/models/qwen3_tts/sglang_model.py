@@ -1058,13 +1058,16 @@ class Qwen3TTSTalker(Qwen3TTSPromptBuilderMixin, nn.Module):
                 break
             data = sched_req.data
             epoch = getattr(
-                data, "_qwen3_tts_prep_epoch", None
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                data,
+                # ast-grep-ignore: leading-underscore
+                "_qwen3_tts_prep_epoch",
+                None,
+            )
             if epoch is None:
                 epoch = self.decode_prep_epoch = (
                     getattr(self, "decode_prep_epoch", 0) + 1
                 )
-                data._qwen3_tts_prep_epoch = epoch  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                data._qwen3_tts_prep_epoch = epoch  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             rids.append((rid, epoch))
         if rids is not None and rids == getattr(self, "decode_prep_rids", None):
             return

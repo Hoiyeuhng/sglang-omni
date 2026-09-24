@@ -254,6 +254,7 @@ class MultiModalResourceConnector:
         self.allow_remote_media_without_domains = allow_remote_media_without_domains
         self.reject_unsafe_remote_addresses = reject_unsafe_remote_addresses
 
+    # ast-grep-ignore: leading-underscore
     def _assert_url_allowed(self, url_spec: Any) -> None:
         """Check whether a remote media URL is allowed to be fetched."""
         hostname = url_spec.hostname
@@ -283,9 +284,11 @@ class MultiModalResourceConnector:
 
     def assert_url_allowed(self, url: str) -> None:
         """Validate URL policy without loading the resource."""
+        # ast-grep-ignore: leading-underscore
         self._assert_url_allowed(urlparse(url))
 
     async def assert_url_allowed_async(self, url_spec: Any) -> None:
+        # ast-grep-ignore: leading-underscore
         await asyncio.to_thread(self._assert_url_allowed, url_spec)
 
     def load_data_url(self, url_spec: Any, media_io: MediaIO[_M]) -> _M:
@@ -430,6 +433,7 @@ class MultiModalResourceConnector:
         client = self.connection.get_sync_client()
         current_url = url
         for _ in range(_MAX_HTTP_REDIRECTS + 1):
+            # ast-grep-ignore: leading-underscore
             self._assert_url_allowed(urlparse(current_url))
             try:
                 with client.stream(

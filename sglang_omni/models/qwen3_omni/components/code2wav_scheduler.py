@@ -115,7 +115,7 @@ def load_code2wav_model(
 
     model = Qwen3OmniMoeCode2Wav._from_config(
         code2wav_config
-    )  # noqa: leading-underscore
+    )  # ast-grep-ignore: leading-underscore
     model = load_module(
         model,
         model_path,
@@ -279,7 +279,7 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
         if state.emitted > 0:
             return None
         run_id = _get_event_recorder().active_run_id()
-        profile = state._critical_ingest_profile  # noqa: leading-underscore
+        profile = state._critical_ingest_profile  # ast-grep-ignore: leading-underscore
         if profile is None or profile["run_id"] != run_id:
             profile = {
                 "run_id": run_id,
@@ -291,7 +291,8 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
                 "started_with_frames": len(state.chunks),
                 "ready_emitted": False,
             }
-            state._critical_ingest_profile = profile  # noqa: leading-underscore
+            # ast-grep-ignore: leading-underscore
+            state._critical_ingest_profile = profile
         if profile["ready_emitted"]:
             return None
         return (profile, time.time_ns(), time.perf_counter_ns(), len(state.chunks))

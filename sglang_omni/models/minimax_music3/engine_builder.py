@@ -193,8 +193,11 @@ class MiniMaxMusic3EngineBuilder(TtsEngineBuilder):
         from sglang.srt.models.qwen3 import Qwen3ForCausalLM
 
         if getattr(
-            Qwen3ForCausalLM.load_weights, "_minimax_filtered", False
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            Qwen3ForCausalLM.load_weights,
+            # ast-grep-ignore: leading-underscore
+            "_minimax_filtered",
+            False,
+        ):
             return
         load_weights = Qwen3ForCausalLM.load_weights
 
@@ -208,7 +211,7 @@ class MiniMaxMusic3EngineBuilder(TtsEngineBuilder):
                 ),
             )
 
-        filtered_load_weights._minimax_filtered = True  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        filtered_load_weights._minimax_filtered = True  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         Qwen3ForCausalLM.load_weights = filtered_load_weights
         logger.info("MiniMax Music 3: Qwen3 weight loader now skips audio-module keys")
 

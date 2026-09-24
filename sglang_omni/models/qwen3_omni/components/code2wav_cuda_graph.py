@@ -250,9 +250,11 @@ class Code2WavCudaGraphRunner:
             graph_keys=graph_keys,
             device_api=TorchDeviceApi() if device_api is None else device_api,
         )
+        # ast-grep-ignore: leading-underscore
         runner._build(total_gpu_memory_fraction)
         return runner
 
+    # ast-grep-ignore: leading-underscore
     def _build(self, total_gpu_memory_fraction: float | None) -> None:
         fraction = self.valid_fraction(total_gpu_memory_fraction)
         if fraction is None:

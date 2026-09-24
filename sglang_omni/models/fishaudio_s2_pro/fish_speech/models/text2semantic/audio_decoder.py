@@ -270,7 +270,7 @@ class Attention(nn.Module):
 
         self._register_load_state_dict_pre_hook(
             self.load_hook
-        )  # noqa: leading-underscore
+        )  # ast-grep-ignore: leading-underscore
 
     def load_hook(self, state_dict, prefix, *args):
         """Normalize legacy split-QKV checkpoints before strict loading."""

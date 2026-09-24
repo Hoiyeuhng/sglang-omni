@@ -109,9 +109,8 @@ class Qwen3ASREngineBuilder(AsrEngineBuilder):
         self.model_path: str | None = None
         self.audio_encoder_service: Any = None
         self.torch_mps_model_runner: Any = None
-        self._should_wait_for_encode: Callable[[], bool] | None = (
-            None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._should_wait_for_encode: Callable[[], bool] | None = None
 
     def pre_infra_setup(self, checkpoint_dir: str) -> None:
         self.model_path = checkpoint_dir
@@ -378,8 +377,9 @@ class Qwen3ASREngineBuilder(AsrEngineBuilder):
         return (
             False
             if self._should_wait_for_encode
-            is None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-            else self._should_wait_for_encode()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            is None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            else self._should_wait_for_encode()
         )
 
     def make_adapters(self, model: Any) -> tuple[Any, Any]:
@@ -405,7 +405,7 @@ class Qwen3ASREngineBuilder(AsrEngineBuilder):
         del model_runner
         self._should_wait_for_encode = (
             scheduler.request_build_queue_fits_workers
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     def extra_scheduler_callbacks(self) -> dict[str, Any]:
         if self.audio_encoder_service is None:

@@ -33,9 +33,8 @@ class StrictWeightChecker:
 
     def __init__(self, model_runner: Any):
         self.model_runner = model_runner
-        self._snapshot: dict[str, TensorDigest] | None = (
-            None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._snapshot: dict[str, TensorDigest] | None = None
 
     def run(self, action: str) -> dict[str, Any]:
         if action == "snapshot":
@@ -54,51 +53,59 @@ class StrictWeightChecker:
     def snapshot(self) -> dict[str, Any]:
         self._snapshot = (
             self.digest_model()
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         return self.summary(
-            self._snapshot, action="snapshot"
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._snapshot,
+            action="snapshot",
+        )
 
     def reset_tensors(self) -> dict[str, Any]:
         self._snapshot = (
             self.digest_model()
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         return self.summary(
-            self._snapshot, action="reset_tensors"
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._snapshot,
+            action="reset_tensors",
+        )
 
     def checksum(self) -> dict[str, Any]:
         return self.summary(self.digest_model(), action="checksum")
 
     def compare(self) -> dict[str, Any]:
         if (
-            self._snapshot is None
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._snapshot
+            is None
+        ):
             raise RuntimeError("weights_checker compare requires snapshot first")
         current = self.digest_model()
         missing = sorted(
-            set(self._snapshot) - set(current)
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            set(self._snapshot)
+            - set(current)
+        )
         unexpected = sorted(
-            set(current) - set(self._snapshot)
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            set(current)
+            # ast-grep-ignore: leading-underscore
+            - set(self._snapshot)
+        )
         changed = [
             name
             for name in sorted(
-                set(self._snapshot) & set(current)
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-            if self._snapshot[name].sha256
-            != current[
-                name
-            ].sha256  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-            or self._snapshot[name].shape
-            != current[
-                name
-            ].shape  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                # ast-grep-ignore: leading-underscore
+                set(self._snapshot)
+                & set(current)
+            )
+            if self._snapshot[name].sha256 != current[name].sha256
+            # ast-grep-ignore: leading-underscore
+            or self._snapshot[name].shape != current[name].shape
+            # ast-grep-ignore: leading-underscore
             or self._snapshot[name].dtype
             != current[
                 name
-            ].dtype  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            ].dtype  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         ]
         summary = self.summary(current, action="compare")
         summary.update(

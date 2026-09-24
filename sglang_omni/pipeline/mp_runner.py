@@ -484,18 +484,16 @@ class MultiProcessPipelineRunner:
 
     def __init__(self, config: PipelineConfig):
         self.config = config
-        self._coordinator: Coordinator | None = (
-            None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._coordinator: Coordinator | None = None
         self.ipc_runtime_dir: IpcRuntimeDir | None = None
         self.groups: list[StageGroup] = []
         self.completion_task: asyncio.Task | None = None
         self.monitor_task: asyncio.Task | None = None
         self.fatal_event: asyncio.Event | None = None
         self.fatal_error: BaseException | None = None
-        self._prep: PipelineRuntimePrep | None = (
-            None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
-        )
+        # ast-grep-ignore: leading-underscore
+        self._prep: PipelineRuntimePrep | None = None
         self.started = False
         self.mps: MpsPipelineRuntime | None = None
         self.weight_share: WeightSharePlan | None = None
@@ -503,24 +501,30 @@ class MultiProcessPipelineRunner:
     @property
     def coordinator(self) -> Coordinator:
         if (
-            self._coordinator is None
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._coordinator
+            is None
+        ):
             raise RuntimeError("Runner not started")
         return (
+            # ast-grep-ignore: leading-underscore
             self._coordinator
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @property
     def prep(self) -> PipelineRuntimePrep:
         """Return the resolved runtime prep (placement plan, process plan,
         endpoints, fused stages). Valid only after :meth:`start`."""
         if (
-            self._prep is None
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._prep
+            is None
+        ):
             raise RuntimeError("Runner not started")
         return (
+            # ast-grep-ignore: leading-underscore
             self._prep
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
 
     @property
     def stage_control_endpoints(self) -> dict[str, str]:
@@ -543,7 +547,7 @@ class MultiProcessPipelineRunner:
                 self.config,
                 ipc_runtime_dir=self.ipc_runtime_dir,
             )
-            self._prep = prep  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            self._prep = prep  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             self.ipc_runtime_dir = prep.runtime_dir
             validate_gpu_capacity(prep.placement_plan)
             groups = build_stage_groups(
@@ -579,7 +583,7 @@ class MultiProcessPipelineRunner:
                 self.config,
                 logical_process_plan=prep.logical_process_plan,
             )
-            self._coordinator = Coordinator(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            self._coordinator = Coordinator(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
                 completion_endpoint=prep.endpoints["completion"],
                 abort_endpoint=prep.endpoints["abort"],
                 entry_stage=prep.entry_stage,
@@ -594,9 +598,9 @@ class MultiProcessPipelineRunner:
                     "Coordinator in-flight cap=%s (generation running+queued)",
                     max_in_flight,
                 )
-            await self._coordinator.start()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            await self._coordinator.start()  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             self.completion_task = asyncio.create_task(
-                self._coordinator.run_completion_loop()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                self._coordinator.run_completion_loop()  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             )
 
             self.groups = groups
@@ -659,7 +663,7 @@ class MultiProcessPipelineRunner:
                 for stage_name, endpoint in group.stage_control_endpoints.items():
                     self._coordinator.register_stage(
                         stage_name, endpoint
-                    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
             self.started = True
             self.monitor_task = asyncio.create_task(self.monitor_children())
@@ -761,11 +765,13 @@ class MultiProcessPipelineRunner:
     async def fail_runtime(self, error: BaseException) -> None:
         self.fatal_error = error
         if (
-            self._coordinator is not None
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._coordinator
+            is not None
+        ):
             await self._coordinator.fail_pending_requests(
                 error
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         if self.mps is None:
             if self.fatal_event is not None:
                 self.fatal_event.set()
@@ -825,11 +831,11 @@ class MultiProcessPipelineRunner:
             # Send shutdown to stages via coordinator
             try:
                 if partitioned:
-                    await self._coordinator.shutdown_stages(  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    await self._coordinator.shutdown_stages(  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
                         stage_names=wave_stage_names(wave)
                     )
                 else:
-                    await self._coordinator.shutdown_stages()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    await self._coordinator.shutdown_stages()  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             except Exception as e:
                 logger.warning("shutdown_stages error: %s", e)
 
@@ -849,9 +855,9 @@ class MultiProcessPipelineRunner:
 
         await self.cancel_completion_task()
 
-        await self._coordinator.stop()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        await self._coordinator.stop()  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         self.groups.clear()
-        self._coordinator = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self._coordinator = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
         self.close_runtime_dir()
         if mps_error is not None:
@@ -879,13 +885,15 @@ class MultiProcessPipelineRunner:
         await self.cancel_completion_task()
 
         if (
-            self._coordinator is not None
-        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            # ast-grep-ignore: leading-underscore
+            self._coordinator
+            is not None
+        ):
             try:
-                await self._coordinator.stop()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                await self._coordinator.stop()  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             except Exception:
                 pass
-            self._coordinator = None  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            self._coordinator = None  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
         self.close_runtime_dir()
 

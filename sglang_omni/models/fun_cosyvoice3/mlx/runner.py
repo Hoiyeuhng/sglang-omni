@@ -18,6 +18,7 @@ mx.eval(_SPEECH_IDS)
 class FunCosyVoice3MlxModelRunner:
     """Customize only prompt prefill; generic MLX cache/decode stays upstream."""
 
+    # ast-grep-ignore: leading-underscore
     def _load_model(self) -> None:
         from sglang.srt.hardware_backend.mlx.remote_code_gate import (
             ensure_remote_code_allowed,
@@ -46,11 +47,17 @@ class FunCosyVoice3MlxModelRunner:
     @staticmethod
     def request_prompt(req: Any) -> tuple[list[int], list[int]]:
         text_ids = getattr(
-            req, "_cosyvoice3_text_token_ids", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req,
+            # ast-grep-ignore: leading-underscore
+            "_cosyvoice3_text_token_ids",
+            None,
+        )
         prompt_ids = getattr(
-            req, "_cosyvoice3_prompt_speech_token_ids", None
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            req,
+            # ast-grep-ignore: leading-underscore
+            "_cosyvoice3_prompt_speech_token_ids",
+            None,
+        )
         if text_ids is None or prompt_ids is None:
             raise ValueError(
                 "Fun-CosyVoice3 MLX request is missing raw prompt token metadata"
@@ -75,8 +82,8 @@ class FunCosyVoice3MlxModelRunner:
                 generated_count = 0
             else:
                 generated_count = max(
-                    self._first_attention_cache(caches[index]).offset
-                    - prompt_length,  # noqa: leading-underscore
+                    # ast-grep-ignore: leading-underscore
+                    self._first_attention_cache(caches[index]).offset - prompt_length,
                     0,
                 )
             if generated_count < self.cosyvoice3_min_lengths.get(req_id, 0):
@@ -151,7 +158,7 @@ class FunCosyVoice3MlxModelRunner:
         self.cosyvoice3_recent_tokens[req_id] = []
         text_ids, prompt_ids = self.request_prompt(req)
         embeddings = self.model.build_prompt_embeddings(text_ids, prompt_ids)
-        cache = self._acquire_cache()  # noqa: leading-underscore
+        cache = self._acquire_cache()  # ast-grep-ignore: leading-underscore
         logits = self.model.forward_embeddings(embeddings, cache=cache)
         logits = self.constrain_logits(
             logits[:, -1, :],
@@ -159,6 +166,7 @@ class FunCosyVoice3MlxModelRunner:
             [cache],
             initial=True,
         )
+        # ast-grep-ignore: leading-underscore
         lazy_token, lazy_logprobs = self._select_tokens_with_logprobs(
             logits,
             [req_id],
@@ -220,12 +228,13 @@ class FunCosyVoice3MlxModelRunner:
         input_ids = mx.array([[self.req_token_ids[req_id][-1]]], dtype=mx.int32)
         logits = self._decode_with_native_cache(
             [cache], [input_ids]
-        )  # noqa: leading-underscore
+        )  # ast-grep-ignore: leading-underscore
         logits = self.constrain_logits(logits, req_ids, [cache])
         if logits_hook is not None:
             logits = self._run_logits_hook(
                 logits, logits_hook
-            )  # noqa: leading-underscore
+            )  # ast-grep-ignore: leading-underscore
+        # ast-grep-ignore: leading-underscore
         lazy_tokens, lazy_logprobs = self._select_tokens_with_logprobs(
             logits,
             req_ids,
@@ -259,6 +268,7 @@ class FunCosyVoice3MlxModelRunner:
             masks.append(mask)
         return mx.stack(masks)
 
+    # ast-grep-ignore: leading-underscore
     def _select_tokens_with_logprobs(
         self,
         last_logits: mx.array,
@@ -275,6 +285,7 @@ class FunCosyVoice3MlxModelRunner:
         the MLX graph so chained decode remains valid.
         """
         if not self.enable_sampling:
+            # ast-grep-ignore: leading-underscore
             return super()._select_tokens_with_logprobs(
                 last_logits,
                 req_ids,
@@ -291,11 +302,15 @@ class FunCosyVoice3MlxModelRunner:
         )
 
         params = [self.req_sampling[req_id] for req_id in req_ids]
-        edited = self._edited_logits(last_logits, edit_rows)  # noqa: leading-underscore
+        edited = self._edited_logits(
+            last_logits, edit_rows
+        )  # ast-grep-ignore: leading-underscore
         scaled = scale_by_temperature(edited, params)
         positions = [
-            self._first_attention_cache(cache).offset - 1 for cache in caches
-        ]  # noqa: leading-underscore
+            # ast-grep-ignore: leading-underscore
+            self._first_attention_cache(cache).offset - 1
+            for cache in caches
+        ]
         self.rng_key, first_key = mx.random.split(self.rng_key)
         first = sample_tokens(
             edited,
@@ -366,9 +381,11 @@ class FunCosyVoice3MlxModelRunner:
 
         self.cosyvoice3_sampling_pending_tokens = prev.lazy_tokens
         try:
-            logits = self._decode_with_native_cache(  # noqa: leading-underscore
-                prev.caches,
-                [prev.lazy_tokens[:, None]],
+            logits = (
+                self._decode_with_native_cache(  # ast-grep-ignore: leading-underscore
+                    prev.caches,
+                    [prev.lazy_tokens[:, None]],
+                )
             )
             logits = self.constrain_logits(
                 logits,
@@ -376,6 +393,7 @@ class FunCosyVoice3MlxModelRunner:
                 prev.caches,
                 pending_tokens=prev.lazy_tokens,
             )
+            # ast-grep-ignore: leading-underscore
             lazy_tokens, lazy_logprobs = self._select_tokens_with_logprobs(
                 logits,
                 prev.req_ids,

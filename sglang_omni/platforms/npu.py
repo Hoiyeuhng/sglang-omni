@@ -16,6 +16,7 @@ class NPUOmniPlatform(OmniPlatform):
     device_name: str = "npu"
     device_type: str = "npu"
 
+    # ast-grep-ignore: leading-underscore
     def _get_device_graph_backend(self) -> DeviceGraphBackend:
         from sglang_omni.platforms.device_graph import NpuDeviceGraphBackend
 

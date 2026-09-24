@@ -79,14 +79,15 @@ class SegmentSplits:
 
 def forward_with_shared_segments(self, hidden_states, cu_seqlens, **kwargs):
     splits = (
+        # ast-grep-ignore: leading-underscore
         self._omni_segment_splits.value
-    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+    )
     if splits is None or sum(splits) != hidden_states.shape[0]:
         # Note (wenyao): a stale or mismatched split would silently corrupt
         # attention rather than fail, so fall back instead of trusting it.
         return self._omni_unshared_forward(
             hidden_states, cu_seqlens, **kwargs
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
     seq_length, _ = hidden_states.size()
     query_states = self.q_proj(hidden_states).reshape(seq_length, self.num_heads, -1)
@@ -97,8 +98,9 @@ def forward_with_shared_segments(self, hidden_states, cu_seqlens, **kwargs):
     value_states = value_states.transpose(0, 1).unsqueeze(0)
 
     attention_interface = hf_modeling.ALL_ATTENTION_FUNCTIONS.get_interface(
+        # ast-grep-ignore: leading-underscore
         self.config._attn_implementation,
-        hf_modeling.eager_attention_forward,  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        hf_modeling.eager_attention_forward,
     )
     qkv_splits = [
         torch.split(tensor, splits, dim=2)
@@ -128,10 +130,10 @@ def share_segment_splits(tower: nn.Module, splits: SegmentSplits) -> None:
     # value; that sync is also what makes the stack uncapturable.
     for layer in tower.layers:
         attention = layer.self_attn
-        attention._omni_segment_splits = splits  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        attention._omni_segment_splits = splits  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         attention._omni_unshared_forward = (
             attention.forward
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
         attention.forward = MethodType(forward_with_shared_segments, attention)
 
 
@@ -183,8 +185,9 @@ class Qwen3OmniAudioEncoder(nn.Module):
             device=device,
         )
         self.downsample_lengths = (
+            # ast-grep-ignore: leading-underscore
             hf_modeling._get_feat_extract_output_lengths
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
         self.segment_splits = SegmentSplits()
         share_segment_splits(self.audio_tower, self.segment_splits)
         self.layer_graph_runner = None

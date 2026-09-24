@@ -80,8 +80,9 @@ def extract_zonos2_output(runner, result, scheduler_output, outputs) -> None:
             )
         codes = data.output_codes
         start = int(
+            # ast-grep-ignore: leading-underscore
             data._stream_emit_idx
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
         n_new = len(codes) - start
         if n_new <= 0:
             continue
@@ -102,7 +103,7 @@ def extract_zonos2_output(runner, result, scheduler_output, outputs) -> None:
                 )
             data._stream_emit_idx = len(
                 codes
-            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
             continue
         # Coalesced path: hold rows until >= threshold have accumulated, but
         # always flush the remainder on finish so the OLA decoder receives every
@@ -130,7 +131,7 @@ def extract_zonos2_output(runner, result, scheduler_output, outputs) -> None:
         )
         data._stream_emit_idx = len(
             codes
-        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )  # ast-grep-ignore: leading-underscore  # upstream spelling, or the public name is already taken
 
 
 def zonos2_prefill_forward(runner, forward_batch, schedule_batch, requests):
