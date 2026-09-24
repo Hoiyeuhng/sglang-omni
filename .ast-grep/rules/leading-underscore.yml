@@ -1,0 +1,46 @@
+id: leading-underscore
+language: python
+severity: error
+message: Use a public name instead of a leading underscore.
+files:
+  - sglang_omni/**/*.py
+ignores:
+  - sglang_omni/vendor/**
+rule:
+  regex: ^_[^_]
+  any:
+    # Attribute read or write, on any object.
+    - kind: identifier
+      inside:
+        kind: attribute
+        field: attribute
+    # Class or function name at module or class scope.
+    - kind: identifier
+      inside:
+        any:
+          - kind: function_definition
+          - kind: class_definition
+        field: name
+        not:
+          inside:
+            kind: function_definition
+            stopBy: end
+    # String name passed to getattr.
+    - kind: string_content
+      inside:
+        kind: string
+        nthChild:
+          position: 2
+          ofRule:
+            not:
+              kind: comment
+        not:
+          has:
+            kind: interpolation
+        inside:
+          kind: argument_list
+          inside:
+            kind: call
+            has:
+              field: function
+              regex: ^getattr$
