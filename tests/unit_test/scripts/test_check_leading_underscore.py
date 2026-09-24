@@ -7,6 +7,7 @@ import ast
 import importlib.util
 import subprocess
 import sys
+import types
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -205,3 +206,161 @@ hook = _ExternalAdapter._required_external_hook
         assert probe.read_text(encoding="utf-8") == kept + local.replace(
             "_local_helper", "local_helper"
         )
+
+
+def file_violations(source: str, tmp_path: Path) -> list[tuple[int, str]]:
+    checker = _load_checker()
+    path = tmp_path / "sample.py"
+    path.write_text(source, encoding="utf-8")
+    return [
+        (violation.lineno, violation.name) for violation in checker.check_file(path)
+    ]
+
+
+def fix_and_run(source: str) -> types.ModuleType:
+    """Run --fix on a probe file, then execute the rewritten module."""
+    with _probe_model_file(source) as (_, probe):
+        _run_checker("--fix", str(probe))
+        rewritten = probe.read_text(encoding="utf-8")
+    module = types.ModuleType("leading_underscore_fix_probe")
+    # note (haiyang): dataclass() reads the class module from sys.modules.
+    sys.modules[module.__name__] = module
+    try:
+        exec(compile(rewritten, "probe.py", "exec"), module.__dict__)
+    finally:
+        sys.modules.pop(module.__name__)
+    return module
+
+
+def test_noqa_in_class_body_does_not_exempt_class_name(tmp_path: Path) -> None:
+    source = """
+class _Hidden:
+    def method(self) -> int:
+        return 1  # noqa: leading-underscore
+"""
+    assert file_violations(source, tmp_path) == [(2, "_Hidden")]
+
+
+def test_noqa_in_function_body_does_not_exempt_def_name(tmp_path: Path) -> None:
+    source = """
+def _helper() -> int:
+    value = 1  # noqa: leading-underscore
+    return value
+"""
+    assert file_violations(source, tmp_path) == [(2, "_helper")]
+
+
+def test_noqa_in_block_body_does_not_exempt_header_attributes(
+    tmp_path: Path,
+) -> None:
+    source = """
+def run(request) -> None:
+    with request._lock:
+        is_locked = True  # noqa: leading-underscore
+    if request._ready:
+        is_ready = True  # noqa: leading-underscore
+    for entry in request._entries:
+        is_seen = True  # noqa: leading-underscore
+"""
+    assert file_violations(source, tmp_path) == [
+        (3, "_lock"),
+        (5, "_ready"),
+        (7, "_entries"),
+    ]
+
+
+def test_attribute_assignment_is_reported_once(tmp_path: Path) -> None:
+    source = "def attach(request) -> None:\n    request._cache_key = 1\n"
+    assert file_violations(source, tmp_path) == [(2, "_cache_key")]
+
+
+def test_string_attribute_builtins_are_reported(tmp_path: Path) -> None:
+    source = """
+def probe(request) -> None:
+    hasattr(request, "_read")
+    setattr(request, "_written", 1)
+    delattr(request, "_deleted")
+    object.__setattr__(request, "_frozen", 1)
+"""
+    names = {name for _, name in file_violations(source, tmp_path)}
+    assert names == {"_read", "_written", "_deleted", "_frozen"}
+
+
+def test_fix_does_not_bypass_collision_in_another_class() -> None:
+    source = """
+class Renamed:
+    def __init__(self) -> None:
+        self._value = 1
+
+class Collides:
+    def __init__(self) -> None:
+        self.value = "public"
+        self._value = "private"  # noqa: leading-underscore
+
+    def read(self) -> str:
+        return self._value
+
+RESULT = Collides().read()
+"""
+    assert fix_and_run(source).RESULT == "private"
+
+
+def test_fix_keeps_dataclass_field_and_its_uses_in_sync() -> None:
+    source = """
+import dataclasses
+
+@dataclasses.dataclass
+class Holder:
+    _cache: dict[str, int] = dataclasses.field(default_factory=dict)
+
+    def get(self) -> dict[str, int]:
+        return self._cache
+
+RESULT = Holder().get()
+"""
+    assert fix_and_run(source).RESULT == {}
+
+
+def test_fix_keeps_slots_and_their_uses_in_sync() -> None:
+    source = """
+class Slotted:
+    __slots__ = ("_value",)
+
+    def __init__(self) -> None:
+        self._value = 1
+
+INSTANCE = Slotted()
+"""
+    module = fix_and_run(source)
+    assert isinstance(module.INSTANCE, module.Slotted)
+
+
+def test_fix_does_not_rename_inherited_private_attributes() -> None:
+    source = """
+import threading
+
+CALLS = []
+
+class Worker(threading.Thread):
+    def run(self) -> None:
+        self._target(*self._args)
+
+worker = Worker(target=CALLS.append, args=("ran",))
+worker.start()
+worker.join()
+"""
+    assert fix_and_run(source).CALLS == ["ran"]
+
+
+def test_fix_keeps_string_attribute_references_in_sync() -> None:
+    source = """
+class Handle:
+    def __init__(self) -> None:
+        self._handle = 1
+
+    def has(self) -> bool:
+        return hasattr(self, "_handle")
+
+RESULT = Handle().has()
+"""
+    assert fix_and_run(source).RESULT is True
