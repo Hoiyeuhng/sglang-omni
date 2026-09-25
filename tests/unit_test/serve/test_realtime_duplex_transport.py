@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import pytest
@@ -19,6 +21,7 @@ from sglang_omni.serve.realtime.manager import (
     RealtimeDeployment,
     RealtimeSessionManager,
 )
+from sglang_omni.serve.realtime.schema import JsonObject
 from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits
 from tests.unit_test.serve.test_realtime_duplex_session import (
     MODEL_NAME,
@@ -31,7 +34,8 @@ PING_TIMEOUT_S = 0.2
 RELEASE_MARGIN_S = 2.0
 # note (Haiyang Luo): legacy websockets waits its default 10s close_timeout for the peer's close frame; uvicorn cannot set it.
 LEGACY_CLOSE_TIMEOUT_S = 10.0
-IDLE_PING_ROUNDS = 5
+IDLE_PING_ROUNDS = 3
+IDLE_INPUT_TIMEOUT_S = IDLE_PING_ROUNDS * (PING_INTERVAL_S + PING_TIMEOUT_S)
 WS_CLOSE_TIMEOUT_S = {
     "websockets": LEGACY_CLOSE_TIMEOUT_S,
     "websockets-sansio": 0.0,
@@ -47,14 +51,19 @@ class LiveServer:
     release_deadline_s: float
 
 
-async def start_live_server(
-    ws_implementation: str,
-) -> tuple[uvicorn.Server, LiveServer]:
+@asynccontextmanager
+async def serve_live(
+    ws_implementation: str, limits: RuntimeLimits
+) -> AsyncIterator[LiveServer]:
+    if ws_implementation == "wsproto":
+        pytest.importorskip("wsproto")
+    else:
+        pass
     adapter = ScriptedAdapter()
     deployment = RealtimeDeployment(
         capabilities=Capabilities(),
         adapter_factory=lambda: adapter,
-        limits=RuntimeLimits(),
+        limits=limits,
         max_connections=1,
     )
     app = create_app(
@@ -79,34 +88,43 @@ async def start_live_server(
         assert not serve_task.done(), "uvicorn exited during startup"
         await asyncio.sleep(0.01)
     port = server.servers[0].sockets[0].getsockname()[1]
-    return server, LiveServer(
-        url=f"ws://127.0.0.1:{port}/v1/realtime",
-        adapter=adapter,
-        manager=app.state.realtime_manager,
-        release_deadline_s=PING_INTERVAL_S
-        + PING_TIMEOUT_S
-        + WS_CLOSE_TIMEOUT_S[ws_implementation]
-        + RELEASE_MARGIN_S,
-    )
-
-
-@pytest_asyncio.fixture(params=list(WS_CLOSE_TIMEOUT_S))
-async def live_server(request: pytest.FixtureRequest) -> AsyncIterator[LiveServer]:
-    if request.param == "wsproto":
-        pytest.importorskip("wsproto")
-    else:
-        pass
-    server, live = await start_live_server(request.param)
     try:
-        yield live
+        yield LiveServer(
+            url=f"ws://127.0.0.1:{port}/v1/realtime",
+            adapter=adapter,
+            manager=app.state.realtime_manager,
+            release_deadline_s=PING_INTERVAL_S
+            + PING_TIMEOUT_S
+            + WS_CLOSE_TIMEOUT_S[ws_implementation]
+            + RELEASE_MARGIN_S,
+        )
     finally:
         server.should_exit = True
         await server.shutdown()
 
 
+@pytest_asyncio.fixture(params=list(WS_CLOSE_TIMEOUT_S))
+async def live_server(request: pytest.FixtureRequest) -> AsyncIterator[LiveServer]:
+    async with serve_live(request.param, RuntimeLimits()) as live:
+        yield live
+
+
+@pytest_asyncio.fixture(params=list(WS_CLOSE_TIMEOUT_S))
+async def idle_limited_server(
+    request: pytest.FixtureRequest,
+) -> AsyncIterator[LiveServer]:
+    limits = RuntimeLimits(idle_input_timeout_s=IDLE_INPUT_TIMEOUT_S)
+    async with serve_live(request.param, limits) as live:
+        yield live
+
+
 async def receive_until(connection: ClientConnection, event_type: str) -> None:
     while json.loads(await connection.recv())["type"] != event_type:
         pass
+
+
+async def receive_all(connection: ClientConnection) -> list[JsonObject]:
+    return [json.loads(message) async for message in connection]
 
 
 async def open_session(connection: ClientConnection) -> None:
@@ -170,11 +188,30 @@ async def test_unresponsive_peer_is_reaped_by_ping_timeout(
 
 
 @pytest.mark.asyncio
-async def test_idle_live_peer_holds_session_without_timeout(
-    live_server: LiveServer,
+async def test_idle_live_peer_is_reaped_by_idle_timeout(
+    idle_limited_server: LiveServer,
 ) -> None:
-    """A peer that answers pings but sends nothing keeps its session and slot."""
-    async with connect(live_server.url, ping_interval=None) as connection:
+    """A peer that keeps answering pings but sends nothing is closed by the runtime."""
+    async with connect(idle_limited_server.url, ping_interval=None) as connection:
         await open_session(connection)
-        await asyncio.sleep(IDLE_PING_ROUNDS * (PING_INTERVAL_S + PING_TIMEOUT_S))
-        assert list(live_server.manager.sessions) and not live_server.adapter.is_closed
+        opened_s = time.monotonic()
+        events = await asyncio.wait_for(
+            receive_all(connection), IDLE_INPUT_TIMEOUT_S + RELEASE_MARGIN_S
+        )
+        closed_after_s = time.monotonic() - opened_s
+
+    error_codes = [
+        event["error"]["code"] for event in events if event["type"] == "error"
+    ]
+    assert error_codes == ["idle_timeout"]
+    assert events[-1] == {
+        **events[-1],
+        "type": "session.closed",
+        "reason": "idle_timeout",
+    }
+    # Answering pings for several rounds must not count as client input.
+    assert (
+        IDLE_INPUT_TIMEOUT_S <= closed_after_s < IDLE_INPUT_TIMEOUT_S + RELEASE_MARGIN_S
+    )
+    await wait_for_release(idle_limited_server)
+    await assert_slot_reusable(idle_limited_server)
