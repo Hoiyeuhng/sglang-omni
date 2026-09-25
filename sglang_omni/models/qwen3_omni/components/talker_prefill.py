@@ -1,0 +1,459 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Prompt-aware talker prefill helpers.
+
+This module mirrors HF's talker prefill layout, then keeps HF's
+``trailing_text_hidden`` tensor as a device-backed FIFO of future text rows.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import torch
+from safetensors import safe_open
+
+from sglang_omni.models.qwen3_omni.components.talker_input import build_prefill_input
+from sglang_omni.models.qwen3_omni.payload_types import Qwen3OmniPipelineState
+from sglang_omni.models.qwen3_omni.pending_text_queue import (
+    PendingTextTensorQueue,
+    coerce_pending_text_queue,
+)
+from sglang_omni.models.weight_loader import resolve_model_path
+
+_THINKER_EMBED_CANDIDATE_KEYS = (
+    "thinker.model.embed_tokens.weight",
+    "model.embed_tokens.weight",
+)
+
+
+_EMBED_SOURCE_CACHE: dict[str, tuple[Path, str]] = {}
+_EMBED_HANDLE_CACHE: dict[str, Any] = {}
+
+
+def resolve_embed_source(model_path: str) -> tuple[Path, str]:
+    cached = _EMBED_SOURCE_CACHE.get(model_path)
+    if cached is not None:
+        return cached
+    else:
+        pass
+
+    model_dir = Path(model_path)
+    for index_path in model_dir.glob("*.safetensors.index.json"):
+        index_data = json.loads(index_path.read_text())
+        weight_map = index_data["weight_map"]
+        for tensor_name in _THINKER_EMBED_CANDIDATE_KEYS:
+            shard_name = weight_map.get(tensor_name)
+            if shard_name is not None:
+                source = (model_dir / shard_name, tensor_name)
+                _EMBED_SOURCE_CACHE[model_path] = source
+                return source
+            else:
+                pass
+
+    for shard_path in model_dir.glob("*.safetensors"):
+        with safe_open(str(shard_path), framework="pt", device="cpu") as handle:
+            for tensor_name in _THINKER_EMBED_CANDIDATE_KEYS:
+                if tensor_name in handle.keys():
+                    source = (shard_path, tensor_name)
+                    _EMBED_SOURCE_CACHE[model_path] = source
+                    return source
+                else:
+                    pass
+
+    raise KeyError(f"Unable to locate thinker embedding weights in {model_path}")
+
+
+def load_thinker_embedding_rows(model_path: str, row_ids: list[int]) -> torch.Tensor:
+    shard_path, tensor_name = resolve_embed_source(model_path)
+    handle = _EMBED_HANDLE_CACHE.get(model_path)
+    if handle is None:
+        handle = safe_open(str(shard_path), framework="pt", device="cpu")
+        _EMBED_HANDLE_CACHE[model_path] = handle
+    else:
+        pass
+    tensor_slice = handle.get_slice(tensor_name)
+    try:
+        rows = [tensor_slice[row_id] for row_id in row_ids]
+    except (IndexError, RuntimeError, TypeError, ValueError):
+        tensor = handle.get_tensor(tensor_name)
+        rows = [tensor[row_id].clone() for row_id in row_ids]
+    return torch.stack(rows, dim=0)
+
+
+def coerce_feature_tensor(value: Any) -> torch.Tensor | None:
+    if value is None:
+        return None
+    else:
+        pass
+    if isinstance(value, torch.Tensor):
+        tensor = value
+    elif isinstance(value, (list, tuple)):
+        tensors = [item for item in value if isinstance(item, torch.Tensor)]
+        if not tensors:
+            return None
+        else:
+            pass
+        tensor = torch.cat(tensors, dim=0)
+    else:
+        return None
+
+    if tensor.dim() == 3 and tensor.shape[0] == 1:
+        return tensor[0]
+    else:
+        pass
+    if tensor.dim() > 2:
+        return tensor.reshape(-1, tensor.shape[-1])
+    else:
+        pass
+    return tensor
+
+
+def merge_prompt_modality(
+    prompt_ids: torch.Tensor,
+    prompt_embed: torch.Tensor,
+    prompt_hidden: torch.Tensor,
+    *,
+    token_id: int | None,
+    features: Any,
+) -> None:
+    if token_id is None:
+        return
+    else:
+        pass
+    feature_tensor = coerce_feature_tensor(features)
+    if feature_tensor is None:
+        return
+    else:
+        pass
+
+    mask = prompt_ids == int(token_id)
+    if not mask.any():
+        return
+    else:
+        pass
+
+    prompt_embed[mask] = feature_tensor.to(
+        device=prompt_embed.device,
+        dtype=prompt_embed.dtype,
+    )
+    prompt_hidden[mask] = 0.0
+
+
+def resolve_speaker_id(params: dict[str, Any], speaker_map: dict[str, int]) -> int:
+    speaker_name = str(params.get("speaker", "Ethan")).lower()
+    if speaker_name in speaker_map:
+        return speaker_map[speaker_name]
+    else:
+        pass
+    if speaker_map:
+        return next(iter(speaker_map.values()))
+    else:
+        pass
+    return int(params.get("speaker_id", 0))
+
+
+class TalkerPrefillBuilder:
+    def __init__(
+        self,
+        *,
+        model: Any,
+        model_path: str,
+        audio_token_id: int | None,
+        image_token_id: int | None,
+        video_token_id: int | None,
+        tts_bos_token_id: int,
+        tts_eos_token_id: int,
+        tts_pad_token_id: int,
+        im_start_token_id: int,
+        im_end_token_id: int,
+        system_token_id: int,
+        user_token_id: int,
+        assistant_token_id: int,
+        codec_bos_id: int,
+        codec_nothink_id: int,
+        codec_think_bos_id: int,
+        codec_think_eos_id: int,
+        codec_pad_id: int,
+        speaker_map: dict[str, int] | None = None,
+    ) -> None:
+        self.model = model
+        model_dir = Path(model_path)
+        if model_dir.exists():
+            self.model_path = str(model_dir)
+        else:
+            self.model_path = str(
+                resolve_model_path(model_path, local_files_only=False)
+            )
+
+        self.audio_token_id = audio_token_id
+        self.image_token_id = image_token_id
+        self.video_token_id = video_token_id
+        self.tts_bos_token_id = tts_bos_token_id
+        self.tts_eos_token_id = tts_eos_token_id
+        self.tts_pad_token_id = tts_pad_token_id
+        self.im_start_token_id = im_start_token_id
+        self.im_end_token_id = im_end_token_id
+        self.system_token_id = system_token_id
+        self.user_token_id = user_token_id
+        self.assistant_token_id = assistant_token_id
+        self.codec_bos_id = codec_bos_id
+        self.codec_nothink_id = codec_nothink_id
+        self.codec_think_bos_id = codec_think_bos_id
+        self.codec_think_eos_id = codec_think_eos_id
+        self.codec_pad_id = codec_pad_id
+        self.speaker_map = {
+            str(name).lower(): int(speaker_id)
+            for name, speaker_id in (speaker_map or {}).items()
+        }
+
+        self.device = model.model.codec_embedding.weight.device
+        self.dtype = model.activation_dtype
+        self.thinker_embed_cache: dict[int, torch.Tensor] = {}
+        self.tts_special_cache: (
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None
+        ) = None
+
+    def build_prompt_prefill(
+        self,
+        payload,
+        thinker_chunks: list[Any],
+        *,
+        thinker_done: bool,
+    ) -> dict[str, Any]:
+        if not thinker_chunks:
+            raise ValueError("prompt prefill requires thinker chunks")
+        else:
+            pass
+
+        state = Qwen3OmniPipelineState.from_dict(payload.data)
+        prompt_ids, prompt_embed, prompt_hidden, prompt_model_inputs = (
+            self.reconstruct_prompt_states(state)
+        )
+
+        assistant_token_ids = self.extract_chunk_token_ids(thinker_chunks)
+        assistant_embed = self.load_prompt_token_embeddings(assistant_token_ids)
+
+        thinker_input_ids = torch.cat([prompt_ids, assistant_token_ids], dim=0)
+        thinker_embed = torch.cat([prompt_embed, assistant_embed], dim=0)
+        thinker_hidden = torch.cat([prompt_hidden, assistant_embed], dim=0)
+        multimodal_mask = self.build_multimodal_mask(thinker_input_ids)
+
+        tts_bos_embed, tts_eos_embed, tts_pad_embed = self.get_tts_special_embeds()
+        speaker_id = resolve_speaker_id(payload.request.params, self.speaker_map)
+
+        prefill = build_prefill_input(
+            thinker_embed=thinker_embed,
+            thinker_hidden=thinker_hidden,
+            thinker_input_ids=thinker_input_ids,
+            multimodal_mask=multimodal_mask,
+            text_projection=self.model.text_projection,
+            hidden_projection=self.model.hidden_projection,
+            codec_embed_fn=self.model.get_input_embeddings(),
+            tts_bos_embed=tts_bos_embed,
+            tts_eos_embed=tts_eos_embed,
+            tts_pad_embed=tts_pad_embed,
+            im_start_token_id=self.im_start_token_id,
+            system_token_id=self.system_token_id,
+            user_token_id=self.user_token_id,
+            assistant_token_id=self.assistant_token_id,
+            speaker_id=speaker_id,
+            codec_nothink_id=self.codec_nothink_id,
+            codec_think_bos_id=self.codec_think_bos_id,
+            codec_think_eos_id=self.codec_think_eos_id,
+            codec_pad_id=self.codec_pad_id,
+            codec_bos_id=self.codec_bos_id,
+            tts_pad_token_id=self.tts_pad_token_id,
+            include_assistant_eos=thinker_done,
+            im_end_token_id=self.im_end_token_id,
+        )
+
+        return {
+            "input_embeds": prefill["input_embeds"],
+            "input_ids": prefill["input_ids"],
+            "pending_text_queue": self.tensor_rows_to_queue(
+                prefill["future_text_rows"]
+            ),
+            "tts_pad_embed": tts_pad_embed[0].detach(),
+            "tts_eos_embed": tts_eos_embed[0].detach(),
+            "prompt_model_inputs": prompt_model_inputs,
+        }
+
+    def append_text_chunk(self, req_data: Any, chunk: Any) -> None:
+        if req_data.thinker_chunks_done:
+            return
+        else:
+            pass
+
+        metadata = chunk.metadata or {}
+        token_id = metadata.get("token_id")
+        if token_id is not None and int(token_id) == self.im_end_token_id:
+            return
+        else:
+            pass
+
+        pending_text_queue = getattr(req_data, "pending_text_queue", None)
+        if not isinstance(pending_text_queue, PendingTextTensorQueue):
+            pending_text_queue = coerce_pending_text_queue(pending_text_queue)
+            req_data.pending_text_queue = pending_text_queue
+        else:
+            pass
+        pending_text_queue.append(self.project_assistant_chunk(chunk))
+
+    def mark_thinker_done(self, req_data: Any) -> None:
+        if req_data.thinker_chunks_done:
+            return
+        else:
+            pass
+
+        req_data.thinker_chunks_done = True
+        pending_text_queue = getattr(req_data, "pending_text_queue", None)
+        if not isinstance(pending_text_queue, PendingTextTensorQueue):
+            pending_text_queue = coerce_pending_text_queue(pending_text_queue)
+            req_data.pending_text_queue = pending_text_queue
+        else:
+            pass
+        if isinstance(req_data.tts_eos_embed, torch.Tensor):
+            pending_text_queue.append(req_data.tts_eos_embed)
+        else:
+            pass
+
+    def extract_chunk_token_ids(self, thinker_chunks: list[Any]) -> torch.Tensor:
+        token_ids = []
+        for chunk in thinker_chunks:
+            metadata = chunk.metadata or {}
+            token_ids.append(int(metadata["token_id"]))
+        return torch.tensor(token_ids, dtype=torch.long)
+
+    def project_assistant_chunk(self, chunk: Any) -> torch.Tensor:
+        metadata = chunk.metadata or {}
+        token_id = metadata.get("token_id")
+        if token_id is not None:
+            chunk_tensor = self.load_prompt_token_embeddings(
+                torch.tensor([int(token_id)], dtype=torch.long)
+            )
+        else:
+            chunk_tensor = chunk.data.to(
+                device=self.device, dtype=self.dtype
+            ).unsqueeze(0)
+        projected = self.model.text_projection(chunk_tensor)
+        return projected[0].detach()
+
+    def build_multimodal_mask(self, token_ids: torch.Tensor) -> torch.Tensor:
+        mask = torch.zeros(token_ids.shape[0], dtype=torch.bool, device=self.device)
+        token_ids = token_ids.to(device=self.device)
+        for token_id in (
+            self.audio_token_id,
+            self.image_token_id,
+            self.video_token_id,
+        ):
+            if token_id is not None:
+                mask |= token_ids == int(token_id)
+            else:
+                pass
+        return mask
+
+    def get_tts_special_embeds(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.tts_special_cache is None:
+            special_rows = load_thinker_embedding_rows(
+                self.model_path,
+                [
+                    self.tts_bos_token_id,
+                    self.tts_eos_token_id,
+                    self.tts_pad_token_id,
+                ],
+            ).to(device=self.device, dtype=self.dtype)
+            projected = self.model.text_projection(special_rows)
+            self.tts_special_cache = projected.chunk(3, dim=0)
+        else:
+            pass
+        return self.tts_special_cache
+
+    def tensor_rows_to_queue(
+        self, tensor: torch.Tensor | None
+    ) -> PendingTextTensorQueue:
+        if tensor is None:
+            return PendingTextTensorQueue()
+        else:
+            pass
+        return PendingTextTensorQueue.from_tensor(tensor)
+
+    def reconstruct_prompt_states(
+        self, state: Qwen3OmniPipelineState
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
+        prompt = state.prompt or {}
+        prompt_input_ids = prompt["input_ids"]
+        if prompt_input_ids.dim() == 2:
+            prompt_input_ids = prompt_input_ids[0]
+        else:
+            pass
+        prompt_ids = prompt_input_ids.to(dtype=torch.long).cpu()
+
+        prompt_embed = self.load_prompt_token_embeddings(prompt_ids)
+        prompt_hidden = prompt_embed.clone()
+        prompt_model_inputs = self.prompt_model_inputs(state)
+
+        merge_prompt_modality(
+            prompt_ids,
+            prompt_embed,
+            prompt_hidden,
+            token_id=self.audio_token_id,
+            features=prompt_model_inputs.get("audio_embeds"),
+        )
+        merge_prompt_modality(
+            prompt_ids,
+            prompt_embed,
+            prompt_hidden,
+            token_id=self.image_token_id,
+            features=prompt_model_inputs.get("image_embeds"),
+        )
+        merge_prompt_modality(
+            prompt_ids,
+            prompt_embed,
+            prompt_hidden,
+            token_id=self.video_token_id,
+            features=prompt_model_inputs.get("video_embeds"),
+        )
+
+        return prompt_ids, prompt_embed, prompt_hidden, prompt_model_inputs
+
+    def load_prompt_token_embeddings(self, token_ids: torch.Tensor) -> torch.Tensor:
+        token_ids = token_ids.to(dtype=torch.long).view(-1).cpu()
+        unique_ids, inverse = torch.unique(token_ids, sorted=False, return_inverse=True)
+        missing_ids = [
+            int(token_id)
+            for token_id in unique_ids.tolist()
+            if int(token_id) not in self.thinker_embed_cache
+        ]
+        if missing_ids:
+            loaded_rows = load_thinker_embedding_rows(self.model_path, missing_ids).to(
+                device=self.device,
+                dtype=self.dtype,
+            )
+            for token_id, row in zip(missing_ids, loaded_rows):
+                self.thinker_embed_cache[int(token_id)] = row.detach().clone()
+        else:
+            pass
+
+        unique_rows = torch.stack(
+            [
+                self.thinker_embed_cache[int(token_id)]
+                for token_id in unique_ids.tolist()
+            ],
+            dim=0,
+        )
+        gathered = unique_rows.index_select(0, inverse.to(device=unique_rows.device))
+        return gathered.view(token_ids.shape[0], unique_rows.shape[-1])
+
+    def prompt_model_inputs(self, state: Qwen3OmniPipelineState) -> dict[str, Any]:
+        thinker_inputs = state.thinker_inputs or {}
+        model_inputs = thinker_inputs.get("model_inputs")
+        if isinstance(model_inputs, dict):
+            return dict(model_inputs)
+        else:
+            pass
+
+        prompt_model_inputs = dict(thinker_inputs)
+        prompt_model_inputs.pop("capture_model_output_keys", None)
+        return prompt_model_inputs

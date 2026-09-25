@@ -1,0 +1,1097 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Stage worker process specifications, entrypoints, and lifecycle groups."""
+from __future__ import annotations
+
+import asyncio
+import gc
+import logging
+import multiprocessing
+import os
+import queue
+import sys
+import time
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass, field
+from typing import Any, Literal, Sequence
+
+from sglang_omni.config.runtime import (
+    apply_typed_stage_kwargs,
+    resolve_factory_signature_args,
+)
+from sglang_omni.pipeline.control_plane import StageControlPlane
+from sglang_omni.pipeline.local_dispatch import LocalStageDispatcher
+from sglang_omni.pipeline.stage.input import AggregatedInput, DirectInput
+from sglang_omni.pipeline.stage.runtime import Stage
+from sglang_omni.pipeline.stage.stream_queue import StreamQueue
+from sglang_omni.pipeline.tp_control import TPFollowerControlPlane, TPLeaderFanout
+from sglang_omni.platforms import current_platform, get_platform_spec
+from sglang_omni.utils.gpu_compat import (
+    apply_gpu_compat_env_defaults,
+    get_gpu_compat_env_defaults,
+)
+from sglang_omni.utils.gpu_memory import gpu_startup_lock
+from sglang_omni.utils.imports import import_string
+from sglang_omni.utils.ipc_weights import prepare_weight_share_process_compat
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StageLaunchConfig:
+    """Resolved launch metadata for one logical stage instance.
+
+    ``StageWorkerProcessSpec`` is the OS-process payload. A worker process may
+    carry multiple launch configs for colocated non-TP stages, while TP ranks
+    each get their own launch config and process.
+
+    All string references (factory, merge_fn) are dotted import
+    paths resolved by the child via :func:`import_string`.
+    """
+
+    # Identity
+    stage_name: str
+    role: Literal["single", "leader", "follower"] = "single"
+    tp_rank: int = 0
+    tp_size: int = 1
+    placement_gpu_id: int | None = None
+    gpu_id: int | None = None
+    nccl_port: int | None = None
+
+    # Factory
+    factory: str = ""
+    # Constructor kwargs from PipelineConfig.stage_factory_kwargs (plus TP
+    # wiring). Typed group kwargs are overlaid against the factory's
+    # signature in the child, which imports the factory anyway.
+    factory_kwargs: dict[str, Any] = field(default_factory=dict)
+    typed_kwargs: dict[str, Any] = field(default_factory=dict)
+    factory_arg_defaults: dict[str, Any] = field(default_factory=dict)
+    require_factory_gpu_id: bool = False
+    env_defaults: dict[str, str] = field(default_factory=dict)
+    # Note (Jiaxin Deng): the byte budgets are first-class fields, never
+    # factory kwargs, so no factory signature can accidentally absorb them.
+    kv_cache_bytes: int | None = None
+    total_reserve_bytes: int | None = None
+    enforce_total_reserve: bool = True
+
+    # Routing: static next stage(s)
+    next_stages: str | list[str] | None = None
+    route_fn: str | None = None
+    is_terminal: bool = False
+
+    # Fan-in
+    wait_for: list[str] | None = None
+    wait_for_fn: str | None = None
+    merge_fn: str | None = None
+    project_payload: dict[str, str] = field(default_factory=dict)
+
+    # Communication pool/options. Transport selection belongs to CommRouter.
+    comm_config: dict[str, Any] = field(default_factory=dict)
+
+    # Endpoints
+    recv_endpoint: str = ""
+    coordinator_endpoint: str = ""
+    abort_endpoint: str = ""
+    stage_endpoints: dict[str, str] = field(default_factory=dict)
+    rank_endpoints: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    # Stream wiring
+    stream_targets: list[str] = field(default_factory=list)
+    stream_done_to_fn: str | None = None
+    # GPU-resident stage names (for the transport router to pick GPU vs host transport).
+    gpu_stage_names: set[str] = field(default_factory=set)
+    stage_gpu_ids: dict[str, tuple[int, ...]] = field(default_factory=dict)
+    # Explicit cross-node stage names. These edges use Mooncake when present.
+    remote_stage_names: set[str] = field(default_factory=set)
+    is_stream_receiver: bool = False
+    can_accept_stream_before_payload: bool = False
+    disable_direct_cuda_ipc_payload: bool = False
+
+    # Same-process full payload wiring
+    same_process_targets: set[str] = field(default_factory=set)
+
+    # Replica topology (logical stage name -> instance names)
+    replica_topology: dict[str, list[str]] = field(default_factory=dict)
+
+    # TP internal control (leader -> followers)
+    follower_work_queues: list[Any] = field(default_factory=list)
+    follower_abort_queues: list[Any] = field(default_factory=list)
+    follower_admin_result_queues: list[Any] = field(default_factory=list)
+    internal_work_queue: Any | None = None
+    internal_abort_queue: Any | None = None
+    internal_admin_result_queue: Any | None = None
+
+    @property
+    def owns_external_io(self) -> bool:
+        return self.role in {"single", "leader"}
+
+    @property
+    def is_leader(self) -> bool:
+        return self.role == "leader"
+
+    @property
+    def is_follower(self) -> bool:
+        return self.role == "follower"
+
+
+@dataclass
+class StageWorkerProcessSpec:
+    """Everything one OS process needs to run one or more stages."""
+
+    process_name: str
+    stage_specs: list[StageLaunchConfig]
+    # note (Dayuxiaoshui): root logger level for the spawned process. The
+    # launcher passes its own root level so --log-level reaches every stage.
+    log_level: int = logging.INFO
+
+
+def get_worker_process_env(spec: StageWorkerProcessSpec) -> dict[str, str]:
+    """Return the spawn-time env overrides for *spec*.
+
+    Hard invariant: a TP stage (``tp_size > 1``) must own its OS process
+    exclusively. Its CUDA env remap and NCCL settings depend on being the sole
+    tenant, so mixing a TP stage with any other stage in the same process group
+    is a placement bug.
+    """
+    tp_stages = [s for s in spec.stage_specs if s.tp_size > 1]
+    if not tp_stages:
+        return {}
+    else:
+        pass
+    if len(tp_stages) > 1 or len(spec.stage_specs) > 1:
+        raise AssertionError(
+            f"Process {spec.process_name!r} mixes a TP stage with other "
+            "stages; TP stages must own their OS process exclusively. "
+            f"stage_specs={[s.stage_name for s in spec.stage_specs]}"
+        )
+    else:
+        pass
+    return current_platform.get_stage_process_env(tp_stages[0])
+
+
+@contextmanager
+def patched_spawn_env(
+    spec: StageWorkerProcessSpec,
+    extra_env: Mapping[str, str] | None = None,
+):
+    env_default_updates: dict[str, str] = {}
+    for stage_spec in spec.stage_specs:
+        for key, value in stage_spec.env_defaults.items():
+            existing = env_default_updates.get(key)
+            if existing is not None and existing != value:
+                raise AssertionError(
+                    f"Process {spec.process_name!r} has conflicting env default "
+                    f"for {key!r}: {existing!r} != {value!r}"
+                )
+            else:
+                pass
+            if key not in os.environ:
+                env_default_updates[key] = value
+            else:
+                pass
+
+    worker_process_env = get_worker_process_env(spec)
+    compat_env_defaults = get_gpu_compat_env_defaults(
+        {
+            **os.environ,
+            **env_default_updates,
+            **worker_process_env,
+        }
+    )
+    updates = {
+        **env_default_updates,
+        **compat_env_defaults,
+        **worker_process_env,
+        "SGLANG_OMNI_PLATFORM_SPEC": get_platform_spec(current_platform),
+        **(extra_env or {}),
+    }
+    backup = {key: os.environ.get(key) for key in updates}
+    try:
+        for key, value in updates.items():
+            os.environ[key] = value
+        yield
+    finally:
+        for key, value in backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+class StageGroup:
+    """Lifecycle manager for one or more OS processes in a topology group."""
+
+    def __init__(
+        self,
+        group_name: str,
+        process_specs: Sequence[StageWorkerProcessSpec],
+    ):
+        if not process_specs:
+            raise ValueError(
+                f"StageGroup requires at least one process spec (group={group_name})"
+            )
+        else:
+            pass
+        self.group_name = group_name
+        self.process_specs = list(process_specs)
+        self._processes: list[multiprocessing.Process] = (
+            []
+        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        self.ready_events: list[multiprocessing.Event] = []
+        self.startup_error_channels: list[object] = []
+        self._process_start_attempts: set[str] = (
+            set()
+        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+
+    @property
+    def process_count(self) -> int:
+        return len(self.process_specs)
+
+    @property
+    def specs(self) -> list[StageLaunchConfig]:
+        return [
+            stage_spec
+            for process_spec in self.process_specs
+            for stage_spec in process_spec.stage_specs
+        ]
+
+    @property
+    def leader_spec(self) -> StageLaunchConfig:
+        for spec in self.specs:
+            if spec.role in {"single", "leader"}:
+                return spec
+            else:
+                pass
+        raise RuntimeError(f"StageGroup {self.group_name} has no leader-owned spec")
+
+    @property
+    def leader_endpoint(self) -> str:
+        """Control-plane recv endpoint for tp_rank 0 (used by Coordinator)."""
+        return self.leader_spec.recv_endpoint
+
+    @property
+    def stage_control_endpoints(self) -> dict[str, str]:
+        return {
+            spec.stage_name: spec.recv_endpoint
+            for spec in self.specs
+            if spec.owns_external_io
+        }
+
+    @property
+    def processes(self) -> list[multiprocessing.Process]:
+        return list(
+            self._processes
+        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+
+    def process_start_attempts(self) -> set[str]:
+        """Return process names whose ``Process.start()`` was called."""
+        return set(
+            self._process_start_attempts
+        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+
+    def spawn(
+        self,
+        ctx: multiprocessing.context.SpawnContext,
+        process_env_overrides: Mapping[str, Mapping[str, str]] | None = None,
+    ) -> None:
+        """Spawn the OS process(es) owned by this group."""
+        for spec in self.process_specs:
+            event = ctx.Event()
+            startup_error_channel = ctx.Queue()
+            proc_name = process_name(spec)
+            proc = ctx.Process(
+                target=stage_process_main,
+                args=(spec, event, startup_error_channel),
+                name=proc_name,
+                daemon=True,
+            )
+            try:
+                extra_env = (
+                    process_env_overrides.get(spec.process_name)
+                    if process_env_overrides is not None
+                    else None
+                )
+                with patched_spawn_env(spec, extra_env=extra_env):
+                    self._process_start_attempts.add(
+                        spec.process_name
+                    )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                    proc.start()
+            except Exception:
+                close_queue(startup_error_channel)
+                raise
+            self._processes.append(
+                proc
+            )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            self.ready_events.append(event)
+            self.startup_error_channels.append(startup_error_channel)
+
+        logger.info(
+            "StageGroup %s: spawned %d process(es) (pids=%s)",
+            self.group_name,
+            len(
+                self._processes
+            ),  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            [
+                p.pid for p in self._processes
+            ],  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+        )
+
+    async def wait_ready(self, timeout: float) -> None:
+        """Block until every TP rank signals ready or *timeout* expires."""
+        loop = asyncio.get_running_loop()
+        deadline = time.monotonic() + timeout
+
+        for i, event in enumerate(self.ready_events):
+            proc = self._processes[
+                i
+            ]  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            spec = self.process_specs[i]
+            process_label = spec.process_name
+            startup_error_channel = self.startup_error_channels[i]
+
+            while not event.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    details = ""
+                    try:
+                        traceback_text = startup_error_channel.get_nowait()
+                    except queue.Empty:
+                        pass
+                    else:
+                        details = f"\nStartup failure detail:\n{traceback_text}"
+                    raise TimeoutError(
+                        f"Process {process_label} did not become ready "
+                        f"within {timeout:.0f}s{details}"
+                    )
+                else:
+                    pass
+                if not proc.is_alive():
+                    details = ""
+                    try:
+                        traceback_text = startup_error_channel.get(timeout=0.2)
+                    except queue.Empty:
+                        pass
+                    else:
+                        details = f"\nStartup failure detail:\n{traceback_text}"
+                    raise RuntimeError(
+                        f"Process {process_label} died during startup "
+                        f"(exit code {proc.exitcode}){details}"
+                    )
+                else:
+                    pass
+                await loop.run_in_executor(None, event.wait, min(remaining, 1.0))
+
+            logger.info("Process %s ready", process_label)
+
+    def any_dead(self) -> bool:
+        """Return True if any process in the group exited while runner is active."""
+        return any(
+            not p.is_alive() for p in self._processes
+        )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+
+    def dead_summary(self) -> str:
+        """Human-readable summary of dead processes (for error messages)."""
+        parts = []
+        for i, p in enumerate(
+            self._processes
+        ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            if not p.is_alive():
+                process_spec = self.process_specs[i]
+                parts.append(
+                    f"{process_spec.process_name} " f"(pid={p.pid}, exit={p.exitcode})"
+                )
+            else:
+                pass
+        return ", ".join(parts) if parts else "(none)"
+
+    def close_control_channels(self) -> None:
+        for q in self.startup_error_channels:
+            close_queue(q)
+        for stage_spec in self.specs:
+            for q in (
+                stage_spec.follower_work_queues
+                + stage_spec.follower_abort_queues
+                + stage_spec.follower_admin_result_queues
+            ):
+                close_queue(q)
+
+    async def shutdown(
+        self,
+        join_timeout: float = 30.0,
+        before_signal: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
+        try:
+            for spec, p in zip(
+                self.process_specs, self._processes
+            ):  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+                p.join(timeout=join_timeout)
+                if p.is_alive():
+                    logger.warning(
+                        "Terminating stuck process %s (pid=%s)",
+                        p.name,
+                        p.pid,
+                    )
+                    if before_signal is not None:
+                        await before_signal(spec.process_name)
+                    else:
+                        pass
+                    p.terminate()
+                    p.join(timeout=5)
+                    if p.is_alive():
+                        p.kill()
+                        p.join(timeout=2)
+                    else:
+                        pass
+                else:
+                    pass
+        finally:
+            self.close_control_channels()
+            self._processes.clear()  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
+            self.ready_events.clear()
+            self.startup_error_channels.clear()
+
+
+def stage_process_main(
+    spec: StageWorkerProcessSpec,
+    ready_event: multiprocessing.Event,
+    startup_error_channel: Any | None = None,
+) -> None:
+    """Subprocess entrypoint: construct stage(s) from *spec* and run them."""
+    # note (Dayuxiaoshui): a spawned process starts with fresh logging, and
+    # importing sglang already installs a root handler at INFO, which turns
+    # basicConfig into a no-op. Set the level explicitly so the stage follows
+    # the launcher's --log-level.
+    logging.basicConfig(level=spec.log_level, stream=sys.stdout)
+    logging.getLogger().setLevel(spec.log_level)
+    if not spec.stage_specs:
+        raise ValueError(f"Process {spec.process_name!r} requires at least one stage")
+    else:
+        pass
+    log = logging.getLogger(f"stage_workers.{spec.process_name}")
+
+    try:
+        for stage_spec in spec.stage_specs:
+            prepare_accelerator_environment(stage_spec, log)
+        apply_gpu_compat_env_defaults()
+        prepare_weight_share_process_compat()
+        run_process(spec, ready_event, log)
+    except (KeyboardInterrupt, SystemExit):
+        destroy_torch_distributed_process_group(log)
+        reclaim_process_cuda_memory(
+            stage_gpu_ids(spec.stage_specs),
+            log,
+            reason=f"stage process {spec.process_name} terminated during startup",
+        )
+        raise
+    except Exception as exc:
+        import traceback
+
+        traceback_text = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
+        with suppress(Exception):
+            traceback.clear_frames(exc.__traceback__)
+        log.error("Stage process %s failed\n%s", spec.process_name, traceback_text)
+        destroy_torch_distributed_process_group(log)
+        reclaim_process_cuda_memory(
+            stage_gpu_ids(spec.stage_specs),
+            log,
+            reason=f"stage process {spec.process_name} exit after failure",
+        )
+        if startup_error_channel is not None:
+            startup_error_channel.put(traceback_text)
+        else:
+            pass
+        sys.exit(1)
+
+
+def run_process(
+    spec: StageWorkerProcessSpec,
+    ready_event: multiprocessing.Event,
+    log: logging.Logger,
+) -> None:
+    """Construct and drive all stages owned by one OS process.
+
+    Multi-stage semantics (since the topology PR):
+    - All stages in ``spec.stage_specs`` share this OS process and one asyncio
+      event loop. ``asyncio.gather`` runs them concurrently; **if any stage
+      raises, the whole process exits** and ``MultiProcessPipelineRunner``'s
+      ``_monitor_children`` will fail-all in-flight requests on the
+      coordinator. There is no per-stage failure isolation inside one process
+      group.
+    - Scheduler construction is serialized by :func:`gpu_startup_lock` per GPU
+      inside :func:`_construct_scheduler` — so when N stages on the same GPU
+      live in this process, cold-start time degrades from ``max`` to ``sum``
+      across them.
+    """
+    local_dispatcher = LocalStageDispatcher()
+    stages: list[Stage] = []
+
+    async def _start_and_run():
+        tasks: list[asyncio.Task] = []
+        try:
+            for stage in stages:
+                await stage.start()
+            log.info(
+                "Process %s ready with stages=%s",
+                spec.process_name,
+                [stage.name for stage in stages],
+            )
+            ready_event.set()
+            tasks = [asyncio.create_task(stage.run()) for stage in stages]
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                pass
+            for stage in stages:
+                if stage.running:
+                    await stage.stop()
+                else:
+                    pass
+
+    try:
+        for stage_spec in spec.stage_specs:
+            stages.append(
+                construct_stage(
+                    stage_spec,
+                    log,
+                    local_dispatcher=local_dispatcher,
+                )
+            )
+        local_dispatcher.register_many(stages)
+        asyncio.run(_start_and_run())
+    except BaseException:
+        cleanup_constructed_stages(
+            stages,
+            log,
+            reason=f"stage process {spec.process_name} failure",
+        )
+        raise
+
+
+def cleanup_constructed_stages(
+    stages: list[Stage],
+    log: logging.Logger,
+    *,
+    reason: str,
+) -> None:
+    if stages:
+        log.warning(
+            "Cleaning up %d constructed stage(s) after %s",
+            len(stages),
+            reason,
+        )
+    else:
+        pass
+    for stage in reversed(stages):
+        try:
+            asyncio.run(stage.stop())
+        except Exception as exc:
+            log.warning(
+                "Stage %s cleanup failed after process failure: %s",
+                stage.name,
+                exc,
+                exc_info=True,
+            )
+        finally:
+            stage.scheduler = None
+
+
+def stage_gpu_ids(stage_specs: Iterable[StageLaunchConfig]) -> list[int]:
+    return sorted(
+        {
+            int(stage_spec.gpu_id)
+            for stage_spec in stage_specs
+            if stage_spec.gpu_id is not None
+        }
+    )
+
+
+def destroy_torch_distributed_process_group(log: logging.Logger) -> None:
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            log.warning("Destroying torch.distributed process group after failure")
+            dist.destroy_process_group()
+        else:
+            pass
+    except Exception as exc:
+        log.warning(
+            "torch.distributed cleanup failed after stage process failure: %s",
+            exc,
+            exc_info=True,
+        )
+
+
+def reclaim_process_cuda_memory(
+    gpu_ids: Iterable[int],
+    log: logging.Logger,
+    *,
+    reason: str,
+) -> None:
+    gpu_id_list = list(gpu_ids)
+    if not gpu_id_list:
+        return
+    else:
+        pass
+    gc.collect()
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return
+        else:
+            pass
+        log.warning(
+            "Reclaiming CUDA memory after %s on gpu_ids=%s",
+            reason,
+            gpu_id_list,
+        )
+        for gpu_id in gpu_id_list:
+            try:
+                torch.cuda.set_device(int(gpu_id))
+                with suppress(Exception):
+                    torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                with suppress(Exception):
+                    torch.cuda.ipc_collect()
+            except Exception as exc:
+                log.warning(
+                    "CUDA memory reclaim failed for gpu_id=%s after %s: %s",
+                    gpu_id,
+                    reason,
+                    exc,
+                    exc_info=True,
+                )
+        gc.collect()
+        log.warning(
+            "CUDA memory reclaim complete after %s on gpu_ids=%s",
+            reason,
+            gpu_id_list,
+        )
+    except Exception as exc:
+        log.warning(
+            "CUDA memory reclaim skipped after %s: %s",
+            reason,
+            exc,
+            exc_info=True,
+        )
+
+
+def construct_stage(
+    spec: StageLaunchConfig,
+    log: logging.Logger,
+    local_dispatcher: LocalStageDispatcher | None = None,
+) -> Stage:
+    gpu_id = spec.gpu_id
+    if gpu_id is not None:
+        current_platform.set_device(int(gpu_id))
+        log.info("Set current device to %s for stage %s", gpu_id, spec.stage_name)
+    else:
+        pass
+
+    # --- Build scheduler via factory ---
+    log.info(
+        "Building scheduler for %s (tp_rank=%d/%d) ...",
+        spec.stage_name,
+        spec.tp_rank,
+        spec.tp_size,
+    )
+
+    scheduler = construct_scheduler(spec, gpu_id, log)
+
+    def _target_list(targets: str | list[str] | None) -> list[str]:
+        if targets is None:
+            return []
+        else:
+            pass
+        if isinstance(targets, str):
+            return [targets]
+        else:
+            pass
+        if isinstance(targets, list):
+            return list(targets)
+        else:
+            pass
+        raise ValueError(
+            f"Dynamic route function for stage {spec.stage_name!r} returned "
+            f"unsupported target value {targets!r}"
+        )
+
+    def _wait_source_list(sources: str | Iterable[str] | None) -> list[Any] | None:
+        if sources is None:
+            return None
+        else:
+            pass
+        if isinstance(sources, str):
+            return [sources]
+        else:
+            pass
+        if isinstance(sources, Iterable):
+            return list(sources)
+        else:
+            pass
+        raise ValueError(
+            f"wait_for_fn for stage {spec.stage_name!r} returned unsupported "
+            f"source value {sources!r}"
+        )
+
+    def _target_result(
+        targets: str | list[str] | None,
+        *,
+        allowed_targets: set[str],
+        allow_empty: bool,
+        hook_name: str,
+    ) -> str | list[str] | None:
+        returned_targets = _target_list(targets)
+        if not returned_targets:
+            if allow_empty:
+                return None
+            else:
+                pass
+            raise ValueError(
+                f"{hook_name} for stage {spec.stage_name!r} returned no targets; "
+                "dynamic route functions must return downstream stage(s)"
+            )
+        else:
+            pass
+        unknown = set(returned_targets) - allowed_targets
+        if unknown:
+            raise ValueError(
+                f"{hook_name} for stage {spec.stage_name!r} returned targets "
+                f"outside the static topology: {sorted(unknown)}. "
+                f"Allowed targets: {sorted(allowed_targets)}"
+            )
+        else:
+            pass
+        return returned_targets[0] if isinstance(targets, str) else returned_targets
+
+    # --- Build routing ---
+    if spec.is_terminal:
+        get_next = lambda request_id, output: None
+    elif spec.route_fn:
+        route_fn = import_string(spec.route_fn)
+        allowed_route_targets = set(_target_list(spec.next_stages))
+
+        def get_next(request_id, output, _fn=route_fn):
+            return _target_result(
+                _fn(request_id, output),
+                allowed_targets=allowed_route_targets,
+                allow_empty=False,
+                hook_name="route_fn",
+            )
+
+    else:
+        target = spec.next_stages
+        if isinstance(target, str):
+            get_next = lambda request_id, output, _t=target: _t
+        elif isinstance(target, list):
+            get_next = lambda request_id, output, _t=list(target): _t
+        else:
+            get_next = lambda request_id, output: None
+
+    if spec.stream_done_to_fn:
+        stream_done_to_fn = import_string(spec.stream_done_to_fn)
+        allowed_stream_targets = set(spec.stream_targets)
+        get_stream_done_targets = (
+            lambda request_id, output, _fn=stream_done_to_fn: _target_result(
+                _fn(request_id, output),
+                allowed_targets=allowed_stream_targets,
+                allow_empty=True,
+                hook_name="stream_done_to_fn",
+            )
+        )
+    else:
+        get_stream_done_targets = None
+
+    # --- Build input handler ---
+    if spec.wait_for and spec.merge_fn:
+        merge_fn = import_string(spec.merge_fn)
+        sources = set(spec.wait_for)
+        expected_sources_fn = None
+        if spec.wait_for_fn:
+            wait_for_fn = import_string(spec.wait_for_fn)
+
+            def expected_sources_fn(request_id, from_stage, data, _fn=wait_for_fn):
+                resolved_sources = _fn(request_id, from_stage, data)
+                return _wait_source_list(resolved_sources)
+
+        else:
+            pass
+
+        input_handler = AggregatedInput(
+            sources=sources,
+            merge=merge_fn,
+            expected_sources_fn=expected_sources_fn,
+        )
+    else:
+        input_handler = DirectInput()
+    project_payload = {
+        target: import_string(dotted_path)
+        for target, dotted_path in spec.project_payload.items()
+    }
+
+    if spec.owns_external_io:
+        control_plane = StageControlPlane(
+            stage_name=spec.stage_name,
+            recv_endpoint=spec.recv_endpoint,
+            coordinator_endpoint=spec.coordinator_endpoint,
+            abort_endpoint=spec.abort_endpoint,
+        )
+    else:
+        control_plane = TPFollowerControlPlane(
+            stage_name=spec.stage_name,
+            recv_endpoint=spec.recv_endpoint,
+            work_queue=spec.internal_work_queue,
+            abort_queue=spec.internal_abort_queue,
+            admin_result_queue=spec.internal_admin_result_queue,
+        )
+
+    tp_fanout = None
+    if spec.is_leader:
+        tp_fanout = TPLeaderFanout(
+            stage_name=spec.stage_name,
+            follower_work_queues=spec.follower_work_queues,
+            follower_abort_queues=spec.follower_abort_queues,
+            follower_admin_result_queues=spec.follower_admin_result_queues,
+        )
+    else:
+        pass
+
+    # --- Construct Stage ---
+    stage = Stage(
+        name=spec.stage_name,
+        role=spec.role,
+        get_next=get_next,
+        gpu_id=spec.gpu_id,
+        placement_gpu_id=spec.placement_gpu_id,
+        endpoints=spec.stage_endpoints,
+        rank_endpoints=spec.rank_endpoints,
+        tp_rank=spec.tp_rank,
+        tp_size=spec.tp_size,
+        control_plane=control_plane,
+        input_handler=input_handler,
+        comm_config=spec.comm_config,
+        scheduler=scheduler,
+        project_payload=project_payload or None,
+        stream_targets=spec.stream_targets or None,
+        get_stream_done_targets=get_stream_done_targets,
+        gpu_stage_names=spec.gpu_stage_names or None,
+        stage_gpu_ids=spec.stage_gpu_ids or None,
+        remote_stage_names=spec.remote_stage_names or None,
+        same_process_targets=spec.same_process_targets or None,
+        local_dispatcher=local_dispatcher,
+        can_accept_stream_before_payload=spec.can_accept_stream_before_payload,
+        disable_direct_cuda_ipc_payload=spec.disable_direct_cuda_ipc_payload,
+        tp_fanout=tp_fanout,
+        is_terminal=spec.is_terminal,
+        replica_topology=spec.replica_topology or None,
+    )
+
+    if spec.is_stream_receiver:
+        stage.stream_queue = StreamQueue(max_pending=4096)
+    else:
+        pass
+
+    return stage
+
+
+# Summed declared reserves per device for this OS process; colocated stages
+# sharing a worker accumulate into one allocator cap.
+_process_reserve_bytes: dict[int, int] = {}
+
+
+def apply_total_reserve_cap(
+    spec: StageLaunchConfig,
+    gpu_id: int | None,
+    log: logging.Logger,
+) -> None:
+    """Cap this process's torch allocator at its summed declared reserves.
+
+    Note (Jiaxin Deng): with the cap, a stage that outgrows its declared
+    budget OOMs itself instead of a co-tenant on the same GPU, which makes
+    the failure attributable.
+    """
+
+    if (
+        spec.total_reserve_bytes is None
+        or not spec.enforce_total_reserve
+        or gpu_id is None
+    ):
+        return
+    else:
+        pass
+    import torch
+
+    if not torch.cuda.is_available():
+        return
+    else:
+        pass
+    device = int(gpu_id)
+    total = torch.cuda.get_device_properties(device).total_memory
+    _process_reserve_bytes[device] = (
+        _process_reserve_bytes.get(device, 0) + spec.total_reserve_bytes
+    )
+    fraction = min(1.0, _process_reserve_bytes[device] / total)
+    torch.cuda.set_per_process_memory_fraction(fraction, device)
+    log.info(
+        "Stage %s: torch allocator capped at %d bytes on cuda:%d (fraction %.4f)",
+        spec.stage_name,
+        _process_reserve_bytes[device],
+        device,
+        fraction,
+    )
+
+
+def construct_scheduler(
+    spec: StageLaunchConfig,
+    gpu_id: int | None,
+    log: logging.Logger,
+) -> Any:
+    """Build a scheduler, serializing GPU factory work per visible device."""
+
+    from sglang_omni.scheduling.stage_kv_budget import stage_kv_cache_budget
+
+    apply_total_reserve_cap(spec, gpu_id, log)
+    factory = import_string(spec.factory)
+    factory_args = apply_typed_stage_kwargs(
+        factory,
+        spec.factory_kwargs,
+        spec.typed_kwargs,
+        stage_name=spec.stage_name,
+    )
+    kv_cache_bytes = spec.kv_cache_bytes
+    factory_args = resolve_factory_signature_args(
+        factory,
+        factory_args,
+        defaults=spec.factory_arg_defaults,
+        require_gpu_id=spec.require_factory_gpu_id,
+        stage_name=spec.stage_name,
+    )
+
+    def _invoke() -> Any:
+        if kv_cache_bytes is None:
+            return factory(**factory_args)
+        else:
+            pass
+        with stage_kv_cache_budget(spec.stage_name, kv_cache_bytes):
+            return factory(**factory_args)
+
+    if gpu_id is None:
+        return _invoke()
+    else:
+        pass
+
+    with gpu_startup_lock(int(gpu_id)) as lock_path:
+        log.info(f"Acquired GPU startup lock for stage {spec.stage_name}: {lock_path}")
+        return _invoke()
+
+
+def prepare_accelerator_environment(
+    spec: StageLaunchConfig,
+    log: logging.Logger,
+) -> None:
+    """Map TP rank processes to their accelerator before torch init.
+
+    Which variables to set is platform policy; this only applies whatever the platform
+    returns, and normalizes gpu_id only when the platform narrowed the process to a
+    single visible device.
+    """
+    if (
+        current_platform.is_cuda_alike()
+        and os.environ.get("SGLANG_ONE_VISIBLE_DEVICE_PER_PROCESS") == "true"
+    ):
+        if spec.gpu_id is None:
+            # A CPU stage colocated in a GPU-narrowed process keeps its
+            # identity; normalizing it would bind it to the local device.
+            return
+        else:
+            pass
+        mapped_gpu = os.environ.get("CUDA_VISIBLE_DEVICES", str(spec.gpu_id))
+        normalize_spec_gpu_id_to_local_device(spec)
+        log.info(
+            "TP stage %s rank %d sees CUDA_VISIBLE_DEVICES=%s (local gpu_id=0)",
+            spec.stage_name,
+            spec.tp_rank,
+            mapped_gpu,
+        )
+        return
+    else:
+        pass
+
+    env_updates = current_platform.get_stage_process_env(spec)
+    if not env_updates:
+        return
+    else:
+        pass
+
+    for key, value in env_updates.items():
+        os.environ[key] = value
+
+    mapped_gpu = env_updates.get("CUDA_VISIBLE_DEVICES")
+    if mapped_gpu is None:
+        log.info(
+            "TP stage %s rank %d keeps every card visible, using gpu_id=%s",
+            spec.stage_name,
+            spec.tp_rank,
+            spec.gpu_id,
+        )
+        return
+    else:
+        pass
+
+    normalize_spec_gpu_id_to_local_device(spec)
+    log.info(
+        "Mapped TP stage %s rank %d to CUDA_VISIBLE_DEVICES=%s (local gpu_id=0)",
+        spec.stage_name,
+        spec.tp_rank,
+        mapped_gpu,
+    )
+
+
+def normalize_spec_gpu_id_to_local_device(spec: StageLaunchConfig) -> None:
+    if spec.placement_gpu_id is None:
+        spec.placement_gpu_id = spec.gpu_id
+    else:
+        pass
+    spec.gpu_id = 0
+    for kwargs in (
+        spec.typed_kwargs,
+        spec.factory_arg_defaults,
+        spec.comm_config,
+    ):
+        if kwargs.get("gpu_id") is not None:
+            kwargs["gpu_id"] = 0
+        else:
+            pass
+
+
+def process_name(spec: StageWorkerProcessSpec) -> str:
+    if len(spec.stage_specs) > 1:
+        return f"process-{spec.process_name}"
+    else:
+        pass
+    stage_spec = spec.stage_specs[0]
+    if stage_spec.role == "single":
+        return f"stage-{stage_spec.stage_name}"
+    else:
+        pass
+    if stage_spec.role == "leader":
+        return f"stage-{stage_spec.stage_name}-leader"
+    else:
+        pass
+    return f"stage-{stage_spec.stage_name}-tp{stage_spec.tp_rank}-follower"
+
+
+def close_queue(q: object) -> None:
+    q.close()
+    join_thread = getattr(q, "join_thread", None)
+    if callable(join_thread):
+        join_thread()
+    else:
+        pass
