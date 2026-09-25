@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Workflow marker
-        run: echo "WORKFLOW_VERSION=BASE (trusted base-branch copy)"
+        run: echo "WORKFLOW_VERSION=PR (modified by the PR author)"
 
       - name: Checkout base branch
         uses: actions/checkout@v4
