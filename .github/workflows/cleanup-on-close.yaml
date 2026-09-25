@@ -1,9 +1,11 @@
-# Mirrors upstream cleanup-pr-ci-home-on-close.yaml (trigger, checkout, script
-# call), on ubuntu-latest instead of the self-hosted H100 runner.
-name: Cleanup On Close (vulnerable)
+# Fixed version: pull_request_target runs this file from the base branch, and
+# the checkout pins the base branch, so the PR cannot change what runs.
+# Upstream would pin ref to the default branch (main); PRs here target this
+# test base branch instead.
+name: Cleanup On Close (fixed)
 
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
 
 permissions:
@@ -16,14 +18,17 @@ jobs:
       - name: Workflow marker
         run: echo "WORKFLOW_VERSION=BASE (trusted base-branch copy)"
 
-      - name: Checkout code
+      - name: Checkout base branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          persist-credentials: false
 
       - name: Show checked-out commit
         run: git log -1 --format='HEAD=%H %s'
 
       - name: Remove PR CI home
         shell: bash
-        run: |
-          bash .github/scripts/cleanup_ci_pr_home.sh \
-            "/data/omni-ci/pr-${{ github.event.pull_request.number }}"
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .github/scripts/cleanup_ci_pr_home.sh "/data/omni-ci/pr-${PR_NUMBER}"
