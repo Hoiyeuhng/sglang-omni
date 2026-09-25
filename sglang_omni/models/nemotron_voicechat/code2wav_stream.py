@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import torch
 
 from sglang_omni.proto import StagePayload
@@ -51,8 +53,14 @@ class StreamState:
         self.audio_parts: list[torch.Tensor] = []
 
 
-class NemotronCode2WavScheduler(StreamingSimpleScheduler):
-    def __init__(self, decoder, device, *, compute_fn) -> None:
+class NemotronCode2WavScheduler(StreamingSimpleScheduler[StagePayload]):
+    def __init__(
+        self,
+        decoder,
+        device,
+        *,
+        compute_fn: Callable[[StagePayload], object] | None,
+    ) -> None:
         super().__init__(compute_fn)
         self.decoder = decoder
         self.device = device
@@ -61,10 +69,10 @@ class NemotronCode2WavScheduler(StreamingSimpleScheduler):
     def new_state(self) -> StreamState:
         return StreamState(self.decoder, self.device)
 
-    def is_streaming_payload(self, payload) -> bool:
+    def is_streaming_payload(self, payload: StagePayload) -> bool:
         return payload.request_id in self.states
 
-    def on_streaming_new_request(self, request_id: str, payload) -> None:
+    def on_streaming_new_request(self, request_id: str, payload: StagePayload) -> None:
         self.states.setdefault(request_id, self.new_state())
 
     def clear_stream_state(self, request_id: str) -> None:

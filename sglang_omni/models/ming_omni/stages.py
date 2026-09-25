@@ -7,12 +7,17 @@ Ming's config remains usable in lightweight environments.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import TypeVar, overload
 
 from sglang_omni.models.ming_omni.io import MingOmniPipelineState
 from sglang_omni.models.ming_omni.pipeline.next_stage import AUDIO_STAGE, IMAGE_STAGE
 from sglang_omni.models.ming_omni.tp_utils import validate_stage_tp_support
 from sglang_omni.proto import StagePayload
+
+EncoderInputT = TypeVar("EncoderInputT")
+KeyT = TypeVar("KeyT")
+ValueT = TypeVar("ValueT")
 
 
 def project_preprocessing_to_audio_encoder(payload: StagePayload) -> StagePayload:
@@ -101,15 +106,15 @@ def payload_with_state(
 
 
 def project_encoder_input_metadata(
-    encoder_inputs: dict[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    projected: dict[str, dict[str, Any]] = {}
+    encoder_inputs: dict[str, EncoderInputT],
+) -> dict[str, dict[str, object]]:
+    projected: dict[str, dict[str, object]] = {}
     for stage_name, stage_inputs in encoder_inputs.items():
         if not isinstance(stage_inputs, dict):
             continue
         else:
             pass
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, object] = {}
         cache_key = stage_inputs.get("cache_key")
         if cache_key is not None:
             metadata["cache_key"] = cache_key
@@ -126,7 +131,7 @@ def project_encoder_input_metadata(
     return projected
 
 
-def project_prompt_for_usage(prompt: Any) -> dict[str, Any] | None:
+def project_prompt_for_usage(prompt: object) -> dict[str, object] | None:
     if not isinstance(prompt, dict):
         return None
     else:
@@ -139,7 +144,7 @@ def project_prompt_for_usage(prompt: Any) -> dict[str, Any] | None:
     return {"input_ids": copy_mutable_containers(input_ids)}
 
 
-def slim_thinker_out(thinker_out: Any) -> dict[str, Any] | None:
+def slim_thinker_out(thinker_out: object) -> dict[str, object] | None:
     if not isinstance(thinker_out, dict):
         return None
     else:
@@ -156,7 +161,15 @@ def slim_thinker_out(thinker_out: Any) -> dict[str, Any] | None:
     return projected
 
 
-def copy_mutable_containers(value: Any) -> Any:
+@overload
+def copy_mutable_containers(value: dict[KeyT, ValueT]) -> dict[KeyT, object]: ...
+
+
+@overload
+def copy_mutable_containers(value: object) -> object: ...
+
+
+def copy_mutable_containers(value: object) -> object:
     if isinstance(value, dict):
         return {key: copy_mutable_containers(item) for key, item in value.items()}
     else:
@@ -324,7 +337,7 @@ def create_sglang_thinker_executor_from_config(
     tp_size: int = 1,
     nccl_port: int | None = None,
     thinker_max_seq_len: int = 8192,
-    server_args_overrides: dict[str, Any] | None = None,
+    server_args_overrides: Mapping[str, object] | None = None,
     enable_streaming_tts: bool = False,
 ):
     validate_stage_tp_support(stage_name="thinker", tp_size=tp_size)

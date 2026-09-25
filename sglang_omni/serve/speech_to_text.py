@@ -11,7 +11,7 @@ import math
 from collections.abc import AsyncIterator, Collection
 from contextlib import aclosing
 from dataclasses import dataclass
-from typing import Any
+from typing import TypeVar
 
 from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
@@ -48,6 +48,8 @@ HTTP_DISCONNECT_CANCEL_TIMEOUT_S = 0.1
 DEFAULT_RESPONSE_FORMATS = frozenset({"json", "text", "verbose_json"})
 DEFAULT_STREAMING_RESPONSE_FORMATS = frozenset({"json", "text"})
 SEGMENT_RESPONSE_FORMATS = frozenset({"srt", "vtt"})
+
+TaskResultT = TypeVar("TaskResultT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,12 +156,12 @@ def build_speech_to_text_generate_request(
     segment_timestamps: bool = False,
 ) -> GenerateRequest:
     """Keep endpoint policy out of model-neutral request construction."""
-    params: dict[str, Any] = {"task": task}
+    params: dict[str, object] = {"task": task}
     if detect_language:
         params["detect_language"] = True
     else:
         pass
-    metadata: dict[str, Any] = {"task": "asr"}
+    metadata: dict[str, object] = {"task": "asr"}
     explicit_fields: list[str] = []
     if language is not None:
         params["language"] = language
@@ -456,7 +458,7 @@ def assemble_speech_to_text_response(
     )
 
 
-async def cancel_task_bounded(task: asyncio.Task[Any]) -> None:
+async def cancel_task_bounded(task: asyncio.Task[TaskResultT]) -> None:
     task.cancel()
     done, _ = await asyncio.wait({task}, timeout=HTTP_DISCONNECT_CANCEL_TIMEOUT_S)
     if done:
@@ -465,7 +467,7 @@ async def cancel_task_bounded(task: asyncio.Task[Any]) -> None:
         task.add_done_callback(discard_cancelled_task_result)
 
 
-def discard_cancelled_task_result(task: asyncio.Task[Any]) -> None:
+def discard_cancelled_task_result(task: asyncio.Task[TaskResultT]) -> None:
     try:
         task.result()
     except asyncio.CancelledError:
@@ -482,7 +484,7 @@ async def wait_for_request_disconnect(request: Request) -> None:
 async def abort_and_close_speech_to_text_stream(
     client: Client,
     request_id: str,
-    stream: AsyncIterator[Any],
+    stream: AsyncIterator[object],
 ) -> None:
     try:
         await client.abort(request_id)

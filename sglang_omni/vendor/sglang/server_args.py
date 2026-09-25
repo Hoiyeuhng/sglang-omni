@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
 
-
-def override_server_args(server_args: Any, source: str, **fields: Any) -> None:
+def override_server_args(server_args: object, source: str, **fields: object) -> None:
     """Apply an audited ServerArgs mutation at the right lifecycle stage.
 
     A record that is not published yet takes the change as a declaration

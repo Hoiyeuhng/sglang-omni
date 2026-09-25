@@ -3,13 +3,15 @@
 
 from __future__ import annotations
 
-from concurrent.futures import Future
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Generic, Protocol, SupportsIndex, SupportsInt
+
+from typing_extensions import TypeVar
 
 if TYPE_CHECKING:
     import torch
+    from sglang.srt.managers.schedule_batch import ScheduleBatch
 else:
     pass
 
@@ -25,22 +27,31 @@ class SchedulerStatus(Enum):
 class SchedulerRequest:
     request_id: str
     status: SchedulerStatus = SchedulerStatus.WAITING
-    data: Any = None
+    data: ARRequestData | None = None
     error: Exception | None = None
     arrival_time: float = 0.0
     finish_time: float | None = None
 
 
+ValueT = TypeVar("ValueT", default=object)
+
+
+class CompletionFuture(Protocol):
+    def done(self) -> bool: ...
+
+    def result(self, timeout: float | None = None) -> object: ...
+
+
 @dataclass(slots=True)
-class DeferredAdmission:
-    value: Any
-    ready: Future[Any]
+class DeferredAdmission(Generic[ValueT]):
+    value: ValueT
+    ready: CompletionFuture
 
 
 @dataclass
 class SchedulerOutput:
     requests: list[SchedulerRequest]
-    batch_data: Any
+    batch_data: ScheduleBatch | None
     step_id: int = 0
 
     @property
@@ -51,9 +62,9 @@ class SchedulerOutput:
 @dataclass
 class RequestOutput:
     request_id: str
-    data: Any = None
+    data: str | bytes | bytearray | SupportsInt | SupportsIndex | None = None
     finished: bool = False
-    extra: dict[str, Any] | None = None
+    extra: dict[str, torch.Tensor] | None = None
 
 
 @dataclass
@@ -76,13 +87,13 @@ class ARRequestData:
 
     input_ids: "torch.Tensor | None" = None
     attention_mask: "torch.Tensor | None" = None
-    model_inputs: dict[str, Any] = field(default_factory=dict)
+    model_inputs: dict[str, object] = field(default_factory=dict)
     output_ids: list[int] = field(default_factory=list)
-    extra_model_outputs: dict[str, Any] = field(default_factory=dict)
+    extra_model_outputs: dict[str, object] = field(default_factory=dict)
     finish_reason: str | None = None
     weight_version: str | None = None
     return_logprob: bool = False
-    output_token_logprobs: list[Any] = field(default_factory=list)
+    output_token_logprobs: list[list[float | int]] = field(default_factory=list)
     capture_model_output_keys: tuple[str, ...] = ()
     max_new_tokens: int | None = None
     enforce_request_limits: bool = False
@@ -93,7 +104,10 @@ class ARRequestData:
     decode_input_embeds: list["torch.Tensor"] | None = field(default_factory=list)
 
 
-def sampled_logprobs_to_list(next_token_logprobs: Any) -> list[float] | None:
+RequestDataT = TypeVar("RequestDataT", bound=ARRequestData, default=ARRequestData)
+
+
+def sampled_logprobs_to_list(next_token_logprobs: object) -> list[float] | None:
     """Convert sampler-produced per-row selected-token logprobs to a list.
 
     The sampler owns logprob semantics such as temperature and original-logprob

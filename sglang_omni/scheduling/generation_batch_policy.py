@@ -4,9 +4,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from numbers import Integral
-from typing import Any
 
 from sglang.srt.arg_groups.model_override_base import resolved_view
 from sglang.srt.model_executor.cuda_graph_config import Backend as CudaGraphBackend
@@ -21,19 +20,19 @@ _MISSING = object()
 _PREFILL_PADDING_FACTOR = 2
 
 
-def get_decode_cuda_graph_max_bs(server_args: Any) -> Any:
+def get_decode_cuda_graph_max_bs(server_args: object) -> int | None:
     """Read the resolved SGLang decode CUDA Graph batch cap."""
     cfg = resolved_view(server_args)
     return cfg.cuda_graph_config.decode.max_bs
 
 
-def get_decode_cuda_graph_bs(server_args: Any) -> Any:
+def get_decode_cuda_graph_bs(server_args: object) -> list[int] | None:
     """Read the resolved SGLang decode CUDA Graph batch buckets."""
     cfg = resolved_view(server_args)
     return cfg.cuda_graph_config.decode.bs
 
 
-def get_prefill_cuda_graph_backend(server_args: Any) -> str:
+def get_prefill_cuda_graph_backend(server_args: object) -> str:
     """Read the resolved SGLang prefill CUDA graph backend."""
     cfg = resolved_view(server_args)
     return cfg.cuda_graph_config.prefill.backend
@@ -82,7 +81,7 @@ def build_default_prefill_cuda_graph_bs(max_num_tokens: int) -> list[int]:
     return values
 
 
-def explicit_prefill_cap(overrides: Mapping[str, Any]) -> int | None:
+def explicit_prefill_cap(overrides: Mapping[str, object]) -> int | None:
     """The cap SGLang derives inside ServerArgs once its inputs are explicit."""
     declared = overrides.get("cuda_graph_max_bs_prefill")
     if declared is not None:
@@ -103,7 +102,7 @@ def explicit_prefill_cap(overrides: Mapping[str, Any]) -> int | None:
     return cap
 
 
-def nested_prefill_overrides(overrides: Mapping[str, Any]) -> Mapping[str, Any]:
+def nested_prefill_overrides(overrides: Mapping[str, object]) -> Mapping[str, object]:
     """Extract the prefill section of a nested cuda_graph_config override."""
     config = overrides.get("cuda_graph_config")
     if isinstance(config, CudaGraphConfig):
@@ -119,7 +118,7 @@ def nested_prefill_overrides(overrides: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def operator_selected_prefill_backend(
-    server_args_overrides: Mapping[str, Any] | None,
+    server_args_overrides: Mapping[str, object] | None,
 ) -> bool:
     """Whether the operator named the prefill CUDA graph backend in the overrides."""
     if not server_args_overrides:
@@ -140,9 +139,9 @@ def build_generation_batch_overrides(
     max_running_requests: int,
     cuda_graph_max_bs: int | None = None,
     torch_compile_max_bs: int | None = None,
-    server_args_overrides: Mapping[str, Any] | None = None,
-    **stage_defaults: Any,
-) -> dict[str, Any]:
+    server_args_overrides: Mapping[str, object] | None = None,
+    **stage_defaults: object,
+) -> dict[str, object]:
     incoming = dict(server_args_overrides or {})
     # note(ratish): the nested form wins in sglang; mirror its prefill
     # fields into the flat keys.
@@ -275,7 +274,7 @@ def build_generation_batch_overrides(
 def validate_generation_batch_policy(
     *,
     model_name: str,
-    server_args: Any,
+    server_args: object,
     model_buffer_bs: int | None = None,
 ) -> None:
     errors: list[str] = []
@@ -368,7 +367,7 @@ def validate_generation_batch_policy(
 
 
 def validate_prefill_graph_policy(
-    server_args: Any,
+    server_args: object,
     cuda_graph_enabled: bool,
     errors: list[str],
 ) -> None:
@@ -467,7 +466,7 @@ def validate_prefill_graph_policy(
 
 def validate_positive_int(
     field: str,
-    value: Any,
+    value: object,
     errors: list[str],
     *,
     required: bool = True,
@@ -493,7 +492,7 @@ def validate_positive_int(
     return normalized
 
 
-def normalize_positive_int(field: str, value: Any) -> int:
+def normalize_positive_int(field: str, value: object) -> int:
     try:
         normalized = int(value)
     except (TypeError, ValueError) as exc:
@@ -506,7 +505,7 @@ def normalize_positive_int(field: str, value: Any) -> int:
 
 
 def normalize_cuda_graph_bs(
-    value: Iterable[Any],
+    value: object,
     errors: list[str],
     *,
     field: str,

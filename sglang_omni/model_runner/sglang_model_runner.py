@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any
+from typing import TypeVar
 
 from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.distributed.parallel_state_wrapper import ParallelState
@@ -28,6 +28,7 @@ from sglang_omni.utils.gpu_memory import (
 logger = logging.getLogger(__name__)
 _PREFILL_RUNNER_DISPATCH_LOCK = Lock()
 _PREFILL_RUNNER_DISPATCH_DEFAULT: type | None = None
+WeightT = TypeVar("WeightT")
 
 
 def install_prefill_runner_dispatch() -> None:
@@ -52,9 +53,9 @@ def install_prefill_runner_dispatch() -> None:
 
 
 def filter_weights_by_prefix(
-    weights: Iterator[tuple[str, Any]],
+    weights: Iterator[tuple[str, WeightT]],
     prefix: str | None,
-) -> Iterator[tuple[str, Any]]:
+) -> Iterator[tuple[str, WeightT]]:
     """Filter weight iterator by prefix, stripping matched prefix from names."""
     if not prefix:
         yield from weights
@@ -68,7 +69,7 @@ def filter_weights_by_prefix(
             pass
 
 
-def free_gpu_memory_bytes(device: Any, gpu_id: int) -> int:
+def free_gpu_memory_bytes(device: str, gpu_id: int) -> int:
     """Currently free GPU memory in bytes, min-reduced across the world group."""
     from sglang.srt.distributed.parallel_state import get_world_group
     from sglang.srt.utils.common import get_available_gpu_memory

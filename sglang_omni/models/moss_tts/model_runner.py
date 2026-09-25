@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import torch
 from sglang.srt.layers.sampler import multinomial_with_seed
@@ -20,6 +20,24 @@ from sglang_omni.models.moss_tts.sampling_kernels import (
 )
 from sglang_omni.scheduling.types import RequestOutput
 
+if TYPE_CHECKING:
+    from sglang.srt.managers.schedule_batch import ScheduleBatch
+    from sglang.srt.managers.scheduler import GenerationBatchResult
+    from sglang.srt.model_executor.forward_batch_info import ForwardBatch
+
+    from sglang_omni.model_runner.model_worker import ModelWorker
+    from sglang_omni.models.moss_tts.request_builders import MossTTSSGLangRequestData
+    from sglang_omni.models.moss_tts.sglang_model import (
+        ChannelLogitsList,
+        MossTTSDelaySGLangModel,
+    )
+    from sglang_omni.scheduling.sglang_backend.output_processor import (
+        SGLangOutputProcessor,
+    )
+    from sglang_omni.scheduling.types import SchedulerOutput, SchedulerRequest
+else:
+    pass
+
 _NEG_INF = float("-inf")
 _INT64_MAX = torch.iinfo(torch.int64).max
 _UINT64_MASK = (1 << 64) - 1
@@ -29,16 +47,20 @@ _INT64_SEED_MASK = (1 << 63) - 1
 class MossTTSModelRunner(ModelRunner):
     """Samples MOSS-TTS text/audio channels and maintains delay-pattern state."""
 
-    def __init__(self, tp_worker: Any, output_processor: Any):
+    model: MossTTSDelaySGLangModel
+
+    def __init__(
+        self, tp_worker: ModelWorker, output_processor: SGLangOutputProcessor
+    ) -> None:
         super().__init__(tp_worker, output_processor)
         self.pending_rows: torch.Tensor | None = None
         self.pending_embeds: torch.Tensor | None = None
 
     def custom_prefill_forward(
         self,
-        forward_batch: Any,
-        schedule_batch: Any,
-        requests: list,
+        forward_batch: ForwardBatch | None,
+        schedule_batch: ScheduleBatch,
+        requests: list[SchedulerRequest],
     ) -> None:
         del schedule_batch
         attach_omni_prefill_inputs(
@@ -51,9 +73,9 @@ class MossTTSModelRunner(ModelRunner):
 
     def before_decode(
         self,
-        forward_batch: Any,
-        schedule_batch: Any,
-        requests: list,
+        forward_batch: ForwardBatch | None,
+        schedule_batch: ScheduleBatch,
+        requests: list[SchedulerRequest],
         *,
         is_lookahead: bool = False,
     ) -> None:
@@ -63,10 +85,10 @@ class MossTTSModelRunner(ModelRunner):
 
     def post_prefill(
         self,
-        result: Any,
-        forward_batch: Any,
-        schedule_batch: Any,
-        requests: list,
+        result: GenerationBatchResult,
+        forward_batch: ForwardBatch | None,
+        schedule_batch: ScheduleBatch,
+        requests: list[SchedulerRequest],
     ) -> None:
         if schedule_batch.is_prefill_only:
             return
@@ -76,21 +98,21 @@ class MossTTSModelRunner(ModelRunner):
 
     def post_decode(
         self,
-        result: Any,
-        forward_batch: Any,
-        schedule_batch: Any,
-        requests: list,
+        result: GenerationBatchResult,
+        forward_batch: ForwardBatch | None,
+        schedule_batch: ScheduleBatch,
+        requests: list[SchedulerRequest],
     ) -> None:
         self.collect_moss_step(result, forward_batch, schedule_batch, requests)
 
     def build_prefill_input_embeds(
         self,
-        forward_batch: Any,
-        requests: list,
+        forward_batch: ForwardBatch,
+        requests: list[SchedulerRequest],
     ) -> torch.Tensor:
         pieces = []
         for sched_req in requests:
-            data = sched_req.data
+            data: MossTTSSGLangRequestData = sched_req.data
             req = data.req
             rows = data.prompt_rows
             if rows is None:
@@ -139,8 +161,8 @@ class MossTTSModelRunner(ModelRunner):
 
     def write_decode_input_embedding(
         self,
-        forward_batch: Any,
-        requests: list,
+        forward_batch: ForwardBatch,
+        requests: list[SchedulerRequest],
     ) -> None:
         batch_size = len(requests)
         if batch_size == 0:
@@ -187,12 +209,14 @@ class MossTTSModelRunner(ModelRunner):
 
     def collect_moss_step(
         self,
-        result: Any,
-        forward_batch: Any,
-        schedule_batch: Any,
-        requests: list,
+        result: GenerationBatchResult,
+        forward_batch: ForwardBatch | None,
+        schedule_batch: ScheduleBatch,
+        requests: list[SchedulerRequest],
     ) -> None:
-        datas = [sched_req.data for sched_req in requests]
+        datas: list[MossTTSSGLangRequestData] = [
+            sched_req.data for sched_req in requests
+        ]
         is_audio = bool(datas) and all(data.is_audio for data in datas)
         channel_logits = self.channel_logits_from_result(
             result,
@@ -229,7 +253,7 @@ class MossTTSModelRunner(ModelRunner):
 
     def can_use_sampling_cuda_graph(
         self,
-        datas: list,
+        datas: list[MossTTSSGLangRequestData],
         *,
         is_audio: bool,
     ) -> bool:
@@ -257,7 +281,7 @@ class MossTTSModelRunner(ModelRunner):
     def sample_rows_graphed(
         self,
         channel_logits: list[torch.Tensor],
-        datas: list,
+        datas: list[MossTTSSGLangRequestData],
     ) -> torch.Tensor:
         device = channel_logits[0].device
         batch_size = len(datas)
@@ -306,11 +330,11 @@ class MossTTSModelRunner(ModelRunner):
 
     def channel_logits_from_result(
         self,
-        result: Any,
-        forward_batch: Any,
+        result: GenerationBatchResult,
+        forward_batch: ForwardBatch | None,
         *,
         is_audio: bool = False,
-    ) -> list[torch.Tensor]:
+    ) -> "list[torch.Tensor] | ChannelLogitsList":
         logits_output = result.logits_output
         customized = logits_output.customized_info
         if isinstance(customized, dict):
@@ -348,7 +372,9 @@ class MossTTSModelRunner(ModelRunner):
         raise RuntimeError("MOSS-TTS model output did not include channel logits")
 
     @staticmethod
-    def delay_state_tensor(data: Any, device: torch.device) -> torch.Tensor:
+    def delay_state_tensor(
+        data: MossTTSSGLangRequestData, device: torch.device
+    ) -> torch.Tensor:
         state = getattr(data, "delay_state", None)
         if isinstance(state, torch.Tensor) and tuple(state.shape) == (3,):
             state = state.to(device=device, dtype=torch.long)
@@ -373,7 +399,7 @@ class MossTTSModelRunner(ModelRunner):
     def sample_rows(
         self,
         channel_logits: list[torch.Tensor],
-        datas: list,
+        datas: list[MossTTSSGLangRequestData],
         *,
         n_vq: int,
         is_audio: bool = False,
@@ -822,7 +848,7 @@ class MossTTSModelRunner(ModelRunner):
     @staticmethod
     def apply_audio_repetition_penalty(
         audio_logits: torch.Tensor,
-        datas: list,
+        datas: list[MossTTSSGLangRequestData],
         *,
         n_vq: int,
     ) -> None:
@@ -873,8 +899,8 @@ class MossTTSModelRunner(ModelRunner):
 
     def post_process_outputs(
         self,
-        result: Any,
-        scheduler_output: Any,
+        result: GenerationBatchResult,
+        scheduler_output: SchedulerOutput,
         outputs: dict[str, RequestOutput],
     ) -> None:
         del result

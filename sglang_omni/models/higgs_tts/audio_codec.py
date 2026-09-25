@@ -15,9 +15,9 @@ import logging
 import os
 import threading
 import types
+from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import torch
@@ -26,6 +26,9 @@ import torchaudio
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from transformers import HiggsAudioV2TokenizerConfig, HiggsAudioV2TokenizerModel
+from transformers.models.higgs_audio_v2_tokenizer.modeling_higgs_audio_v2_tokenizer import (
+    HiggsAudioV2TokenizerResidualVectorQuantization,
+)
 
 WaveformInput = torch.Tensor | np.ndarray
 logger = logging.getLogger(__name__)
@@ -49,7 +52,9 @@ class DecodeCudaGraph:
     output_audio: torch.Tensor
 
 
-def capture_safe_quantizer_decode(quantizer: Any, codes: torch.Tensor) -> torch.Tensor:
+def capture_safe_quantizer_decode(
+    quantizer: HiggsAudioV2TokenizerResidualVectorQuantization, codes: torch.Tensor
+) -> torch.Tensor:
     """Equivalent RVQ decode without a pageable CPU-to-GPU scalar copy.
 
     Transformers 5.6 initializes the accumulator with
@@ -333,9 +338,9 @@ class HiggsAudioCodec:
         self,
         items: list[torch.Tensor],
         *,
-        bucket_key_fn,
-        single_fn,
-        batch_fn,
+        bucket_key_fn: Callable[[torch.Tensor], Hashable],
+        single_fn: Callable[[torch.Tensor], torch.Tensor],
+        batch_fn: Callable[[list[torch.Tensor]], Iterable[torch.Tensor]],
         error_label: str,
     ) -> list[torch.Tensor]:
         """Run single_fn on singleton buckets and batch_fn on multi-item buckets."""
@@ -348,7 +353,7 @@ class HiggsAudioCodec:
         else:
             pass
 
-        buckets: dict[int, list[int]] = {}
+        buckets: dict[Hashable, list[int]] = {}
         for i, item in enumerate(items):
             buckets.setdefault(bucket_key_fn(item), []).append(i)
 

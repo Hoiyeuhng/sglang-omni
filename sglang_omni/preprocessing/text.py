@@ -4,9 +4,17 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping
+from typing import Mapping, Protocol
 
 from transformers.utils.hub import cached_file
+
+
+class ChatTemplateHolder(Protocol):
+    @property
+    def chat_template(self) -> object: ...
+
+    @chat_template.setter
+    def chat_template(self, value: str) -> None: ...
 
 
 def load_chat_template(model_path: str, *, local_files_only: bool = True) -> str | None:
@@ -38,7 +46,7 @@ def load_chat_template(model_path: str, *, local_files_only: bool = True) -> str
 
 
 def ensure_chat_template(
-    tokenizer: Any,
+    tokenizer: ChatTemplateHolder,
     *,
     model_path: str,
     fallback_model_paths: tuple[str, ...] = (),
@@ -59,7 +67,7 @@ def ensure_chat_template(
             pass
 
 
-def normalize_messages(messages: Any) -> list[dict[str, str]]:
+def normalize_messages(messages: object) -> list[dict[str, str]]:
     """Normalize chat messages into a list of {role, content} dicts."""
     if not isinstance(messages, list):
         raise ValueError("Preprocessing expects a list of chat messages")
@@ -115,7 +123,7 @@ def append_modality_placeholders(
     return updated
 
 
-def apply_chat_template(tokenizer: Any, messages: list[dict[str, str]]) -> str:
+def apply_chat_template(tokenizer: object, messages: list[dict[str, str]]) -> str:
     """Apply the tokenizer's chat template with a generation prompt."""
     return tokenizer.apply_chat_template(
         messages,

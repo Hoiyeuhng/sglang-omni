@@ -10,7 +10,6 @@ import logging
 import math
 import os
 from collections.abc import Mapping
-from typing import Any
 from urllib.parse import unquote, urlparse
 
 import httpx
@@ -19,6 +18,7 @@ import pybase64
 import torch
 import torchaudio
 import xxhash
+from numpy.typing import NDArray
 
 from sglang_omni.platforms import current_platform
 
@@ -179,8 +179,8 @@ def is_sun_au(data: bytes) -> bool:
 
 
 def resample_with_scipy(
-    audio_np: np.ndarray, sample_rate: int, target_sample_rate: int
-) -> np.ndarray:
+    audio_np: NDArray[np.float32], sample_rate: int, target_sample_rate: int
+) -> NDArray[np.float32]:
     import scipy.signal
 
     orig_freq = int(sample_rate)
@@ -195,8 +195,8 @@ def resample_with_scipy(
 def try_fast_wav_decode(
     data: bytes,
     target_sample_rate: int,
-    resample_kwargs: Mapping[str, Any] | None = None,
-) -> np.ndarray | None:
+    resample_kwargs: Mapping[str, object] | None = None,
+) -> NDArray[np.float32] | None:
     # Note (akazaakane): Keep unsupported WAV encodings on torchaudio so the fast
     # path never narrows existing format coverage.
     from sglang_omni.preprocessing.audio import parse_wav_bytes
@@ -232,7 +232,7 @@ def resample_kernel(
     orig_freq: int,
     new_freq: int,
     gcd: int,
-    kwargs_items: tuple[tuple[str, Any], ...],
+    kwargs_items: tuple[tuple[str, object], ...],
     device: torch.device,
     dtype: torch.dtype,
 ) -> tuple[torch.Tensor, int]:
@@ -252,7 +252,7 @@ def cached_resample(
     waveform: torch.Tensor,
     orig_freq: int,
     new_freq: int,
-    resample_kwargs: Mapping[str, Any] | None,
+    resample_kwargs: Mapping[str, object] | None,
 ) -> torch.Tensor:
     kwargs = dict(resample_kwargs or {})
     orig_freq, new_freq = int(orig_freq), int(new_freq)
@@ -290,13 +290,13 @@ def decode_audio_data_uri(value: str) -> bytes | None:
 
 
 def load_audio(
-    source: Any,
+    source: object,
     source_name: str = "audio",
     target_sample_rate: int = 16000,
     mono: bool = True,
     trim_top_db: float | None = None,
-    resample_kwargs: Mapping[str, Any] | None = None,
-) -> np.ndarray:
+    resample_kwargs: Mapping[str, object] | None = None,
+) -> NDArray[np.float32]:
     if isinstance(source, memoryview):
         source = source.tobytes()
     else:
@@ -390,7 +390,7 @@ def load_audio(
     return audio.cpu().numpy()
 
 
-def audio_fingerprint(audio: np.ndarray) -> str:
+def audio_fingerprint(audio: NDArray[np.generic]) -> str:
     contiguous = np.ascontiguousarray(audio, dtype=np.float32)
     return xxhash.xxh3_128_hexdigest(contiguous)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 import torch
 
@@ -18,6 +18,11 @@ from sglang_omni.models.ming_tts.tokenizer import MingTTSTokenizerBundle
 from sglang_omni.proto import StagePayload
 from sglang_omni.scheduling.message import OutgoingMessage
 from sglang_omni.scheduling.sglang_backend import SGLangARRequestData
+
+if TYPE_CHECKING:
+    from sglang_omni.models.ming_tts.sglang_model import MingTTSSGLangModel
+else:
+    pass
 
 
 @dataclass
@@ -43,7 +48,7 @@ class MingTTSSGLangRequestData(SGLangARRequestData):
 
 def make_ming_tts_scheduler_adapters(
     *,
-    model: Any,
+    model: "MingTTSSGLangModel | None",
     tokenizer: MingTTSTokenizerBundle,
     reset_request: Callable[[str], None],
     owns_acoustic_result: bool = True,
@@ -168,7 +173,7 @@ def make_ming_tts_scheduler_adapters(
 def build_ming_tts_stream_output(
     request_id: str,
     data: MingTTSSGLangRequestData,
-    req_output: Any,
+    req_output: object,
 ) -> list[OutgoingMessage]:
     del req_output
     patch = data.pending_stream_patch

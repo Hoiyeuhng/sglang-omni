@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -21,6 +21,7 @@ from sglang_omni.scheduling.sglang_backend import SGLangARRequestData
 
 if TYPE_CHECKING:
     from sglang_omni.models.dots_tts.flow_head import DotsFlowState
+    from sglang_omni.scheduling.types import RequestOutput
 else:
     pass
 
@@ -41,7 +42,7 @@ class DotsTTSSGLangRequestData(SGLangARRequestData):
     latest_latent_patch: torch.Tensor | None = None
     latent_patches: list[torch.Tensor] = field(default_factory=list)
     decoded_latent_patches: list[torch.Tensor] = field(default_factory=list)
-    stream_metadata: dict[str, Any] | None = None
+    stream_metadata: dict[str, object] | None = None
     chunk_id: int = 0
     control_token_id: int = 0
     engine_start_s: float = 0.0
@@ -156,7 +157,7 @@ def build_sglang_dots_tts_request(
 def build_stream_output(
     request_id: str,
     data: DotsTTSSGLangRequestData,
-    req_output: Any,
+    req_output: "RequestOutput",
 ) -> Iterator[OutgoingMessage]:
     del req_output
     latent = data.latest_latent_patch

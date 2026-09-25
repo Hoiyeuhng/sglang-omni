@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TypedDict
+from typing import TypedDict
 
 
 class ThinkerOutput(TypedDict, total=False):
@@ -19,14 +19,14 @@ class ThinkerOutput(TypedDict, total=False):
 class LLaDA2UniPipelineState:
     """Typed view of the per-request pipeline state."""
 
-    prompt: dict[str, Any] | None = None
-    encoder_inputs: dict[str, dict[str, Any]] = field(default_factory=dict)
-    encoder_outs: dict[str, Any] = field(default_factory=dict)
+    prompt: dict[str, object] | None = None
+    encoder_inputs: dict[str, object] = field(default_factory=dict)
+    encoder_outs: dict[str, object] = field(default_factory=dict)
     thinker_out: ThinkerOutput | None = None
-    engine_outputs: dict[str, Any] = field(default_factory=dict)
+    engine_outputs: dict[str, object] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Any) -> "LLaDA2UniPipelineState":
+    def from_dict(cls, data: object) -> "LLaDA2UniPipelineState":
         if not isinstance(data, dict):
             data = {}
         else:
@@ -43,8 +43,8 @@ class LLaDA2UniPipelineState:
             engine_outputs=engine_outputs if isinstance(engine_outputs, dict) else {},
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        data: dict[str, Any] = {}
+    def to_dict(self) -> dict[str, object]:
+        data: dict[str, object] = {}
         if self.prompt is not None:
             data["prompt"] = self.prompt
         else:
@@ -74,5 +74,5 @@ class LLaDA2UniEvent:
 
     type: str
     modality: str
-    payload: dict[str, Any]
+    payload: dict[str, object]
     is_final: bool = False

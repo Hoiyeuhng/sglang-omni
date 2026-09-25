@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Callable
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 from sglang.srt.managers.mm_utils import init_mm_embedding_cache
 from transformers import AutoFeatureExtractor, AutoTokenizer
@@ -17,17 +19,34 @@ from sglang_omni.models.fun_asr.encoder_service import (
 from sglang_omni.models.fun_asr.tool_funcs.audio_lengths import (
     fun_asr_low_frame_rate_length,
 )
-from sglang_omni.scheduling.engine_factory import AsrEngineBuilder
+from sglang_omni.scheduling.engine_factory import AsrEngineBuilder, GenerationDefaults
 from sglang_omni.scheduling.generation_batch_policy import (
     CudaGraphBackend,
     build_default_prefill_cuda_graph_bs,
 )
 from sglang_omni.utils.gpu_compat import get_visible_gpu_sm_version
 
+if TYPE_CHECKING:
+    from sglang.srt.server_args import ServerArgs
+    from transformers import PreTrainedTokenizerBase
+
+    from sglang_omni.models.fun_asr.configuration_fun_asr import (
+        FunAsrNanoFeatureExtractor,
+    )
+    from sglang_omni.models.fun_asr.sglang_model import (
+        FunAsrNanoForConditionalGeneration,
+    )
+    from sglang_omni.proto import StagePayload
+    from sglang_omni.scheduling.message import OutgoingMessage
+    from sglang_omni.scheduling.sglang_backend.request_data import SGLangARRequestData
+    from sglang_omni.scheduling.types import RequestOutput
+else:
+    pass
+
 logger = logging.getLogger(__name__)
 
 
-class FunASREngineBuilder(AsrEngineBuilder):
+class FunASREngineBuilder(AsrEngineBuilder[request_builders.FunASRRequestData]):
     model_name = "Fun-ASR"
     model_arch_override = "FunAsrNanoForConditionalGeneration"
     supports_breakable_prefill_cuda_graph = True
@@ -86,8 +105,8 @@ class FunASREngineBuilder(AsrEngineBuilder):
         self.request_build_max_workers = request_build_max_workers
         self.request_build_max_pending = request_build_max_pending
         self.stream_emit_interval_s = stream_emit_interval_s
-        self.tokenizer: Any = None
-        self.feature_extractor: Any = None
+        self.tokenizer: "PreTrainedTokenizerBase | None" = None
+        self.feature_extractor: "FunAsrNanoFeatureExtractor | None" = None
         self.audio_encoder_service: FunASRPreLMEncoderService | None = None
         self.context_length = 0
 
@@ -108,8 +127,8 @@ class FunASREngineBuilder(AsrEngineBuilder):
             encoder_token_count + self.max_new_tokens + prompt_overhead
         )
 
-    def generation_defaults(self, *, dtype: str) -> dict[str, Any]:
-        defaults: dict[str, Any] = {
+    def generation_defaults(self, *, dtype: str) -> GenerationDefaults:
+        defaults: GenerationDefaults = {
             "max_running_requests": self.max_running_requests,
             "disable_cuda_graph": False,
             "disable_overlap_schedule": True,
@@ -135,8 +154,8 @@ class FunASREngineBuilder(AsrEngineBuilder):
 
     def setup_model_resources(
         self,
-        model: Any,
-        server_args: Any,
+        model: FunAsrNanoForConditionalGeneration | None,
+        server_args: object,
         *,
         generation_cuda_graph_enabled: bool,
     ) -> None:
@@ -178,7 +197,11 @@ class FunASREngineBuilder(AsrEngineBuilder):
             pass
         init_mm_embedding_cache(self.mm_embedding_cache_size_bytes)
 
-    def setup_runtime_resources(self, model: Any, server_args: Any) -> None:
+    def setup_runtime_resources(
+        self,
+        model: FunAsrNanoForConditionalGeneration | None,
+        server_args: ServerArgs | None,
+    ) -> None:
         if not self.enable_pre_lm_encoder:
             return
         else:
@@ -197,7 +220,10 @@ class FunASREngineBuilder(AsrEngineBuilder):
             max_batch_wait_ms=self.pre_lm_max_batch_wait_ms,
         )
 
-    def make_adapters(self, model: Any) -> tuple[Any, Any]:
+    def make_adapters(self, model: object) -> tuple[
+        Callable[[StagePayload], request_builders.FunASRRequestData],
+        Callable[[request_builders.FunASRRequestData], StagePayload],
+    ]:
         del model
         return request_builders.make_fun_asr_scheduler_adapters(
             tokenizer=self.tokenizer,
@@ -207,7 +233,7 @@ class FunASREngineBuilder(AsrEngineBuilder):
             audio_encoder_service=self.audio_encoder_service,
         )
 
-    def extra_scheduler_callbacks(self) -> dict[str, Any]:
+    def extra_scheduler_callbacks(self) -> dict[str, Callable[[], None] | None]:
         return {
             "shutdown_callback": (
                 self.audio_encoder_service.close
@@ -222,7 +248,18 @@ class FunASREngineBuilder(AsrEngineBuilder):
         else:
             pass
 
-    def extra_scheduler_kwargs(self) -> dict[str, Any]:
+    def extra_scheduler_kwargs(
+        self,
+    ) -> dict[
+        str,
+        Callable[
+            [str, SGLangARRequestData, RequestOutput | SimpleNamespace],
+            list[OutgoingMessage],
+        ]
+        | int
+        | float
+        | None,
+    ]:
         return {
             "stream_output_builder": request_builders.make_fun_asr_stream_output_builder(
                 tokenizer=self.tokenizer,

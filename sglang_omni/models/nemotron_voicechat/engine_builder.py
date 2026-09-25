@@ -36,8 +36,9 @@ from sglang_omni.models.nemotron_voicechat.talker_scheduler import (
     NemotronTalkerScheduler,
 )
 from sglang_omni.models.weight_loader import resolve_model_path
-from sglang_omni.scheduling.engine_factory import TtsEngineBuilder
+from sglang_omni.scheduling.engine_factory import GenerationDefaults, TtsEngineBuilder
 from sglang_omni.scheduling.omni_scheduler import OmniScheduler
+from sglang_omni.scheduling.sglang_backend.request_data import SGLangARRequestData
 
 TALKER_SPEAKER = "Aria"
 TALKER_PROMPT_FRAMES = 37
@@ -96,14 +97,14 @@ def talker_config(source: Path) -> dict:
     }
 
 
-class VoiceChatEngineBuilder(TtsEngineBuilder):
+class VoiceChatEngineBuilder(TtsEngineBuilder[SGLangARRequestData]):
     scheduler_class: type
 
     def __init__(self, *, max_running_requests: int = 1) -> None:
         self.max_running_requests = max_running_requests
 
-    def generation_defaults(self, *, dtype):
-        defaults = {
+    def generation_defaults(self, *, dtype: str) -> GenerationDefaults:
+        defaults: GenerationDefaults = {
             "disable_cuda_graph": True,
             "disable_overlap_schedule": True,
             "disable_radix_cache": True,

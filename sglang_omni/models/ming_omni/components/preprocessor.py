@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from collections.abc import Awaitable, Mapping, Sequence
+from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
 import torch
@@ -27,7 +28,18 @@ from sglang_omni.preprocessing.video import (
 )
 from sglang_omni.proto import StagePayload
 
+if TYPE_CHECKING:
+    from transformers import Qwen2VLImageProcessor
+    from transformers.models.qwen2_vl.video_processing_qwen2_vl import (
+        Qwen2VLVideoProcessor,
+    )
+else:
+    pass
+
+
 logger = logging.getLogger(__name__)
+
+MessageT = TypeVar("MessageT", bound=Mapping[str, object])
 
 # Ming-Omni chat template tokens
 ROLE_HUMAN = "<role>HUMAN</role>"
@@ -58,10 +70,10 @@ WHISPER_SAMPLE_RATE = 16000
 
 
 def compute_mel_spectrogram(
-    waveform: np.ndarray,
+    waveform: np.ndarray[tuple[int, ...], np.dtype[np.generic]],
     sample_rate: int = WHISPER_SAMPLE_RATE,
     n_mels: int = WHISPER_N_MELS,
-) -> np.ndarray:
+) -> np.ndarray[tuple[int, ...], np.dtype[np.generic]]:
     """Compute log-mel spectrogram features compatible with Whisper encoder.
 
     Args:
@@ -92,7 +104,7 @@ def compute_mel_spectrogram(
 
 
 def compute_mel_features_for_waveform(
-    waveform: np.ndarray,
+    waveform: np.ndarray[tuple[int, ...], np.dtype[np.generic]],
     ds_kernel_size: int,
     ds_stride: int,
 ) -> tuple[torch.Tensor, int, int]:
@@ -138,9 +150,9 @@ def estimate_image_tokens(
 
 
 def inject_top_level_images(
-    messages: list[dict[str, Any]],
+    messages: Sequence[Mapping[str, object]],
     images: list[str],
-) -> list[dict[str, Any]]:
+) -> list[Mapping[str, object]]:
     """Convert top-level ``images`` into inline content items.
 
     When the request uses ``{"images": ["url1"], "messages": [...]}`` instead of
@@ -157,7 +169,7 @@ def inject_top_level_images(
         else:
             pass
         content = msg.get("content", "")
-        new_content: list[dict[str, Any]] = [
+        new_content: list[object] = [
             {"type": "image_url", "image_url": {"url": url}} for url in images
         ]
         if isinstance(content, str):
@@ -172,9 +184,9 @@ def inject_top_level_images(
 
 
 def inject_top_level_audios(
-    messages: list[dict[str, Any]],
+    messages: Sequence[Mapping[str, object]],
     audios: list[str],
-) -> list[dict[str, Any]]:
+) -> list[Mapping[str, object]]:
     """Convert top-level ``audios`` into inline content items.
 
     Ming-Omni was trained with text BEFORE audio in user turns
@@ -184,7 +196,7 @@ def inject_top_level_audios(
     audio interpretation on the task description.
     """
     messages = list(messages)
-    audio_items: list[dict[str, Any]] = [
+    audio_items: list[dict[str, str | dict[str, str]]] = [
         {"type": "audio_url", "audio_url": {"url": url}} for url in audios
     ]
     for idx, msg in enumerate(messages):
@@ -193,7 +205,7 @@ def inject_top_level_audios(
         else:
             pass
         content = msg.get("content", "")
-        new_content: list[dict[str, Any]] = []
+        new_content: list[object] = []
         if isinstance(content, str):
             new_content.append({"type": "text", "text": content})
         elif isinstance(content, list):
@@ -207,16 +219,16 @@ def inject_top_level_audios(
 
 
 def inject_top_level_videos(
-    messages: list[dict[str, Any]],
+    messages: Sequence[Mapping[str, object]],
     videos: list[str],
-) -> list[dict[str, Any]]:
+) -> list[Mapping[str, object]]:
     """Convert top-level ``videos`` into inline content items.
 
     Mirrors ``_inject_top_level_audios``: text comes before video so attention
     can condition the video interpretation on the user's instruction.
     """
     messages = list(messages)
-    video_items: list[dict[str, Any]] = [
+    video_items: list[dict[str, str | dict[str, str]]] = [
         {"type": "video_url", "video_url": {"url": url}} for url in videos
     ]
     for idx, msg in enumerate(messages):
@@ -225,7 +237,7 @@ def inject_top_level_videos(
         else:
             pass
         content = msg.get("content", "")
-        new_content: list[dict[str, Any]] = []
+        new_content: list[object] = []
         if isinstance(content, str):
             new_content.append({"type": "text", "text": content})
         elif isinstance(content, list):
@@ -248,7 +260,7 @@ class MingPreprocessor:
     - Placeholder token insertion for audio/image segments
     """
 
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str) -> None:
         self.model_path = model_path
         self.config = load_ming_config(model_path)
         self.tokenizer = load_ming_tokenizer(model_path)
@@ -272,10 +284,10 @@ class MingPreprocessor:
             pass
 
         # Lazy-init vision processors
-        self.image_processor = None
-        self.video_processor = None
+        self.image_processor: Qwen2VLImageProcessor | None = None
+        self.video_processor: Qwen2VLVideoProcessor | None = None
 
-    def get_image_processor(self):
+    def get_image_processor(self) -> Qwen2VLImageProcessor:
         """Lazy-init Qwen2VLImageProcessor (same processor as Ming-Omni uses)."""
         if self.image_processor is None:
             from transformers import Qwen2VLImageProcessor
@@ -292,7 +304,7 @@ class MingPreprocessor:
             pass
         return self.image_processor
 
-    def get_video_processor(self):
+    def get_video_processor(self) -> Qwen2VLVideoProcessor:
         """Lazy-init the video processor from the pinned Transformers version."""
         if self.video_processor is None:
             from transformers import Qwen2VLVideoProcessor
@@ -310,7 +322,7 @@ class MingPreprocessor:
         return self.video_processor
 
     def process_images(
-        self, images: list[Any]
+        self, images: list[object]
     ) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
         """Process PIL images into pixel_values, grid_thw, and token counts.
 
@@ -330,7 +342,7 @@ class MingPreprocessor:
         return pixel_values, image_grid_thw, token_counts
 
     def process_videos(
-        self, videos: list[Any]
+        self, videos: list[object]
     ) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
         """Process video frames into pixel_values_videos, video_grid_thw, token counts.
 
@@ -344,7 +356,7 @@ class MingPreprocessor:
         # Convert per-video tensors to numpy arrays in (T, H, W, C) uint8 — the
         # format Qwen2VLVideoProcessor expects when ``videos`` is a list of
         # per-video frame stacks.
-        np_videos: list[np.ndarray] = []
+        np_videos: list[np.ndarray[tuple[int, ...], np.dtype[np.uint8]]] = []
         for v in videos:
             t = v
             if isinstance(t, torch.Tensor):
@@ -412,8 +424,8 @@ class MingPreprocessor:
             pass
 
         # --- Extract image / video URLs/data from messages ---
-        raw_images: list[Any] = []
-        raw_videos: list[Any] = []
+        raw_images: list[object] = []
+        raw_videos: list[object] = []
         for msg in messages:
             content = msg.get("content", "")
             if isinstance(content, list):
@@ -520,7 +532,7 @@ class MingPreprocessor:
         )
 
         # Gather all loads concurrently
-        all_tasks: list[Any] = []
+        all_tasks: list[Awaitable[object]] = []
         if image_coro is not None:
             all_tasks.append(image_coro)
         else:
@@ -537,8 +549,8 @@ class MingPreprocessor:
             results = []
 
         # Unpack results in the same order as they were appended
-        images: list[Any] = []
-        videos: list[Any] = []
+        images: list[object] = []
+        videos: list[object] = []
         idx = 0
         if image_coro is not None:
             img_result = results[idx]
@@ -563,7 +575,7 @@ class MingPreprocessor:
             pass
         audio_results = results[idx:]
 
-        waveforms: list[np.ndarray] = [
+        waveforms: list[np.ndarray[tuple[int, ...], np.dtype[np.generic]]] = [
             a for a in audio_results if isinstance(a, np.ndarray)
         ]
 
@@ -641,7 +653,7 @@ class MingPreprocessor:
         # --- Prepare encoder inputs ---
         # Always include keys so that the aggregated input handler
         # (which waits for ALL configured sources) receives data from every source.
-        encoder_inputs: dict[str, dict[str, Any]] = {
+        encoder_inputs: dict[str, dict[str, object]] = {
             AUDIO_STAGE: {"_skip": True, "_result": {}},
             IMAGE_STAGE: {"_skip": True, "_result": {}},
         }
@@ -675,7 +687,7 @@ class MingPreprocessor:
         has_image = pixel_values is not None and image_grid_thw is not None
         has_video = pixel_values_videos is not None and video_grid_thw is not None
         if has_image or has_video:
-            stage_inputs: dict[str, Any] = {}
+            stage_inputs: dict[str, object] = {}
             if has_image:
                 stage_inputs["pixel_values"] = pixel_values
                 stage_inputs["image_grid_thw"] = image_grid_thw
@@ -717,7 +729,7 @@ class MingPreprocessor:
 
     def build_prompt(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[MessageT],
         *,
         audio_token_counts: list[int] | None = None,
         image_token_counts: list[int] | None = None,
@@ -758,7 +770,7 @@ class MingPreprocessor:
             )
             text_buffer.clear()
 
-        def append_text(text: Any) -> None:
+        def append_text(text: object) -> None:
             value = str(text)
             if not value:
                 return

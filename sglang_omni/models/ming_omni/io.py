@@ -4,25 +4,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict
 
 
 class PromptInputs(TypedDict):
     """Tokenized prompt inputs for the thinker."""
 
-    input_ids: Any
-    attention_mask: Any
+    input_ids: object
+    attention_mask: object
     prompt_text: str
-
-
-class PreprocessingData(TypedDict, total=False):
-    """Preprocessing outputs stored on StagePayload.data."""
-
-    raw_inputs: Any
-    prompt: PromptInputs
-    mm_inputs: dict[str, Any]
-    encoder_inputs: dict[str, dict[str, Any]]
-    stream_state: dict[str, Any]
 
 
 class ThinkerOutput(TypedDict, total=False):
@@ -31,7 +21,8 @@ class ThinkerOutput(TypedDict, total=False):
     output_ids: list[int]
     step: int
     is_final: bool
-    extra_model_outputs: dict[str, Any]
+    extra_model_outputs: dict[str, object]
+    finish_reason: str
 
 
 @dataclass
@@ -42,18 +33,18 @@ class MingOmniPipelineState:
     process boundaries.
     """
 
-    raw_inputs: Any | None = None
+    raw_inputs: object | None = None
     prompt: PromptInputs | None = None
-    mm_inputs: dict[str, Any] = field(default_factory=dict)
-    encoder_inputs: dict[str, dict[str, Any]] = field(default_factory=dict)
-    encoder_outs: dict[str, Any] = field(default_factory=dict)
-    thinker_inputs: dict[str, Any] = field(default_factory=dict)
+    mm_inputs: dict[str, object] = field(default_factory=dict)
+    encoder_inputs: dict[str, dict[str, object]] = field(default_factory=dict)
+    encoder_outs: dict[str, object] = field(default_factory=dict)
+    thinker_inputs: dict[str, object] = field(default_factory=dict)
     thinker_out: ThinkerOutput | None = None
-    engine_outputs: dict[str, Any] = field(default_factory=dict)
-    stream_state: dict[str, Any] = field(default_factory=dict)
+    engine_outputs: dict[str, object] = field(default_factory=dict)
+    stream_state: dict[str, object] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Any) -> "MingOmniPipelineState":
+    def from_dict(cls, data: object) -> "MingOmniPipelineState":
         if not isinstance(data, dict):
             data = {}
         else:
@@ -77,8 +68,8 @@ class MingOmniPipelineState:
             stream_state=stream_state if isinstance(stream_state, dict) else {},
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        data: dict[str, Any] = {}
+    def to_dict(self) -> dict[str, object]:
+        data: dict[str, object] = {}
         if self.raw_inputs is not None:
             data["raw_inputs"] = self.raw_inputs
         else:
@@ -134,5 +125,5 @@ class MingOmniEvent:
 
     type: MingOmniEventType
     modality: str
-    payload: dict[str, Any]
+    payload: dict[str, object]
     is_final: bool = False

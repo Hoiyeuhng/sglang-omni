@@ -7,8 +7,9 @@ import asyncio
 import base64
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, TypedDict, TypeGuard
 
 import torch
 import xxhash
@@ -39,7 +40,29 @@ from sglang_omni.preprocessing.resource_connector import (
 from sglang_omni.profiler.event_recorder import emit as _emit_event
 from sglang_omni.proto import StagePayload
 
+if TYPE_CHECKING:
+    from transformers import BatchFeature, PreTrainedTokenizerBase
+else:
+    pass
+
 logger = logging.getLogger(__name__)
+
+
+class VideoProcessorKwargs(TypedDict, total=False):
+    fps: float | list[float]
+    max_frames: int
+    min_pixels: int
+    max_pixels: int
+    total_pixels: int
+    use_audio_in_video: bool
+    seconds_per_chunk: float
+    position_id_per_seconds: float
+    device: str
+
+
+class ProcessorKwargs(TypedDict, total=False):
+    videos_kwargs: VideoProcessorKwargs
+
 
 _TRAIN_INPUT_TENSOR_NAMES = frozenset(
     {
@@ -116,7 +139,7 @@ def extra_special_tokens_compat(model_dir: str) -> dict[str, str]:
     }
 
 
-def contextualize_cache_key(base_key: str | None, **context: Any) -> str | None:
+def contextualize_cache_key(base_key: str | None, **context: object) -> str | None:
     if base_key is None:
         return None
     else:
@@ -177,7 +200,7 @@ def validate_prompt_seq_len(
         pass
 
 
-def is_pretokenized_prompt(inputs: Any) -> bool:
+def is_pretokenized_prompt(inputs: object) -> TypeGuard[list[int]]:
     """True when a rollout request carries pre-tokenized prompt ids.
 
     Miles RL rollout sends the exact prompt token ids it trains on, so those
@@ -204,7 +227,7 @@ class Qwen3OmniPreprocessor:
         video_min_pixels: int | None = None,
         video_max_pixels: int | None = None,
         video_total_pixels: int | None = None,
-    ):
+    ) -> None:
         self.model_path = model_path
         self.max_seq_len = max_seq_len
         self.default_video_fps = float(video_fps) if video_fps is not None else None
@@ -231,11 +254,13 @@ class Qwen3OmniPreprocessor:
             else {}
         )
         try:
-            self.processor = Qwen3OmniMoeProcessor.from_pretrained(
-                self.model_dir,
-                trust_remote_code=True,
-                local_files_only=True,
-                **compat_kwargs,
+            self.processor: Qwen3OmniMoeProcessor = (
+                Qwen3OmniMoeProcessor.from_pretrained(
+                    self.model_dir,
+                    trust_remote_code=True,
+                    local_files_only=True,
+                    **compat_kwargs,
+                )
             )
         except TypeError:
             if not compat_kwargs:
@@ -264,7 +289,7 @@ class Qwen3OmniPreprocessor:
                 local_files_only=False,
             )
             self.model_dir = str(resolve_model_path(model_path, local_files_only=False))
-        self.tokenizer = self.processor.tokenizer
+        self.tokenizer: "PreTrainedTokenizerBase" = self.processor.tokenizer
         ensure_chat_template(
             self.tokenizer,
             model_path=self.model_dir,
@@ -279,26 +304,26 @@ class Qwen3OmniPreprocessor:
 
     def build_multimodal_messages(
         self,
-        messages: list[dict[str, Any]],
+        messages: Sequence[Mapping[str, object]],
         *,
         num_images: int,
         num_audios: int,
         num_videos: int,
-    ) -> list[dict[str, Any]]:
+    ) -> Sequence[Mapping[str, object]]:
         """Convert simple messages to HF's structured multimodal format."""
         if num_images == 0 and num_audios == 0 and num_videos == 0:
             return messages
         else:
             pass
 
-        result: list[dict[str, Any]] = []
+        result: list[Mapping[str, object]] = []
         for i, msg in enumerate(messages):
             role = msg.get("role", "user")
             content = msg.get("content", "")
 
             # Only inject placeholders into the last user message
             if i == len(messages) - 1 and role == "user":
-                content_parts: list[dict[str, Any]] = []
+                content_parts: list[dict[str, object]] = []
                 # Placeholders come BEFORE text (Qwen3-Omni format)
                 for _ in range(num_images):
                     content_parts.append({"type": "image"})
@@ -336,8 +361,8 @@ class Qwen3OmniPreprocessor:
         input_ids: "torch.Tensor",
         attention_mask: "torch.Tensor",
         prompt_text: str,
-        full_mm_inputs: dict[str, Any],
-        encoder_inputs: dict[str, dict[str, Any]],
+        full_mm_inputs: Mapping[str, Mapping[str, object]],
+        encoder_inputs: dict[str, dict[str, object]],
     ) -> StagePayload:
         """Assemble the thinker-ready pipeline state (single source of shape)."""
         state = Qwen3OmniPipelineState(
@@ -362,7 +387,7 @@ class Qwen3OmniPreprocessor:
         self,
         payload: StagePayload,
         token_ids: list[int],
-        bundle: dict[str, Any] | None = None,
+        bundle: Mapping[str, object] | None = None,
     ) -> StagePayload:
         """Use Miles' exact token ids and optional processor tensors."""
         flat_inputs: dict[str, torch.Tensor] = {}
@@ -409,12 +434,12 @@ class Qwen3OmniPreprocessor:
             request_id=payload.request_id,
         )
 
-        full_mm_inputs: dict[str, Any] = {
+        full_mm_inputs: dict[str, dict[str, torch.Tensor | None]] = {
             "image": build_image_mm_inputs(flat_inputs),
             "audio": build_audio_mm_inputs(flat_inputs),
             "video": build_video_mm_inputs(flat_inputs),
         }
-        image_encoder_inputs = {
+        image_encoder_inputs: dict[str, torch.Tensor | str | None] = {
             name: value
             for name, value in {
                 **full_mm_inputs["image"],
@@ -422,7 +447,7 @@ class Qwen3OmniPreprocessor:
             }.items()
             if value is not None
         }
-        audio_encoder_inputs = {
+        audio_encoder_inputs: dict[str, torch.Tensor | str | None] = {
             name: value
             for name, value in full_mm_inputs["audio"].items()
             if value is not None
@@ -441,8 +466,7 @@ class Qwen3OmniPreprocessor:
             pass
         if audio_encoder_inputs and not has_audio_payload:
             raise ValueError(
-                "multimodal_train_inputs provides audio metadata "
-                "without input_features"
+                "multimodal_train_inputs provides audio metadata without input_features"
             )
         else:
             pass
@@ -661,7 +685,7 @@ class Qwen3OmniPreprocessor:
             tokenize=False,
         )
 
-        videos_kwargs: dict[str, Any] = {}
+        videos_kwargs: VideoProcessorKwargs = {}
         if sampled_video_fps is not None:
             videos_kwargs["fps"] = (
                 sampled_video_fps[0]
@@ -707,13 +731,13 @@ class Qwen3OmniPreprocessor:
             videos_kwargs.setdefault("device", "cpu")
         else:
             pass
-        processor_kwargs: dict[str, Any] = {}
+        processor_kwargs: ProcessorKwargs = {}
         if videos_kwargs:
             processor_kwargs["videos_kwargs"] = videos_kwargs
         else:
             pass
 
-        hf_inputs = self.processor(
+        hf_inputs: "BatchFeature" = self.processor(
             text=prompt_text,
             images=images or None,
             videos=videos or None,
@@ -739,7 +763,7 @@ class Qwen3OmniPreprocessor:
             request_id=payload.request_id,
         )
 
-        full_mm_inputs: dict[str, Any] = {
+        full_mm_inputs: dict[str, dict[str, object]] = {
             "image": build_image_mm_inputs(hf_inputs),
             "audio": build_audio_mm_inputs(hf_inputs),
             "video": build_video_mm_inputs(hf_inputs),
@@ -801,7 +825,7 @@ class Qwen3OmniPreprocessor:
         else:
             pass
 
-        encoder_inputs: dict[str, dict[str, Any]] = {}
+        encoder_inputs: dict[str, dict[str, object]] = {}
         image_encoder_inputs = {
             k: v for k, v in image_encoder_inputs.items() if v is not None
         }

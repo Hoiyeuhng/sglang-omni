@@ -505,7 +505,7 @@ class Qwen3OmniMoeTalkerTextModel(nn.Module):
             self.layers[idx].self_attn.use_fused_qk_norm_rope = False
             self.layers[idx].self_attn.compatible_with_fused_qk_norm_rope = False
 
-    def get_input_embeddings(self):
+    def get_input_embeddings(self) -> nn.Embedding:
         return self.codec_embedding
 
     def forward(
@@ -1016,7 +1016,7 @@ class Qwen3OmniTalker(nn.Module):
         self.sampling_staging_event = (
             torch.get_device_module().Event() if device.type != "cpu" else None
         )
-        self.decode_prep_rids: list | None = None
+        self.decode_prep_rids: list[str] | None = None
         self.decode_prep_out_lens: list[int] = []
         self.decode_prep_rep_rows: torch.Tensor | None = None
         self.output_codes = torch.zeros(
@@ -1045,7 +1045,7 @@ class Qwen3OmniTalker(nn.Module):
         self.cached_params_dict = dict(self.named_parameters())
         self.sampler = None
 
-    def get_input_embeddings(self):
+    def get_input_embeddings(self) -> nn.Embedding:
         return self.model.get_input_embeddings()
 
     @property

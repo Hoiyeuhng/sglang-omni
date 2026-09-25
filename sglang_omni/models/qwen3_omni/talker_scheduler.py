@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from typing import Any
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from sglang_omni.models.qwen3_omni.config import (
     ENABLE_TALKER_START_TOPOLOGY,
@@ -15,12 +15,32 @@ from sglang_omni.models.qwen3_omni.config import (
 from sglang_omni.scheduling.omni_scheduler import OmniScheduler
 from sglang_omni.vendor.sglang.server_args import override_server_args
 
+if TYPE_CHECKING:
+    from sglang.srt.managers.schedule_batch import ScheduleBatch
+    from sglang.srt.server_args import ServerArgs
+
+    from sglang_omni.scheduling.sglang_backend.request_data import SGLangARRequestData
+else:
+    pass
+
 logger = logging.getLogger(__name__)
+
+ChunkT = TypeVar("ChunkT")
+
 _CHUNK_WAIT_LOG_INTERVAL_S = 10.0
 
 
+class DecodeMode(Protocol):
+    def is_decode(self) -> object: ...
+
+
+class DecodeBatch(Protocol):
+    @property
+    def forward_mode(self) -> DecodeMode: ...
+
+
 def configure_talker_server_args(
-    server_args: Any, *, feedback_enabled: bool = True
+    server_args: "ServerArgs", *, feedback_enabled: bool = True
 ) -> bool:
     """Apply talker-specific scheduler/runtime defaults.
 
@@ -40,7 +60,7 @@ def configure_talker_server_args(
     return want_cuda_graph
 
 
-class QwenTalkerScheduler(OmniScheduler):
+class QwenTalkerScheduler(OmniScheduler["SGLangARRequestData"]):
     """Talker scheduler with Qwen-specific request and decode readiness."""
 
     talker_start_topology: bool = ENABLE_TALKER_START_TOPOLOGY
@@ -49,12 +69,12 @@ class QwenTalkerScheduler(OmniScheduler):
 
     def __init__(
         self,
-        *args: Any,
+        *args: object,
         enable_partial_start: bool = False,
         partial_start_min_chunks: int = MIN_PARTIAL_START_CHUNKS,
         im_end_token_id: int | None = None,
         enable_talker_start_topology: bool | None = None,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
         if partial_start_min_chunks < MIN_PARTIAL_START_CHUNKS:
@@ -82,7 +102,7 @@ class QwenTalkerScheduler(OmniScheduler):
         else:
             pass
 
-    def count_usable_prefetched_chunks(self, prefetched: list[Any]) -> int:
+    def count_usable_prefetched_chunks(self, prefetched: list[ChunkT]) -> int:
         im_end = self.im_end_token_id
         if im_end is None or not prefetched:
             return len(prefetched)
@@ -97,7 +117,7 @@ class QwenTalkerScheduler(OmniScheduler):
         return len(prefetched)
 
     def is_request_build_ready(
-        self, payload: Any, *, pending_stream_done: bool
+        self, payload: object, *, pending_stream_done: bool
     ) -> bool:
         if pending_stream_done:
             return True
@@ -115,17 +135,19 @@ class QwenTalkerScheduler(OmniScheduler):
             pass
         return usable >= self.partial_start_min_chunks
 
-    def initialize_request_stream_state(self, req_data: Any, payload: Any) -> None:
+    def initialize_request_stream_state(
+        self, req_data: object, payload: object
+    ) -> None:
         del req_data, payload
         return None
 
     def should_recheck_deferred_request_on_stream_chunk(
-        self, request_id: str, chunk: Any
+        self, request_id: str, chunk: object
     ) -> bool:
         del request_id, chunk
         return self.enable_partial_start
 
-    def is_batch_ready_to_run(self, batch: Any) -> bool:
+    def is_batch_ready_to_run(self, batch: DecodeBatch | None) -> bool:
         if (
             batch is not None
             and batch.forward_mode.is_decode()
@@ -139,7 +161,7 @@ class QwenTalkerScheduler(OmniScheduler):
             pass
         return True
 
-    def note_chunk_wait(self, batch: Any) -> None:
+    def note_chunk_wait(self, batch: object) -> None:
         self.chunk_wait_steps += 1
         logger.debug("Deferring decode batch until talker feedback/text input is ready")
         now = time.monotonic()
@@ -154,7 +176,7 @@ class QwenTalkerScheduler(OmniScheduler):
             len(getattr(batch, "reqs", ()) or ()),
         )
 
-    def get_next_batch_to_run(self) -> Any | None:
+    def get_next_batch_to_run(self) -> ScheduleBatch | None:
         batch = super().get_next_batch_to_run()
         if batch is not None and (not self.is_batch_ready_to_run(batch)):
             self.rollback_decode_prep_after_skip(batch)
@@ -163,7 +185,7 @@ class QwenTalkerScheduler(OmniScheduler):
             pass
         return batch
 
-    def rollback_decode_prep_after_skip(self, batch: Any) -> None:
+    def rollback_decode_prep_after_skip(self, batch: "ScheduleBatch") -> None:
         if not batch.forward_mode.is_decode():
             return
         else:
@@ -194,7 +216,9 @@ class QwenTalkerScheduler(OmniScheduler):
         super().self_check_during_idle()
 
     @staticmethod
-    def append_stream_chunk_default(req_data: Any, chunk: Any) -> None:
+    def append_stream_chunk_default(
+        req_data: "SGLangARRequestData", chunk: object
+    ) -> None:
         pending_text_queue = getattr(req_data, "pending_text_queue", None)
         if pending_text_queue is None:
             pending_text_queue = deque()
@@ -203,7 +227,7 @@ class QwenTalkerScheduler(OmniScheduler):
             pass
         pending_text_queue.append(getattr(chunk, "data", chunk))
 
-    def mark_stream_done(self, req_data: Any) -> None:
+    def mark_stream_done(self, req_data: "SGLangARRequestData") -> None:
         if self.stream_done_handler is None:
             req_data.thinker_chunks_done = True
             return

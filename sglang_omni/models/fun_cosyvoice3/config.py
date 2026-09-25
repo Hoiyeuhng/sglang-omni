@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from pydantic import Field
 
@@ -187,7 +187,7 @@ class FunCosyVoice3PipelineConfig(PipelineConfig):
         ),
     ]
 
-    def model_post_init(self, __context: Any = None) -> None:
+    def model_post_init(self, __context: object = None) -> None:
         # TODO (chenyang): Indeed, TRT and Torch compile conflicts are pretty
         # common in this repo, so we should make this into config level, not in each model.
         super().model_post_init(__context)
@@ -198,7 +198,7 @@ class FunCosyVoice3PipelineConfig(PipelineConfig):
             enable_flow_estimator_trt=bool(extras.get("enable_flow_estimator_trt")),
         )
 
-    def stage_factory_kwargs(self, stage_name: str) -> dict[str, Any]:
+    def stage_factory_kwargs(self, stage_name: str) -> dict[str, str]:
         if stage_name != "vocoder":
             return {}
         else:
@@ -213,7 +213,7 @@ class FunCosyVoice3PipelineConfig(PipelineConfig):
         # Note (yexiaodong): The converted artifact contains the speech-token
         # LLM, Flow, and HiFT weights, so reuse it unless the vocoder overrides it.
         engine_factory = self.stage_named("tts_engine").factory
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, str] = {}
         if engine_factory.mlx_model_path is not None:
             kwargs["mlx_model_path"] = engine_factory.mlx_model_path
         else:

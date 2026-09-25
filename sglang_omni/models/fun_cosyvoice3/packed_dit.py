@@ -8,7 +8,6 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -299,7 +298,7 @@ def rotate_in_place(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> No
 
 
 def solve_flow_euler_packed(
-    estimator: Any,
+    estimator: PackedDiT,
     noise: torch.Tensor,
     time_span: torch.Tensor,
     mu: torch.Tensor,

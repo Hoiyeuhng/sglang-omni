@@ -7,8 +7,8 @@ import functools
 import logging
 import os
 import threading
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -31,13 +31,21 @@ from sglang_omni.models.qwen3_tts.streaming_vocoder import (
     Qwen3TTSStreamingVocoderScheduler,
 )
 from sglang_omni.platforms import current_platform
-from sglang_omni.scheduling.simple_scheduler import SimpleScheduler
 from sglang_omni.scheduling.threaded_simple_scheduler import ThreadedSimpleScheduler
 from sglang_omni.utils.checkpoint import resolve_checkpoint as _resolve_checkpoint
+from sglang_omni.utils.json import JsonValue
+
+if TYPE_CHECKING:
+    from qwen_tts import Qwen3TTSTokenizer
+
+    from sglang_omni.models.qwen3_tts.request_builders import Qwen3TTSSGLangRequestData
+    from sglang_omni.scheduling.omni_scheduler import OmniScheduler
+else:
+    pass
 
 logger = logging.getLogger(__name__)
 
-_SPEECH_TOKENIZERS: dict[tuple[str, str, str, str | None], Any] = {}
+_SPEECH_TOKENIZERS: dict[tuple[str, str, str, str | None], "Qwen3TTSTokenizer"] = {}
 _SPEECH_TOKENIZERS_LOCK = threading.Lock()
 
 _QWEN_TTS_INSTALL_HINT = (
@@ -80,7 +88,7 @@ def load_qwen3_tts_tokenizer(
     device: str,
     dtype: str,
     attn_implementation: str | None,
-):
+) -> "Qwen3TTSTokenizer":
     apply_qwen_tts_transformers_compatibility_patches()
     try:
         from qwen_tts import Qwen3TTSTokenizer
@@ -105,7 +113,7 @@ def load_qwen3_tts_tokenizer(
             return tokenizer
         else:
             pass
-        kwargs: dict[str, Any] = {
+        kwargs: dict[str, str | torch.dtype] = {
             "device_map": device,
             "dtype": torch_dtype,
         }
@@ -155,7 +163,7 @@ def register_qwen3_tts_hf_config() -> None:
         pass
 
 
-def load_qwen3_tts_generate_defaults(checkpoint_dir: str) -> dict[str, Any]:
+def load_qwen3_tts_generate_defaults(checkpoint_dir: str) -> dict[str, JsonValue]:
     import json
 
     path = os.path.join(checkpoint_dir, "generation_config.json")
@@ -262,11 +270,11 @@ def create_sglang_tts_engine_executor(
     attn_implementation: str | None = None,
     prefill_coalesce_requests: int = 0,
     prefill_coalesce_wait_ms: float = 60.0,
-    server_args_overrides: dict[str, Any] | None = None,
+    server_args_overrides: Mapping[str, object] | None = None,
     reference_encoder_cuda_graph_bucket_frames: Sequence[int] = (
         DEFAULT_QWEN3_TTS_REFERENCE_ENCODER_BUCKET_FRAMES
     ),
-) -> Any:
+) -> OmniScheduler[Qwen3TTSSGLangRequestData]:
     from sglang_omni.models.qwen3_tts.engine_builder import Qwen3TtsEngineBuilder
 
     return Qwen3TtsEngineBuilder(
@@ -321,7 +329,7 @@ def create_vocoder_executor(
     incremental_codec_cuda_graph_min_free_gb: float = 3.0,
     suppress_bootstrap_silence: bool = True,
     suppress_bootstrap_max_streams: int = 24,
-) -> SimpleScheduler:
+) -> Qwen3TTSStreamingVocoderScheduler:
     from sglang_omni.utils.device import resolve_concrete_device
 
     device = str(resolve_concrete_device(device, gpu_id))

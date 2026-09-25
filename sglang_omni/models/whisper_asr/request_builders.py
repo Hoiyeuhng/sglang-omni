@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 import torch
 from sglang.srt.managers.schedule_batch import (
@@ -25,6 +25,15 @@ from sglang_omni.models.whisper_asr.timestamp_logit_processor import (
 from sglang_omni.preprocessing.transcription import prepare_audio
 from sglang_omni.proto import StagePayload
 from sglang_omni.scheduling.sglang_backend import SGLangARRequestData
+
+if TYPE_CHECKING:
+    from transformers import WhisperProcessor, WhisperTokenizer
+
+    from sglang_omni.models.whisper_asr.encoder_service import (
+        WhisperPreLMEncoderService,
+    )
+else:
+    pass
 
 _WHISPER_SAMPLE_RATE = 16000
 
@@ -62,7 +71,10 @@ _TIMESTAMP_STEP_S = 0.02
 
 
 def render_timestamped_text(
-    tokenizer: Any, output_ids: list[int], *, timestamp_begin_id: int
+    tokenizer: "WhisperTokenizer",
+    output_ids: list[int],
+    *,
+    timestamp_begin_id: int,
 ) -> str:
     parts: list[str] = []
     text_ids: list[int] = []
@@ -84,7 +96,7 @@ def render_timestamped_text(
     return "".join(parts).strip()
 
 
-def resolve_language(value: Any) -> str:
+def resolve_language(value: object) -> str:
     if value is None:
         return "english"
     else:
@@ -107,7 +119,7 @@ def build_logit_bias(generation_config: GenerationConfig) -> dict[str, float] | 
 
 
 def build_prefix_tokens(
-    tokenizer: Any,
+    tokenizer: "WhisperTokenizer",
     *,
     language: str,
     task: str,
@@ -142,7 +154,7 @@ def decoder_token_budgets(
 
 
 def build_prev_context_tokens(
-    tokenizer: Any, prompt: Any, *, max_prev_tokens: int
+    tokenizer: "WhisperTokenizer", prompt: object, *, max_prev_tokens: int
 ) -> list[int]:
     """Map the OpenAI ``prompt`` field to Whisper prev-context tokens."""
     if max_prev_tokens < 2 or prompt is None:
@@ -162,15 +174,16 @@ def build_prev_context_tokens(
 
 def make_whisper_scheduler_adapters(
     *,
-    processor: Any,
-    tokenizer: Any,
+    processor: "WhisperProcessor",
+    tokenizer: "WhisperTokenizer",
     generation_config: GenerationConfig,
     encoder_token_count: int,
     max_new_tokens: int,
     decoder_context_len: int | None = None,
-    audio_encoder_service: Any | None = None,
+    audio_encoder_service: "WhisperPreLMEncoderService | None" = None,
 ) -> tuple[
-    Callable[[StagePayload], WhisperASRRequestData], Callable[[Any], StagePayload]
+    Callable[[StagePayload], WhisperASRRequestData],
+    Callable[[WhisperASRRequestData], StagePayload],
 ]:
     logit_bias = build_logit_bias(generation_config)
     # note (Dayuxiaoshui): set_prefix_tokens mutates shared tokenizer state

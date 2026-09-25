@@ -5,7 +5,8 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable, Mapping
+from typing import Generic, TypedDict, TypeVar
 
 import torch
 import torch.distributed as dist
@@ -15,6 +16,26 @@ from .base import CreditAllocator, Relay, RelayOperation, register_relay
 logger = logging.getLogger(__name__)
 
 NIXL_AVAILABLE = dist.is_available()
+
+NcclMetadataT = TypeVar("NcclMetadataT")
+
+
+class NcclAgentMetadata(TypedDict):
+    rank: int
+    engine_id: str
+
+
+class NcclTransferInfo(TypedDict):
+    size: int
+    device_id: int
+    shape: list[int]
+    dtype: str
+
+
+class NcclPutMetadata(TypedDict):
+    engine_id: str
+    agent_meta: NcclAgentMetadata
+    transfer_info: NcclTransferInfo
 
 
 class Connection:
@@ -27,9 +48,9 @@ class Connection:
         engine_id: str,
         rank: int,
         world_size: int,
-        send_ranks: List[int],
-        recv_ranks: List[int],
-    ):
+        send_ranks: list[int],
+        recv_ranks: list[int],
+    ) -> None:
         self.name = engine_id
         self.rank = rank
         self.world_size = world_size
@@ -70,10 +91,14 @@ class Connection:
             f"[{engine_id}] Connection initialized. Rank: {rank}, Send->{send_ranks}, Recv<-{recv_ranks}"
         )
 
-    def get_agent_metadata(self) -> Dict:
+    def get_agent_metadata(self) -> NcclAgentMetadata:
         return {"rank": self.rank, "engine_id": self.name}
 
-    def ensure_remote_agent(self, remote_engine_id: str, remote_meta_bytes: Any) -> int:
+    def ensure_remote_agent(
+        self,
+        remote_engine_id: str,
+        remote_meta_bytes: NcclAgentMetadata,
+    ) -> int:
         target_rank = remote_meta_bytes.get("rank", 0)
         if target_rank not in self.recv_ranks:
             logger.warning(
@@ -84,14 +109,18 @@ class Connection:
         return target_rank
 
 
-class NcclOperation(RelayOperation):
+class NcclOperation(RelayOperation, Generic[NcclMetadataT]):
     """
     Base class for NCCL async operations.
     """
 
     def __init__(
-        self, connection: Connection, work_handle, tensor_ref: Any, metadata: Any = None
-    ):
+        self,
+        connection: Connection,
+        work_handle: dist.Work | None,
+        tensor_ref: object,
+        metadata: NcclMetadataT | None = None,
+    ) -> None:
         self.conn = connection
         self.work = work_handle
         self.tensor_ref = tensor_ref
@@ -99,23 +128,23 @@ class NcclOperation(RelayOperation):
         self.completed = False
 
     @property
-    def metadata(self) -> Any:
+    def metadata(self) -> NcclMetadataT | None:
         return (
             self._metadata
         )  # noqa: leading-underscore  # upstream spelling, or the public name is already taken
 
 
-class PutOperation(NcclOperation):
+class PutOperation(NcclOperation[NcclMetadataT]):
     """Handle for a Put operation (NCCL isend)."""
 
     def __init__(
         self,
         connection: Connection,
-        work_handle,
+        work_handle: dist.Work | None,
         tensor_ref: torch.Tensor,
-        metadata: Any,
-        on_completion_cb: Callable[[], None] = None,
-    ):
+        metadata: NcclMetadataT,
+        on_completion_cb: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(connection, work_handle, tensor_ref, metadata)
         self.on_completion_cb = on_completion_cb
 
@@ -144,7 +173,7 @@ class PutOperation(NcclOperation):
                 pass
 
 
-class GetOperation(NcclOperation):
+class GetOperation(NcclOperation[None]):
     """
     Handle for a Get operation (NCCL irecv).
     """
@@ -152,9 +181,9 @@ class GetOperation(NcclOperation):
     def __init__(
         self,
         connection: Connection,
-        work_handle,
+        work_handle: dist.Work | None,
         dest_tensor: torch.Tensor,
-    ):
+    ) -> None:
         super().__init__(connection, work_handle, dest_tensor, metadata=None)
 
     async def wait_for_completion(self, timeout: float = 30.0) -> None:
@@ -182,14 +211,14 @@ class NcclRelay(Relay):
     def __init__(
         self,
         engine_id: str,
-        send_to_ranks: List[int],
-        recv_from_ranks: List[int],
+        send_to_ranks: list[int],
+        recv_from_ranks: list[int],
         slot_size_mb: int = 64,
         credits: int = 2,
         device: str = "cuda",
-        rank: int = None,
+        rank: int | None = None,
         world_size: int = 2,
-    ):
+    ) -> None:
         self.engine_id = engine_id
         self.device = device
 
@@ -266,7 +295,7 @@ class NcclRelay(Relay):
         request_id: str | None = None,
         dst_rank: int | None = None,
         receiver_id: str | None = None,
-    ) -> PutOperation:
+    ) -> PutOperation[NcclPutMetadata]:
         if dst_rank is None:
             if len(self.connection.send_ranks) == 1:
                 dst_rank = self.connection.send_ranks[0]
@@ -290,7 +319,7 @@ class NcclRelay(Relay):
             tensor=tensor, dst=dst_rank, group=self.connection.group
         )
 
-        payload = {
+        payload: NcclPutMetadata = {
             "engine_id": self.engine_id,
             "agent_meta": self.connection.get_agent_metadata(),
             "transfer_info": {
@@ -311,10 +340,10 @@ class NcclRelay(Relay):
 
     async def get_async(
         self,
-        metadata: Any,
+        metadata: Mapping[str, object],
         dest_tensor: torch.Tensor,
-        request_id: str = None,
-        src_rank: int = None,
+        request_id: str | None = None,
+        src_rank: int | None = None,
     ) -> GetOperation:
         """Asynchronously get tensor via NCCL Zero-Copy."""
         remote_engine_id = metadata["engine_id"]
@@ -335,10 +364,10 @@ class NcclRelay(Relay):
             dest_tensor=dest_tensor,
         )
 
-    def cleanup(self, request_id: str):
+    def cleanup(self, request_id: str) -> None:
         pass
 
-    def close(self):
+    def close(self) -> None:
         if dist.is_initialized():
             dist.destroy_process_group()
         else:

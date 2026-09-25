@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict
-from typing import Any, Iterable, Optional, Tuple
+from typing import TYPE_CHECKING
 
 import torch
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
@@ -16,7 +17,10 @@ from torch import nn
 from sglang_omni.models.voxtral_tts.acoustic_transformer import (
     FlowMatchingAudioTransformer,
 )
-from sglang_omni.models.voxtral_tts.model_config import VoxtralModelConfig
+from sglang_omni.models.voxtral_tts.model_config import (
+    VoxtralModelConfig,
+    VoxtralTextConfig,
+)
 from sglang_omni.models.voxtral_tts.voxtral_tts_audio_generation import (
     MultiVocabEmbeddings,
     interleave_qk_weight,
@@ -32,9 +36,15 @@ from sglang_omni.vendor.sglang.layers import (
     get_rope,
 )
 
+if TYPE_CHECKING:
+    from sglang.srt.layers.quantization.base_config import QuantizationConfig
+    from transformers import PretrainedConfig
+else:
+    pass
+
 
 class VoxtralSGLangAttention(nn.Module):
-    def __init__(self, cfg: Any, layer_id: int, prefix: str = "") -> None:
+    def __init__(self, cfg: VoxtralTextConfig, layer_id: int, prefix: str = "") -> None:
         super().__init__()
         self.num_heads = cfg.n_heads
         self.num_kv_heads = cfg.n_kv_heads
@@ -86,7 +96,7 @@ class VoxtralSGLangAttention(nn.Module):
 
 
 class VoxtralSGLangDecoderLayer(nn.Module):
-    def __init__(self, cfg: Any, layer_id: int, prefix: str = "") -> None:
+    def __init__(self, cfg: VoxtralTextConfig, layer_id: int, prefix: str = "") -> None:
         super().__init__()
         self.self_attn = VoxtralSGLangAttention(
             cfg,
@@ -113,7 +123,7 @@ class VoxtralSGLangDecoderLayer(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         forward_batch: ForwardBatch,
-        residual: Optional[torch.Tensor],
+        residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if residual is None:
             residual = hidden_states
@@ -130,7 +140,7 @@ class VoxtralSGLangDecoderLayer(nn.Module):
 
 
 class VoxtralSGLangTextModel(nn.Module):
-    def __init__(self, cfg: Any) -> None:
+    def __init__(self, cfg: VoxtralTextConfig) -> None:
         super().__init__()
         self.embed_tokens = VocabParallelEmbedding(cfg.vocab_size, cfg.dim)
         self.layers = nn.ModuleList(
@@ -172,7 +182,13 @@ class VoxtralSGLangTextModel(nn.Module):
 class VoxtralSGLangTTSModel(nn.Module):
     """Voxtral TTS model with SGLang-managed text KV cache."""
 
-    def __init__(self, config: Any, quant_config: Any = None, prefix: str = "") -> None:
+    def __init__(
+        self,
+        config: "PretrainedConfig",
+        quant_config: "QuantizationConfig | None" = None,
+        prefix: str = "",
+    ) -> None:
+        # note (SunskyXH): SGLang requires these arguments; Voxtral uses params.json.
         del config, quant_config, prefix
         super().__init__()
         self.model_path = get_model().model_path
@@ -242,7 +258,7 @@ class VoxtralSGLangTTSModel(nn.Module):
             pass
         return torch.cumsum(extend_seq_lens.to(device=device), dim=0) - 1
 
-    def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]) -> None:
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> None:
         params = dict(self.named_parameters())
         for name, loaded_weight in weights:
             if self.load_text_weight(name, loaded_weight, params):
