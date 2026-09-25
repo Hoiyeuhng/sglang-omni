@@ -6,6 +6,7 @@ import asyncio
 import copy
 import logging
 import math
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
@@ -79,7 +80,7 @@ class SessionRuntime:
         self.end_event_id: str | None = None
         self.command_lock = asyncio.Lock()
         self.input_ready = asyncio.Event()
-        self.activity = asyncio.Event()
+        self.last_activity_s = time.monotonic()
         self.is_admitting = False
         self.is_unit_in_flight = False
         self.output_buffer = OutputBuffer(limits)
@@ -172,7 +173,7 @@ class SessionRuntime:
                 else:
                     pass
                 self.state = "OPEN"
-                self.activity.set()
+                self.last_activity_s = time.monotonic()
                 self.pump_task = asyncio.create_task(self.pump())
             else:
                 pass
@@ -232,7 +233,7 @@ class SessionRuntime:
                     event_id,
                 )
             )
-            self.activity.set()
+            self.last_activity_s = time.monotonic()
             self.input_ready.set()
 
     async def clear(self, event_id: str) -> None:
@@ -245,7 +246,7 @@ class SessionRuntime:
             self.notify(
                 Cleared(self.capabilities.input_duration_ms(cleared_samples), event_id)
             )
-            self.activity.set()
+            self.last_activity_s = time.monotonic()
 
     async def end(self, event_id: str) -> None:
         async with self.command_lock:
@@ -269,7 +270,7 @@ class SessionRuntime:
                     event_id,
                 )
             )
-            self.activity.set()
+            self.last_activity_s = time.monotonic()
             self.input_ready.set()
 
     def cut_next_unit(self) -> Unit:
@@ -320,7 +321,7 @@ class SessionRuntime:
                 self.processing_unit.set(unit)
                 consumption = await self.adapter.process(unit)
                 self.is_unit_in_flight = False
-                self.activity.set()
+                self.last_activity_s = time.monotonic()
                 if isinstance(consumption, tuple):
                     consumed_samples, discarded_samples = consumption
                 else:
@@ -373,28 +374,26 @@ class SessionRuntime:
             self.fail(str(exc))
 
     async def watch_activity(self) -> None:
+        # Note (Haiyang Luo): a peer can keep answering WebSocket pings while its
+        # application is gone; without this it holds a session and a pipeline slot.
         while self.state in ("CREATED", "OPEN"):
-            self.activity.clear()
-            timeout_s = (
-                self.limits.admission_timeout_s
-                if self.state == "CREATED"
-                else self.limits.idle_input_timeout_s
-            )
-            try:
-                await asyncio.wait_for(self.activity.wait(), timeout_s)
-            except asyncio.TimeoutError:
-                # Note (Haiyang Luo): a peer can keep answering WebSocket pings while its
-                # application is gone; without this it holds a session and a pipeline slot.
-                if self.state == "CREATED" and not self.is_admitting:
-                    self.fail(
-                        f"no session.update within {timeout_s}s", "admission_timeout"
-                    )
-                    return
-                elif self.state == "OPEN" and not self.is_unit_in_flight:
-                    self.fail(f"no client input within {timeout_s}s", "idle_timeout")
-                    return
-                else:
-                    pass
+            if self.state == "CREATED":
+                timeout_s = self.limits.admission_timeout_s
+                is_busy = self.is_admitting
+            else:
+                timeout_s = self.limits.idle_input_timeout_s
+                is_busy = self.is_unit_in_flight
+            remaining_s = self.last_activity_s + timeout_s - time.monotonic()
+            if is_busy:
+                await asyncio.sleep(timeout_s)
+            elif remaining_s > 0:
+                await asyncio.sleep(remaining_s)
+            elif self.state == "CREATED":
+                self.fail(f"no session.update within {timeout_s}s", "admission_timeout")
+                return
+            else:
+                self.fail(f"no client input within {timeout_s}s", "idle_timeout")
+                return
 
     def fail(
         self, message: str, code: str = "internal", event_id: str | None = None

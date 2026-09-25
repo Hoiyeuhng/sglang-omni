@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -212,3 +213,20 @@ async def test_unit_in_flight_is_not_idle_and_idle_resumes_after_it() -> None:
     adapter.release.set()
     envelopes = await asyncio.wait_for(receive_until(runtime, Closed), 5)
     assert closing_failure(envelopes) == ("idle_timeout", "idle_timeout")
+
+
+@pytest.mark.asyncio
+async def test_unit_completing_as_idle_deadline_expires_keeps_session_open() -> None:
+    adapter = GatedAdapter([])
+    runtime = await open_runtime(adapter, ACTIVITY_LIMITS)
+    runtime.start()
+    await runtime.append(b"\1" * UNIT_BYTES, 0, None, "client_append_0")
+    await adapter.has_started.wait()
+
+    adapter.release.set()
+    # A blocked loop makes the unit completion and the expired deadline resume together.
+    time.sleep(ACTIVITY_TIMEOUT_S * 1.5)
+    await asyncio.sleep(ACTIVITY_TIMEOUT_S / 4)
+
+    assert runtime.state == "OPEN"
+    await runtime.close("client_closed")
