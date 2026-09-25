@@ -230,3 +230,24 @@ async def test_unit_completing_as_idle_deadline_expires_keeps_session_open() -> 
 
     assert runtime.state == "OPEN"
     await runtime.close("client_closed")
+
+
+@pytest.mark.asyncio
+async def test_idle_timeout_shorter_than_admission_is_honored_after_open() -> None:
+    limits = RuntimeLimits(
+        admission_timeout_s=ACTIVITY_TIMEOUT_S * 4,
+        idle_input_timeout_s=ACTIVITY_TIMEOUT_S / 4,
+    )
+    runtime = SessionRuntime(
+        MODEL_NAME, Capabilities(), lambda: GatedAdapter([]), limits
+    )
+    runtime.start()
+    # The client takes a moment to configure, so the watchdog is already waiting in CREATED.
+    await asyncio.sleep(ACTIVITY_TIMEOUT_S / 8)
+    await runtime.update({}, "client_update")
+    opened_s = time.monotonic()
+
+    envelopes = await asyncio.wait_for(receive_until(runtime, Closed), 5)
+
+    assert closing_failure(envelopes) == ("idle_timeout", "idle_timeout")
+    assert time.monotonic() - opened_s < ACTIVITY_TIMEOUT_S
