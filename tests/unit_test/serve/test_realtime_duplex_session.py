@@ -566,6 +566,34 @@ def test_adapter_cleanup_failure_replaces_closed_with_fatal_error() -> None:
     assert error["sglang"]["fatal"] is True
 
 
+@pytest.mark.parametrize(
+    ("is_updating", "timeout_code"),
+    [(False, "admission_timeout"), (True, "idle_timeout")],
+)
+def test_silent_client_is_closed_by_activity_timeout(
+    is_updating: bool, timeout_code: str
+) -> None:
+    adapter = ScriptedAdapter()
+    limits = RuntimeLimits(admission_timeout_s=0.1, idle_input_timeout_s=0.1)
+    client = build_test_client(adapter, limits=limits, max_connections=1)
+    with client.websocket_connect("/v1/realtime") as websocket:
+        if is_updating:
+            open_session(websocket)
+        else:
+            assert websocket.receive_json()["type"] == "session.created"
+        events = receive_until(websocket, "session.closed")
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+    error = events_of_type(events, "error")[0]
+    assert error["error"]["code"] == timeout_code
+    assert error["sglang"]["fatal"] is True
+    assert events[-1]["reason"] == timeout_code
+    assert adapter.is_closed is is_updating
+    with client.websocket_connect("/v1/realtime") as websocket:
+        assert websocket.receive_json()["type"] == "session.created"
+
+
 def test_capabilities_endpoint_reports_deployment_grant() -> None:
     limits = RuntimeLimits(max_output_events=8)
     response = build_test_client(ScriptedAdapter(), limits=limits).get(

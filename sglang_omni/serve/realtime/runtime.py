@@ -79,8 +79,12 @@ class SessionRuntime:
         self.end_event_id: str | None = None
         self.command_lock = asyncio.Lock()
         self.input_ready = asyncio.Event()
+        self.activity = asyncio.Event()
+        self.is_admitting = False
+        self.is_unit_in_flight = False
         self.output_buffer = OutputBuffer(limits)
         self.pump_task: asyncio.Task[None] | None = None
+        self.watchdog_task: asyncio.Task[None] | None = None
         self.close_task: asyncio.Task[None] | None = None
         self.processing_unit: ContextVar[Unit | None] = ContextVar(
             "realtime_unit", default=None
@@ -93,8 +97,9 @@ class SessionRuntime:
     def notify(self, event: ControlEvent) -> None:
         self.output_buffer.enqueue(Envelope(event=event, is_control=True))
 
-    def notify_created(self) -> None:
+    def start(self) -> None:
         self.notify(Created(self.session_id, self.model, "realtime"))
+        self.watchdog_task = asyncio.create_task(self.watch_activity())
 
     async def outputs(self) -> AsyncIterator[Envelope]:
         while True:
@@ -140,12 +145,14 @@ class SessionRuntime:
             if self.state == "CREATED":
                 adapter = self.adapter_factory()
                 adapter.set_limits(self.limits)
+                self.is_admitting = True
                 try:
                     await asyncio.wait_for(
                         adapter.open(self.session_id, candidate, self.emit),
                         self.limits.cleanup_timeout_s,
                     )
                 except Exception as exc:
+                    self.is_admitting = False
                     logger.exception(
                         f"Realtime session {self.session_id} admission failed"
                     )
@@ -158,12 +165,14 @@ class SessionRuntime:
                         raise RuntimeError("admission cleanup failed") from exc
                     raise ProtocolError("admission_rejected", str(exc)) from exc
                 self.adapter = adapter
+                self.is_admitting = False
                 if self.close_task is not None:
                     # Note (Junnan Li): Admission cleanup belongs to the closing owner; do not publish OPEN here.
                     return
                 else:
                     pass
                 self.state = "OPEN"
+                self.activity.set()
                 self.pump_task = asyncio.create_task(self.pump())
             else:
                 pass
@@ -223,6 +232,7 @@ class SessionRuntime:
                     event_id,
                 )
             )
+            self.activity.set()
             self.input_ready.set()
 
     async def clear(self, event_id: str) -> None:
@@ -235,6 +245,7 @@ class SessionRuntime:
             self.notify(
                 Cleared(self.capabilities.input_duration_ms(cleared_samples), event_id)
             )
+            self.activity.set()
 
     async def end(self, event_id: str) -> None:
         async with self.command_lock:
@@ -258,6 +269,7 @@ class SessionRuntime:
                     event_id,
                 )
             )
+            self.activity.set()
             self.input_ready.set()
 
     def cut_next_unit(self) -> Unit:
@@ -304,8 +316,11 @@ class SessionRuntime:
                         continue
                     else:
                         unit = self.cut_next_unit()
+                        self.is_unit_in_flight = True
                 self.processing_unit.set(unit)
                 consumption = await self.adapter.process(unit)
+                self.is_unit_in_flight = False
+                self.activity.set()
                 if isinstance(consumption, tuple):
                     consumed_samples, discarded_samples = consumption
                 else:
@@ -357,6 +372,30 @@ class SessionRuntime:
             logger.exception(f"Realtime session {self.session_id} input pump failed")
             self.fail(str(exc))
 
+    async def watch_activity(self) -> None:
+        while self.state in ("CREATED", "OPEN"):
+            self.activity.clear()
+            timeout_s = (
+                self.limits.admission_timeout_s
+                if self.state == "CREATED"
+                else self.limits.idle_input_timeout_s
+            )
+            try:
+                await asyncio.wait_for(self.activity.wait(), timeout_s)
+            except asyncio.TimeoutError:
+                # Note (Haiyang Luo): a peer can keep answering WebSocket pings while its
+                # application is gone; without this it holds a session and a pipeline slot.
+                if self.state == "CREATED" and not self.is_admitting:
+                    self.fail(
+                        f"no session.update within {timeout_s}s", "admission_timeout"
+                    )
+                    return
+                elif self.state == "OPEN" and not self.is_unit_in_flight:
+                    self.fail(f"no client input within {timeout_s}s", "idle_timeout")
+                    return
+                else:
+                    pass
+
     def fail(
         self, message: str, code: str = "internal", event_id: str | None = None
     ) -> None:
@@ -396,7 +435,7 @@ class SessionRuntime:
         finally:
             try:
                 await cancel_local_tasks(
-                    [self.pump_task], self.limits.cleanup_timeout_s
+                    [self.pump_task, self.watchdog_task], self.limits.cleanup_timeout_s
                 )
             except Exception as exc:
                 cleanup_error = cleanup_error or exc
