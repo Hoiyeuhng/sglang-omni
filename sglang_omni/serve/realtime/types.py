@@ -44,6 +44,8 @@ class RuntimeLimits:
     max_output_events: int = 256
     max_history_chars: int = 64 * 1024
     cleanup_timeout_s: float = 30
+    admission_timeout_s: float = 10
+    idle_input_timeout_s: float = 30
 
     def __post_init__(self) -> None:
         if any(
