@@ -376,6 +376,8 @@ class SessionRuntime:
     async def watch_activity(self) -> None:
         # Note (Haiyang Luo): a peer can keep answering WebSocket pings while its
         # application is gone; without this it holds a session and a pipeline slot.
+        # Nothing wakes this loop when OPEN starts an idle window, so no wait outlasts one.
+        max_wait_s = self.limits.idle_input_timeout_s
         while self.state in ("CREATED", "OPEN"):
             if self.state == "CREATED":
                 timeout_s = self.limits.admission_timeout_s
@@ -385,9 +387,9 @@ class SessionRuntime:
                 is_busy = self.is_unit_in_flight
             remaining_s = self.last_activity_s + timeout_s - time.monotonic()
             if is_busy:
-                await asyncio.sleep(timeout_s)
+                await asyncio.sleep(min(timeout_s, max_wait_s))
             elif remaining_s > 0:
-                await asyncio.sleep(remaining_s)
+                await asyncio.sleep(min(remaining_s, max_wait_s))
             elif self.state == "CREATED":
                 self.fail(f"no session.update within {timeout_s}s", "admission_timeout")
                 return
