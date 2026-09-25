@@ -1,0 +1,29 @@
+# Mirrors upstream cleanup-pr-ci-home-on-close.yaml (trigger, checkout, script
+# call), on ubuntu-latest instead of the self-hosted H100 runner.
+name: Cleanup On Close (vulnerable)
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Workflow marker
+        run: echo "WORKFLOW_VERSION=BASE (trusted base-branch copy)"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show checked-out commit
+        run: git log -1 --format='HEAD=%H %s'
+
+      - name: Remove PR CI home
+        shell: bash
+        run: |
+          bash .github/scripts/cleanup_ci_pr_home.sh \
+            "/data/omni-ci/pr-${{ github.event.pull_request.number }}"
