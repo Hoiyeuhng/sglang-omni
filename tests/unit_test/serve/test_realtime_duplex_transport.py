@@ -9,22 +9,28 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from importlib.metadata import version
 
 import pytest
 import pytest_asyncio
 import uvicorn
-from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import ConnectionClosedError
+from packaging.version import Version
 
-from sglang_omni.client.client import Client
-from sglang_omni.serve.openai_api import create_app
-from sglang_omni.serve.realtime.manager import (
+# The asyncio client API was added in websockets 13; the project floor is 12.
+pytest.importorskip("websockets", minversion="13.0")
+
+from websockets.asyncio.client import ClientConnection, connect  # noqa: E402
+from websockets.exceptions import ConnectionClosedError  # noqa: E402
+
+from sglang_omni.client.client import Client  # noqa: E402
+from sglang_omni.serve.openai_api import create_app  # noqa: E402
+from sglang_omni.serve.realtime.manager import (  # noqa: E402
     RealtimeDeployment,
     RealtimeSessionManager,
 )
-from sglang_omni.serve.realtime.schema import JsonObject
-from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits
-from tests.unit_test.serve.test_realtime_duplex_session import (
+from sglang_omni.serve.realtime.schema import JsonObject  # noqa: E402
+from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits  # noqa: E402
+from tests.unit_test.serve.test_realtime_duplex_session import (  # noqa: E402
     MODEL_NAME,
     HealthCoordinator,
     ScriptedAdapter,
@@ -42,6 +48,12 @@ WS_CLOSE_TIMEOUT_S = {
     "websockets-sansio": 0.0,
     "wsproto": 0.0,
 }
+# Server keepalive pings arrived in uvicorn 0.44 for sansio and 0.46 for wsproto; the project floor is 0.23.
+MIN_UVICORN_FOR_PINGS = {
+    "websockets": Version("0.23.0"),
+    "websockets-sansio": Version("0.44.0"),
+    "wsproto": Version("0.46.0"),
+}
 
 
 @dataclass(kw_only=True)
@@ -56,7 +68,10 @@ class LiveServer:
 async def serve_live(
     ws_implementation: str, limits: RuntimeLimits
 ) -> AsyncIterator[LiveServer]:
-    if ws_implementation == "wsproto":
+    uvicorn_version = Version(version("uvicorn"))
+    if uvicorn_version < MIN_UVICORN_FOR_PINGS[ws_implementation]:
+        pytest.skip(f"uvicorn {uvicorn_version} does not ping over {ws_implementation}")
+    elif ws_implementation == "wsproto":
         pytest.importorskip("wsproto")
     else:
         pass
