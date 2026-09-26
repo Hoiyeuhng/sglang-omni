@@ -28,8 +28,6 @@ from sglang_omni.serve.realtime.types import ProtocolError
 
 logger = logging.getLogger(__name__)
 
-MAX_CLOSE_REASON_BYTES = 123
-
 
 def reject_nonfinite_number(constant: str) -> float:
     raise ValueError(f"nonfinite JSON number {constant}")
@@ -112,10 +110,7 @@ class SharedRealtimeSession:
             code = WS_1008_POLICY_VIOLATION
         else:
             code = WS_1011_INTERNAL_ERROR
-        # Note (Haiyang Luo): the close frame carries the reason so clients that ignore the error event can still tell a failure from a clean end.
-        await self.websocket.close(
-            code, reason.encode()[:MAX_CLOSE_REASON_BYTES].decode(errors="ignore")
-        )
+        await self.websocket.close(code, reason)
 
     async def read(self) -> bool:
         """Returns whether the client disconnected."""

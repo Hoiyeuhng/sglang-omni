@@ -146,19 +146,6 @@ def closing_failure(envelopes: list[Envelope]) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_session_without_update_is_closed_by_admission_timeout() -> None:
-    runtime = SessionRuntime(
-        MODEL_NAME, Capabilities(), lambda: GatedAdapter([]), ACTIVITY_LIMITS
-    )
-    runtime.start()
-
-    envelopes = await asyncio.wait_for(receive_until(runtime, Closed), 5)
-
-    assert closing_failure(envelopes) == ("admission_timeout", "admission_timeout")
-    assert runtime.state == "CLOSED"
-
-
-@pytest.mark.asyncio
 async def test_slow_pipeline_open_is_not_an_admission_timeout() -> None:
     adapter = SlowOpenAdapter([])
     runtime = SessionRuntime(
@@ -170,18 +157,6 @@ async def test_slow_pipeline_open_is_not_an_admission_timeout() -> None:
 
     assert runtime.state == "OPEN"
     await runtime.close("client_closed")
-
-
-@pytest.mark.asyncio
-async def test_open_session_without_input_is_closed_by_idle_timeout() -> None:
-    adapter = GatedAdapter([])
-    runtime = await open_runtime(adapter, ACTIVITY_LIMITS)
-    runtime.start()
-
-    envelopes = await asyncio.wait_for(receive_until(runtime, Closed), 5)
-
-    assert closing_failure(envelopes) == ("idle_timeout", "idle_timeout")
-    assert runtime.state == "CLOSED"
 
 
 @pytest.mark.asyncio

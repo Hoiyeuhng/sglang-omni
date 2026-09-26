@@ -375,9 +375,8 @@ class SessionRuntime:
             self.fail(str(exc))
 
     async def watch_activity(self) -> None:
-        # Note (Haiyang Luo): a peer can keep answering WebSocket pings while its
-        # application is gone; without this it holds a session and a pipeline slot.
-        # Nothing wakes this loop when OPEN starts an idle window, so no wait outlasts one.
+        # Note (Haiyang Luo): a peer can answer pings after its app is gone. Nothing wakes
+        # this loop when OPEN starts an idle window, so no wait outlasts one.
         max_wait_s = self.limits.idle_input_timeout_s
         while self.state in ("CREATED", "OPEN"):
             if self.state == "CREATED":
