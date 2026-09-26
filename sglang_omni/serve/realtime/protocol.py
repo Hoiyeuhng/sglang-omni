@@ -8,6 +8,11 @@ import logging
 import uuid
 
 from pydantic import ValidationError
+from starlette.status import (
+    WS_1000_NORMAL_CLOSURE,
+    WS_1008_POLICY_VIOLATION,
+    WS_1011_INTERNAL_ERROR,
+)
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from sglang_omni.serve.realtime.control import ControlEvent, Failure
@@ -22,6 +27,8 @@ from sglang_omni.serve.realtime.schema import (
 from sglang_omni.serve.realtime.types import ProtocolError
 
 logger = logging.getLogger(__name__)
+
+MAX_CLOSE_REASON_BYTES = 123
 
 
 def reject_nonfinite_number(constant: str) -> float:
@@ -97,7 +104,18 @@ class SharedRealtimeSession:
             self.runtime.output_buffer.before_send(envelope)
             await self.websocket.send_text(json.dumps(server_event, allow_nan=False))
             self.runtime.output_buffer.sent(envelope)
-        await self.websocket.close()
+        reason = self.runtime.close_reason
+        assert reason is not None
+        if reason in ("client_closed", "disconnect"):
+            code = WS_1000_NORMAL_CLOSURE
+        elif reason in ("idle_timeout", "admission_timeout"):
+            code = WS_1008_POLICY_VIOLATION
+        else:
+            code = WS_1011_INTERNAL_ERROR
+        # Note (Haiyang Luo): the close frame carries the reason so clients that ignore the error event can still tell a failure from a clean end.
+        await self.websocket.close(
+            code, reason.encode()[:MAX_CLOSE_REASON_BYTES].decode(errors="ignore")
+        )
 
     async def read(self) -> bool:
         """Returns whether the client disconnected."""

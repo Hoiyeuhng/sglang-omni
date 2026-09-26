@@ -87,6 +87,7 @@ class SessionRuntime:
         self.pump_task: asyncio.Task[None] | None = None
         self.watchdog_task: asyncio.Task[None] | None = None
         self.close_task: asyncio.Task[None] | None = None
+        self.close_reason: str | None = None
         self.processing_unit: ContextVar[Unit | None] = ContextVar(
             "realtime_unit", default=None
         )
@@ -416,6 +417,7 @@ class SessionRuntime:
         await asyncio.shield(self.close_task)
 
     async def run_close(self, reason: str, event_id: str | None = None) -> None:
+        self.close_reason = reason
         # Note (Junnan Li): Set CLOSING under the command lock, then release it: adapter
         # teardown can run a VAD callback that must observe CLOSING.
         async with self.command_lock:
@@ -442,6 +444,7 @@ class SessionRuntime:
                 cleanup_error = cleanup_error or exc
         try:
             if cleanup_error is not None:
+                self.close_reason = "cleanup_timeout"
                 self.output_buffer.clear()
                 self.output_buffer.enqueue_terminal(
                     Failure(

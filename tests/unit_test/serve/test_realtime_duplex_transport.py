@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 import uvicorn
 from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import ConnectionClosedError
 
 from sglang_omni.client.client import Client
 from sglang_omni.serve.openai_api import create_app
@@ -124,7 +125,14 @@ async def receive_until(connection: ClientConnection, event_type: str) -> None:
 
 
 async def receive_all(connection: ClientConnection) -> list[JsonObject]:
-    return [json.loads(message) async for message in connection]
+    events: list[JsonObject] = []
+    try:
+        async for message in connection:
+            events.append(json.loads(message))
+    except ConnectionClosedError:
+        # A non-1000 close code ends iteration with an error instead of a clean stop.
+        pass
+    return events
 
 
 async def open_session(connection: ClientConnection) -> None:
@@ -199,6 +207,7 @@ async def test_idle_live_peer_is_reaped_by_idle_timeout(
             receive_all(connection), IDLE_INPUT_TIMEOUT_S + RELEASE_MARGIN_S
         )
         closed_after_s = time.monotonic() - opened_s
+        close_code, close_reason = connection.close_code, connection.close_reason
 
     error_codes = [
         event["error"]["code"] for event in events if event["type"] == "error"
@@ -213,5 +222,6 @@ async def test_idle_live_peer_is_reaped_by_idle_timeout(
     assert (
         IDLE_INPUT_TIMEOUT_S <= closed_after_s < IDLE_INPUT_TIMEOUT_S + RELEASE_MARGIN_S
     )
+    assert (close_code, close_reason) == (1008, "idle_timeout")
     await wait_for_release(idle_limited_server)
     await assert_slot_reusable(idle_limited_server)

@@ -457,9 +457,10 @@ def test_client_close_cancels_visible_response_then_closes_socket() -> None:
         receive_until(websocket, "response.created")
         send_event(websocket, "session.close")
         events = receive_until(websocket, "session.closed")
-        with pytest.raises(WebSocketDisconnect):
+        with pytest.raises(WebSocketDisconnect) as close_info:
             websocket.receive_json()
 
+    assert (close_info.value.code, close_info.value.reason) == (1000, "client_closed")
     text_done = events_of_type(events, "response.output_text.done")[0]
     response_done = events_of_type(events, "response.done")[0]
     assert text_done["text"] == "partial"
@@ -546,11 +547,14 @@ def test_adapter_failure_closes_the_session_with_fatal_error(
         open_session(websocket)
         append_audio(websocket, b"\1" * UNIT_BYTES, 0)
         events = receive_until(websocket, "session.closed", "sglang.unit.done")
+        with pytest.raises(WebSocketDisconnect) as close_info:
+            websocket.receive_json()
 
     error = events_of_type(events, "error")[0]
     assert error["sglang"]["fatal"] is True
     assert error["error"]["code"] == code
     assert events[-1]["reason"] == code
+    assert (close_info.value.code, close_info.value.reason) == (1011, code)
 
 
 def test_adapter_cleanup_failure_replaces_closed_with_fatal_error() -> None:
@@ -559,11 +563,12 @@ def test_adapter_cleanup_failure_replaces_closed_with_fatal_error() -> None:
         open_session(websocket)
         send_event(websocket, "session.close")
         error = websocket.receive_json()
-        with pytest.raises(WebSocketDisconnect):
+        with pytest.raises(WebSocketDisconnect) as close_info:
             websocket.receive_json()
 
     assert error["error"]["code"] == "cleanup_timeout"
     assert error["sglang"]["fatal"] is True
+    assert (close_info.value.code, close_info.value.reason) == (1011, "cleanup_timeout")
 
 
 @pytest.mark.parametrize(
@@ -582,9 +587,10 @@ def test_silent_client_is_closed_by_activity_timeout(
         else:
             assert websocket.receive_json()["type"] == "session.created"
         events = receive_until(websocket, "session.closed")
-        with pytest.raises(WebSocketDisconnect):
+        with pytest.raises(WebSocketDisconnect) as close_info:
             websocket.receive_json()
 
+    assert (close_info.value.code, close_info.value.reason) == (1008, timeout_code)
     error = events_of_type(events, "error")[0]
     assert error["error"]["code"] == timeout_code
     assert error["sglang"]["fatal"] is True
