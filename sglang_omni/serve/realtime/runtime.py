@@ -6,6 +6,7 @@ import asyncio
 import copy
 import logging
 import math
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
@@ -83,9 +84,14 @@ class SessionRuntime:
         self.end_event_id: str | None = None
         self.command_lock = asyncio.Lock()
         self.input_ready = asyncio.Event()
+        self.last_activity_s: float = time.monotonic()
+        self.is_admitting: bool = False
+        self.is_unit_in_flight: bool = False
         self.output_buffer = OutputBuffer(limits)
         self.pump_task: asyncio.Task[None] | None = None
+        self.watchdog_task: asyncio.Task[None] | None = None
         self.close_task: asyncio.Task[None] | None = None
+        self.close_reason: str | None = None
         self.processing_unit: ContextVar[Unit | None] = ContextVar(
             "realtime_unit", default=None
         )
@@ -97,8 +103,9 @@ class SessionRuntime:
     def notify(self, event: ControlEvent) -> None:
         self.output_buffer.enqueue(Envelope(event=event, is_control=True))
 
-    def notify_created(self) -> None:
+    def start(self) -> None:
         self.notify(Created(self.session_id, self.model, "realtime"))
+        self.watchdog_task = asyncio.create_task(self.watch_activity())
 
     async def outputs(self) -> AsyncIterator[Envelope]:
         while True:
@@ -144,6 +151,7 @@ class SessionRuntime:
             if self.state == "CREATED":
                 adapter = self.adapter_factory()
                 adapter.set_limits(self.limits)
+                self.is_admitting = True
                 try:
                     await asyncio.wait_for(
                         adapter.open(self.session_id, candidate, self.emit),
@@ -160,14 +168,19 @@ class SessionRuntime:
                     except Exception:
                         self.adapter = adapter
                         raise RuntimeError("admission cleanup failed") from exc
+                    finally:
+                        self.is_admitting = False
+                        self.last_activity_s = time.monotonic()
                     raise ProtocolError("admission_rejected", str(exc)) from exc
                 self.adapter = adapter
+                self.is_admitting = False
                 if self.close_task is not None:
                     # Note (Junnan Li): Admission cleanup belongs to the closing owner; do not publish OPEN here.
                     return
                 else:
                     pass
                 self.state = "OPEN"
+                self.last_activity_s = time.monotonic()
                 self.pump_task = asyncio.create_task(self.pump())
             else:
                 pass
@@ -235,6 +248,7 @@ class SessionRuntime:
                     event_id,
                 )
             )
+            self.last_activity_s = time.monotonic()
             self.input_ready.set()
 
     async def append_image(self, image: bytes, t_ms: float, event_id: str) -> None:
@@ -286,6 +300,7 @@ class SessionRuntime:
             self.notify(
                 Cleared(self.capabilities.input_duration_ms(cleared_samples), event_id)
             )
+            self.last_activity_s = time.monotonic()
 
     async def end(self, event_id: str) -> None:
         async with self.command_lock:
@@ -309,6 +324,7 @@ class SessionRuntime:
                     event_id,
                 )
             )
+            self.last_activity_s = time.monotonic()
             self.input_ready.set()
 
     def cut_next_unit(self) -> Unit:
@@ -362,8 +378,11 @@ class SessionRuntime:
                         continue
                     else:
                         unit = self.cut_next_unit()
+                        self.is_unit_in_flight = True
                 self.processing_unit.set(unit)
                 consumption = await self.adapter.process(unit)
+                self.is_unit_in_flight = False
+                self.last_activity_s = time.monotonic()
                 if isinstance(consumption, tuple):
                     consumed_samples, discarded_samples = consumption
                 else:
@@ -420,6 +439,28 @@ class SessionRuntime:
             )
             self.fail(str(exc), code)
 
+    async def watch_activity(self) -> None:
+        # Note (Haiyang Luo): OPEN does not wake this loop, so cap waits at one idle window.
+        max_wait_s = self.limits.idle_input_timeout_s
+        while self.state in ("CREATED", "OPEN"):
+            if self.state == "CREATED":
+                timeout_s = self.limits.admission_timeout_s
+                is_busy = self.is_admitting
+            else:
+                timeout_s = self.limits.idle_input_timeout_s
+                is_busy = self.is_unit_in_flight or self.command_lock.locked()
+            remaining_s = self.last_activity_s + timeout_s - time.monotonic()
+            if is_busy:
+                await asyncio.sleep(min(timeout_s, max_wait_s))
+            elif remaining_s > 0:
+                await asyncio.sleep(min(remaining_s, max_wait_s))
+            elif self.state == "CREATED":
+                self.fail(f"no session.update within {timeout_s}s", "admission_timeout")
+                return
+            else:
+                self.fail(f"no client input within {timeout_s}s", "idle_timeout")
+                return
+
     def fail(
         self, message: str, code: str = "internal", event_id: str | None = None
     ) -> None:
@@ -439,6 +480,7 @@ class SessionRuntime:
         await asyncio.shield(self.close_task)
 
     async def run_close(self, reason: str, event_id: str | None = None) -> None:
+        self.close_reason = reason
         # Note (Junnan Li): Set CLOSING under the command lock, then release it: adapter
         # teardown can run a VAD callback that must observe CLOSING.
         async with self.command_lock:
@@ -460,12 +502,13 @@ class SessionRuntime:
         finally:
             try:
                 await cancel_local_tasks(
-                    [self.pump_task], self.limits.cleanup_timeout_s
+                    [self.pump_task, self.watchdog_task], self.limits.cleanup_timeout_s
                 )
             except Exception as exc:
                 cleanup_error = cleanup_error or exc
         try:
             if cleanup_error is not None:
+                self.close_reason = "cleanup_timeout"
                 self.output_buffer.clear()
                 self.output_buffer.enqueue_terminal(
                     Failure(

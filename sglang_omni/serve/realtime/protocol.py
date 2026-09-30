@@ -8,6 +8,11 @@ import logging
 import uuid
 
 from pydantic import ValidationError
+from starlette.status import (
+    WS_1000_NORMAL_CLOSURE,
+    WS_1008_POLICY_VIOLATION,
+    WS_1011_INTERNAL_ERROR,
+)
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from sglang_omni.serve.realtime.control import ControlEvent, Failure
@@ -36,7 +41,7 @@ class SharedRealtimeSession:
         self.session_id = runtime.session_id
 
     async def run(self) -> None:
-        self.runtime.notify_created()
+        self.runtime.start()
         reader = asyncio.create_task(self.read())
         sender = asyncio.create_task(self.send())
         is_disconnected = False
@@ -98,7 +103,15 @@ class SharedRealtimeSession:
             self.runtime.output_buffer.before_send(envelope)
             await self.websocket.send_text(json.dumps(server_event, allow_nan=False))
             self.runtime.output_buffer.sent(envelope)
-        await self.websocket.close()
+        close_reason = self.runtime.close_reason
+        assert close_reason is not None
+        if close_reason in ("client_closed", "disconnect"):
+            close_code = WS_1000_NORMAL_CLOSURE
+        elif close_reason in ("idle_timeout", "admission_timeout"):
+            close_code = WS_1008_POLICY_VIOLATION
+        else:
+            close_code = WS_1011_INTERNAL_ERROR
+        await self.websocket.close(close_code, close_reason)
 
     async def read(self) -> bool:
         """Returns whether the client disconnected."""
