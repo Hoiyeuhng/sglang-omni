@@ -10,14 +10,14 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from sglang_omni.models.qwen3_tts.codec_state_arena import Qwen3TTSCodecStateArena
-from sglang_omni.models.qwen3_tts.incremental_codec import (
+from sglang_omni.audio.qwen3_tts_codec import (
     Qwen3TTSIncrementalCodecState,
     Qwen3TTSIncrementalDecoder,
     incremental_causal_conv1d,
     incremental_causal_transconv1d,
     incremental_transformer,
 )
+from sglang_omni.models.qwen3_tts.codec_state_arena import Qwen3TTSCodecStateArena
 from sglang_omni.utils import snake_beta
 
 
@@ -1002,12 +1002,12 @@ def test_real_tts_decoder_and_incremental_pcm_equal() -> None:
     checkpoint = os.environ.get("QWEN3_TTS_TOKENIZER_PATH")
     if checkpoint is None:
         pytest.skip("Set QWEN3_TTS_TOKENIZER_PATH to run the real checkpoint gate")
-    from sglang_omni.models.qwen3_tts.compat import (
-        apply_qwen_tts_transformers_compatibility_patches,
-    )
-    from sglang_omni.models.qwen3_tts.incremental_codec import (
+    from sglang_omni.audio.qwen3_tts_codec import (
         Qwen3TTSIncrementalCodecState,
         Qwen3TTSIncrementalDecoder,
+    )
+    from sglang_omni.audio.qwen3_tts_compat import (
+        apply_qwen_tts_transformers_compatibility_patches,
     )
 
     apply_qwen_tts_transformers_compatibility_patches()

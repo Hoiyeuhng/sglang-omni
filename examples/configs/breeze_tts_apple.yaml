@@ -1,0 +1,2 @@
+config_cls: BreezeTTSPipelineConfig
+model_path: BreezeBlue/Breeze-TTS-2@3e28c5151381a722f1d8661b4118c298caa77aa4

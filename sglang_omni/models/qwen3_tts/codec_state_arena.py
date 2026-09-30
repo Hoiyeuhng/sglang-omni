@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from sglang_omni.models.qwen3_tts.incremental_codec import (
+from sglang_omni.audio.qwen3_tts_codec import (
     Qwen3TTSIncrementalCodecState,
     Qwen3TTSIncrementalDecoder,
 )

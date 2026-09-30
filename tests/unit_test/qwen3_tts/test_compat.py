@@ -23,7 +23,7 @@ INSTALL_DOCS = (
 )
 
 # Note (Akazaakane): loaded by path so the module under test never imports sglang.
-COMPAT_PATH = REPO_ROOT / "sglang_omni/models/qwen3_tts/compat.py"
+COMPAT_PATH = REPO_ROOT / "sglang_omni/audio/qwen3_tts_compat.py"
 SPEC = importlib.util.spec_from_file_location("qwen3_tts_compat", COMPAT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 compat = importlib.util.module_from_spec(SPEC)

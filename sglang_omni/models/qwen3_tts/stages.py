@@ -12,7 +12,7 @@ from typing import Any
 
 import torch
 
-from sglang_omni.models.qwen3_tts.compat import (
+from sglang_omni.audio.qwen3_tts_compat import (
     apply_qwen_tts_transformers_compatibility_patches,
 )
 from sglang_omni.models.qwen3_tts.reference_encoder_cuda_graph import (

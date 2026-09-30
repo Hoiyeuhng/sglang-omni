@@ -350,6 +350,7 @@ class CreateSpeechRequest(BaseModel):
     stream_format: Literal["audio", "sse"] = "audio"
 
     # Advanced TTS extensions
+    cfg_scale: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     task_type: str | None = None  # e.g. "Base", "CustomVoice", "VoiceDesign"
     language: str | None = None
     instructions: str | None = None  # style/emotion instructions
@@ -429,6 +430,7 @@ class CreateSpeechBatchRequest(BaseModel):
     task_type: str | None = None
     language: str | None = None
     instructions: str | None = None
+    cfg_scale: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     ref_audio: str | None = None
     ref_text: str | None = None
     references: list[SpeechReference] | None = None

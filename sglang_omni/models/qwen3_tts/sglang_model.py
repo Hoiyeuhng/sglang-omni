@@ -26,6 +26,9 @@ from sglang.srt.utils import add_prefix
 from sglang.srt.utils.common import is_pin_memory_available
 from torch import nn
 
+from sglang_omni.audio.qwen3_tts_compat import (
+    apply_qwen_tts_transformers_compatibility_patches,
+)
 from sglang_omni.models.qwen3_omni.components.talker import (  # noqa: E501
     Qwen3OmniMoeTalkerDenseMLP,
     ResizeMLP,
@@ -33,9 +36,6 @@ from sglang_omni.models.qwen3_omni.components.talker import (  # noqa: E501
 )
 from sglang_omni.models.qwen3_omni.components.thinker_model import (
     Qwen3OmniMoeThinkerTextAttention,
-)
-from sglang_omni.models.qwen3_tts.compat import (
-    apply_qwen_tts_transformers_compatibility_patches,
 )
 from sglang_omni.models.qwen3_tts.predictor_kernels import (
     gather_codec_embedding_and_add,

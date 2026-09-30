@@ -41,7 +41,7 @@ APIs that Transformers 5.12 has since renamed or removed — most visibly the ma
 factories (`create_causal_mask` and friends), which now spell `input_embeds` as
 `inputs_embeds` and no longer accept `cache_position`. SGLang-Omni patches these
 differences in
-`sglang_omni/models/qwen3_tts/compat.py`, which every Qwen3-TTS entry point
+`sglang_omni/audio/qwen3_tts_compat.py`, which every Qwen3-TTS entry point
 applies before importing `qwen_tts`. The pinned Transformers 5.12 / SGLang 0.5.20
 stack is therefore the supported configuration, not a workaround.
 
