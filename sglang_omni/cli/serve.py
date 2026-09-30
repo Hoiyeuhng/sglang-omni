@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Annotated, Literal
 
 import typer
@@ -101,6 +102,13 @@ def normalize_allowed_media_domains(values: list[str] | None) -> list[str]:
             part.strip().lower() for part in value.split(",") if part.strip()
         )
     return domains
+
+
+def validate_realtime_timeout(timeout_s: float | None) -> float | None:
+    if timeout_s is not None and (not math.isfinite(timeout_s) or timeout_s <= 0):
+        raise typer.BadParameter("must be finite and positive")
+    else:
+        return timeout_s
 
 
 def validate_tts_batch_max_items(value: int) -> int:
@@ -374,6 +382,22 @@ def serve(
             help="Mount the OpenAI Realtime WebSocket endpoint at /v1/realtime.",
         ),
     ] = False,
+    realtime_admission_timeout_s: Annotated[
+        float | None,
+        typer.Option(
+            "--realtime-admission-timeout-s",
+            callback=validate_realtime_timeout,
+            help="Shared duplex admission timeout in seconds; requires --enable-realtime. Omit to use the deployment limit.",
+        ),
+    ] = None,
+    realtime_idle_input_timeout_s: Annotated[
+        float | None,
+        typer.Option(
+            "--realtime-idle-input-timeout-s",
+            callback=validate_realtime_timeout,
+            help="Shared duplex input-idle timeout in seconds; requires --enable-realtime. Omit to use the deployment limit.",
+        ),
+    ] = None,
 ) -> None:
     """Serve the pipeline.
 
@@ -470,6 +494,8 @@ def serve(
         model_name=model_name,
         log_level=log_level,
         enable_realtime=enable_realtime,
+        realtime_admission_timeout_s=realtime_admission_timeout_s,
+        realtime_idle_input_timeout_s=realtime_idle_input_timeout_s,
         allowed_local_media_path=validate_allowed_local_media_path(
             allowed_local_media_path
         ),
