@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import signal
 import socket
@@ -34,6 +35,7 @@ import threading
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
+from dataclasses import replace
 from typing import TypedDict
 
 import uvicorn
@@ -468,6 +470,8 @@ async def run_server(
     log_level: str = "info",
     client_kwargs: ClientOptions | None = None,
     enable_realtime: bool = False,
+    realtime_admission_timeout_s: float | None = None,
+    realtime_idle_input_timeout_s: float | None = None,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
     tts_batch_max_items: int = DEFAULT_TTS_BATCH_MAX_ITEMS,
@@ -476,6 +480,29 @@ async def run_server(
 
     This is the async entry point.  For a blocking call use :func:`launch_server`.
     """
+    deployment_factory = type(pipeline_config).realtime_deployment_factory
+    realtime_timeout_overrides = {
+        timeout_name: timeout_s
+        for timeout_name, timeout_s in (
+            ("admission_timeout_s", realtime_admission_timeout_s),
+            ("idle_input_timeout_s", realtime_idle_input_timeout_s),
+        )
+        if timeout_s is not None
+    }
+    for timeout_name, timeout_s in realtime_timeout_overrides.items():
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError(f"realtime_{timeout_name} must be finite and positive")
+        else:
+            pass
+    if realtime_timeout_overrides and (
+        not enable_realtime or deployment_factory is None
+    ):
+        raise ValueError(
+            "Realtime timeout overrides require --enable-realtime and a pipeline "
+            "with a shared duplex realtime deployment"
+        )
+    else:
+        pass
     # 0. Check port availability before loading models
     port = find_available_port(host, port)
 
@@ -508,11 +535,16 @@ async def run_server(
     try:
         cl_kwargs = client_kwargs or {}
         client = Client(coordinator, **cl_kwargs)
-        deployment_factory = type(pipeline_config).realtime_deployment_factory
         if enable_realtime and deployment_factory is not None:
             realtime_deployment: RealtimeDeployment | None = import_string(
                 deployment_factory
             )(client, pipeline_config)
+            realtime_deployment = replace(
+                realtime_deployment,
+                limits=replace(
+                    realtime_deployment.limits, **realtime_timeout_overrides
+                ),
+            )
         else:
             realtime_deployment = None
         app = create_app(
@@ -625,6 +657,8 @@ def launch_server(
     log_level: str = "info",
     client_kwargs: ClientOptions | None = None,
     enable_realtime: bool = False,
+    realtime_admission_timeout_s: float | None = None,
+    realtime_idle_input_timeout_s: float | None = None,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
     tts_batch_max_items: int = DEFAULT_TTS_BATCH_MAX_ITEMS,
@@ -642,6 +676,10 @@ def launch_server(
             :class:`~sglang_omni.client.Client`.
         enable_realtime: If True, mount the WebSocket ``/v1/realtime``
             endpoint (OpenAI Realtime API).
+        realtime_admission_timeout_s: Shared duplex admission override in seconds.
+            None preserves the deployment limit.
+        realtime_idle_input_timeout_s: Shared duplex input-idle override in seconds.
+            None preserves the deployment limit.
         allowed_local_media_path: Directory that local media references in TTS
             requests must resolve inside. ``file://`` references are disabled
             when omitted; bare local paths remain allowed by default but are
@@ -660,6 +698,8 @@ def launch_server(
             log_level=log_level,
             client_kwargs=client_kwargs,
             enable_realtime=enable_realtime,
+            realtime_admission_timeout_s=realtime_admission_timeout_s,
+            realtime_idle_input_timeout_s=realtime_idle_input_timeout_s,
             allowed_local_media_path=allowed_local_media_path,
             allowed_media_domains=allowed_media_domains,
             tts_batch_max_items=tts_batch_max_items,
