@@ -70,6 +70,19 @@ It:
 
 Use it when you want the standard out-of-the-box server path.
 
+### Shared duplex session timeouts
+
+With `--enable-realtime`, shared duplex deployments accept
+`--realtime-admission-timeout-s 20` and `--realtime-idle-input-timeout-s 300`.
+These are server options, not pipeline YAML fields. Values must be finite and
+positive; omitted options preserve deployment limits (normally 10s and 30s).
+Python callers can pass the corresponding keyword arguments to `launch_server`.
+
+Both options require a pipeline declaring `realtime_deployment_factory`; no
+built-in pipeline currently does. Admission limits the wait for `session.update`;
+input-idle limits inactivity after admission. WebSocket pings do not refresh
+input activity. Increase the idle timeout for clients with long silent pauses.
+
 ## Route Surface
 
 The current server exposes these main routes:
