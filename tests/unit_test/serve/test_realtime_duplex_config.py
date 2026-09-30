@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import ClassVar, Literal
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 import typer
@@ -16,9 +16,11 @@ from typer.testing import CliRunner
 
 from sglang_omni.cli.serve import serve
 from sglang_omni.config.manager import ConfigManager
+from sglang_omni.config.placement import StagePlacementPlan
 from sglang_omni.config.schema import PipelineConfig, StageConfig
+from sglang_omni.config.topology import ProcessTopologyPlan
 from sglang_omni.models.registry import PIPELINE_CONFIG_REGISTRY
-from sglang_omni.serve.launcher import launch_server, run_server
+from sglang_omni.serve.launcher import PipelineUvicornServer, launch_server, run_server
 from sglang_omni.serve.realtime.manager import RealtimeDeployment
 from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits
 from tests.unit_test.serve.test_realtime_duplex_session import ScriptedAdapter
@@ -101,47 +103,64 @@ def test_timeout_configuration_reaches_served_capabilities(
         adapter_factory=lambda: adapter,
         limits=deployment_limits,
     )
-    arguments = ["--config", str(config_file), "--enable-realtime"]
+    arguments = [
+        "--config",
+        str(config_file),
+        "--enable-realtime",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+    ]
     arguments.extend(cli_timeouts)
     with patch("sglang_omni.cli.serve.launch_server") as requested_launch:
         result = CliRunner().invoke(cli_app, arguments)
     assert result.exit_code == 0, result.output
 
+    async def check_capabilities(server: PipelineUvicornServer) -> None:
+        with TestClient(server.config.app) as client:
+            response = client.get("/v1/realtime/capabilities")
+        assert response.status_code == 200
+        limits = response.json()["limits"]
+        assert (
+            limits["admission_timeout_s"],
+            limits["idle_input_timeout_s"],
+        ) == expected_timeouts
+        assert limits["max_output_events"] == deployment_limits.max_output_events
+
+    async def wait_for_pipeline_failure() -> None:
+        await asyncio.Event().wait()
+
     with (
         patch(
-            "sglang_omni.serve.launcher.MultiProcessPipelineRunner"
+            "sglang_omni.serve.launcher.MultiProcessPipelineRunner", autospec=True
         ) as runner_factory,
-        patch("sglang_omni.serve.launcher.find_available_port", return_value=8000),
-        patch("sglang_omni.serve.launcher.placement_log_summary", return_value="test"),
-        patch("sglang_omni.serve.launcher.log_model_capabilities"),
         patch(
             "sglang_omni.serve.launcher.import_string",
             return_value=lambda client: deployment,
         ),
-        patch("sglang_omni.serve.launcher.mount_profiler_routes"),
-        patch("sglang_omni.serve.launcher.PipelineUvicornServer") as server_factory,
-        patch(
-            "sglang_omni.serve.launcher.serve_with_failure_watch",
-            new_callable=AsyncMock,
-        ),
+        patch.object(
+            PipelineUvicornServer,
+            "serve",
+            autospec=True,
+            side_effect=check_capabilities,
+        ) as serve_http,
     ):
         runner = runner_factory.return_value
-        runner.start = AsyncMock()
-        runner.stop = AsyncMock()
+        runner.prep.placement_plan = StagePlacementPlan(stages={}, gpus={})
+        runner.prep.process_plan = ProcessTopologyPlan(
+            groups=(), stage_to_process={}, tp_stage_to_processes={}
+        )
+        runner.stage_control_endpoints = {}
         runner.coordinator.health.return_value = {"running": True}
+        runner.wait_failed.side_effect = wait_for_pipeline_failure
         launch_server(
             *requested_launch.call_args.args, **requested_launch.call_args.kwargs
         )
-        served_app = server_factory.call_args.args[0].app
-        response = TestClient(served_app).get("/v1/realtime/capabilities")
+        serve_http.assert_awaited_once()
+        runner.start.assert_awaited_once()
+        runner.stop.assert_awaited_once()
 
-    assert response.status_code == 200
-    limits = response.json()["limits"]
-    assert (
-        limits["admission_timeout_s"],
-        limits["idle_input_timeout_s"],
-    ) == expected_timeouts
-    assert limits["max_output_events"] == deployment_limits.max_output_events
     assert deployment.limits is deployment_limits
 
 
