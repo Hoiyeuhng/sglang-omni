@@ -97,7 +97,7 @@ def test_reference_clone_and_direction(
             + base64.b64encode(reference_audio).decode(),
             "ref_text": "Hello, this is Breeze speaking on a Mac.",
             "instructions": instructions,
-            "cfg_scale": 4,
+            "cfg_scale": 4 if instructions else 1,
             "seed": 42,
             "max_new_tokens": 150,
         },
@@ -117,6 +117,7 @@ def test_reference_clone_and_direction(
         {"speed": 2},
         {"ref_text": "No audio"},
         {"language": "French"},
+        {"cfg_scale": 4},
     ],
 )
 def test_request_errors_are_client_errors(

@@ -90,7 +90,13 @@ class BreezeRuntime:
         return cls(model, tokenizer, audio_tokenizer, chunk_frames)
 
     @torch.inference_mode()
-    def prepare_prompts(self, request: BreezeSpeechRequest) -> list[torch.Tensor]:
+    def prepare_prompts(
+        self, request: BreezeSpeechRequest, cancelled: Event
+    ) -> list[torch.Tensor]:
+        if cancelled.is_set():
+            raise InterruptedError("Breeze request cancelled")
+        else:
+            pass
         reference_segments: list[torch.Tensor] = []
         if request.ref_audio:
             sample_rate = self.audio_tokenizer.get_input_sample_rate()
@@ -112,7 +118,15 @@ class BreezeRuntime:
                 )
             else:
                 pass
+            if cancelled.is_set():
+                raise InterruptedError("Breeze request cancelled")
+            else:
+                pass
             encoded = self.audio_tokenizer.encode(waveform, sr=sample_rate)
+            if cancelled.is_set():
+                raise InterruptedError("Breeze request cancelled")
+            else:
+                pass
             codes = encoded.audio_codes[0].to(device=self.device, dtype=torch.long)
             eos = codes.new_full(
                 (1, self.model.configuration.num_codebooks),
@@ -130,6 +144,10 @@ class BreezeRuntime:
         else:
             pass
         prompts = [torch.cat([*reference_segments, self.encode_text(target)], dim=1)]
+        if cancelled.is_set():
+            raise InterruptedError("Breeze request cancelled")
+        else:
+            pass
         if request.instructions and request.sampling.cfg_scale != 1:
             prompts.append(
                 torch.cat(
@@ -139,7 +157,9 @@ class BreezeRuntime:
             )
         else:
             pass
-        if (
+        if cancelled.is_set():
+            raise InterruptedError("Breeze request cancelled")
+        elif (
             max(prompt.shape[1] for prompt in prompts)
             >= self.model.configuration.max_position_embeddings
         ):
@@ -173,7 +193,7 @@ class BreezeRuntime:
             return
         else:
             pass
-        prompts = self.prepare_prompts(request)
+        prompts = self.prepare_prompts(request, cancelled)
         state = self.codec.init_state(
             batch_size=1, device=self.device, dtype=torch.float32
         )

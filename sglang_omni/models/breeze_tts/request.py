@@ -30,6 +30,8 @@ class BreezeSpeechRequest(BaseModel):
             raise ValueError(
                 "Reference audio and its transcript must be provided together"
             )
+        elif self.sampling.cfg_scale != 1 and not self.instructions:
+            raise ValueError("cfg_scale other than 1 requires voice instructions")
         else:
             return self
 

@@ -9,7 +9,38 @@ from pydantic import ValidationError
 from safetensors.torch import save_file
 
 from sglang_omni.models.breeze_tts.model import BreezeCheckpointConfig, BreezeModel
+from sglang_omni.models.breeze_tts.request import BreezeSpeechRequest
+from sglang_omni.models.breeze_tts.runtime import BreezeRuntime
 from sglang_omni.models.breeze_tts.sampling import BreezeSamplingParams, sample_token
+
+
+class CancellingTextRuntime(BreezeRuntime):
+    def __init__(self, model: BreezeModel, cancelled: Event) -> None:
+        self.model = model
+        self.cancelled = cancelled
+        self.encoded_segments: int = 0
+
+    def encode_text(self, text: str) -> torch.Tensor:
+        self.encoded_segments += 1
+        encoded = self.model.encode_text(torch.tensor([[2, 3]]))
+        self.cancelled.set()
+        return encoded
+
+
+def test_cancelled_prompt_does_not_start_guidance_branch(model: BreezeModel) -> None:
+    cancelled = Event()
+    runtime = CancellingTextRuntime(model, cancelled)
+    request = BreezeSpeechRequest(
+        text="Hello",
+        instructions="Calm voice",
+        sampling=BreezeSamplingParams(cfg_scale=4),
+    )
+    with pytest.raises(InterruptedError, match="cancelled"):
+        runtime.prepare_prompts(request, cancelled)
+    assert runtime.encoded_segments == 1
+    with pytest.raises(InterruptedError, match="cancelled"):
+        runtime.prepare_prompts(request, cancelled)
+    assert runtime.encoded_segments == 1
 
 
 @pytest.fixture

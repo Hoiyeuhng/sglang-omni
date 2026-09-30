@@ -67,7 +67,8 @@ voice API. There are no built-in named speaker presets.
 Generation defaults are temperature 0.9, top-k 50, top-p 1, repetition penalty
 1.1, CFG scale 1 and at most 750 audio frames. Explicit API sampling values
 replace these defaults; implicit defaults belonging to other models do not.
-Temperature zero selects greedy decoding. A seed controls a request-local CPU
+CFG values other than 1 require voice instructions; requests without instructions
+are rejected instead of silently ignoring guidance. Temperature zero selects greedy decoding. A seed controls a request-local CPU
 sampling generator; model computation remains on MPS. This does not promise
 bitwise equality across devices, dependency versions, or the CUDA reference.
 
@@ -92,7 +93,9 @@ OpenAI speech request
 Each request owns its guidance-branch KV caches, depth cache, RNG and codec
 state. The scheduler reuses the common inbox/outbox lifecycle and checks a
 cancellation event between depth steps. Generator cleanup releases state when a
-client disconnects, generation fails, or the server shuts down. The codec and
+client disconnects, generation fails, or the server shuts down. Cancellation is
+checked between prompt-preparation operations and generation steps; a currently
+running encoder or GPU operation is allowed to return before cancellation takes effect. The codec and
 its existing Transformers compatibility adapter are shared with Qwen3-TTS;
 Breeze does not add another global patch implementation.
 
@@ -100,8 +103,8 @@ Run the tests without downloading weights:
 
 ```bash
 .venv-apple/bin/python -m pytest tests/unit_test/breeze_tts \
-  tests/unit_test/qwen3_tts/test_compat.py \
-  tests/unit_test/qwen3_tts/test_incremental_codec.py -q
+  tests/unit_test/audio/test_qwen3_tts_compat.py \
+  tests/unit_test/audio/test_qwen3_tts_codec.py -q
 ```
 
 The model tests instantiate small real Transformer modules. Scheduler tests use
@@ -126,11 +129,98 @@ recovered both texts (Chinese used traditional characters). This is a small
 intelligibility check, not human listening, speaker-similarity evaluation or a
 quality ranking. Cold-start timings are not presented as warmed performance.
 
-A separate three-frame FP32 greedy check matched all 48 codec tokens from the
-pinned official reference on the same Mac. The BF16 paths were not bit-exact;
-they use different attention/head arithmetic and dependency versions. This
-small FP32 comparison supports the component mapping, not full-corpus numerical
-or perceptual equivalence.
+## Reproduce reference parity
+
+The reference exporter runs in a separate environment because the pinned reference
+uses Torch 2.9.1 and Transformers 4.57.3. The native implementation uses the project
+pins (Torch 2.13.0 and Transformers 5.12.1). Both use MPS with CPU fallback disabled,
+FP32 and greedy decoding. The reference uses eager attention; native uses SDPA.
+The acceptance criterion is exact equality of every generated codec token and the
+same termination behavior, with no numerical tolerance on token IDs.
+
+The reference's legacy non-streaming generation raises a tensor-rank error when
+its standard repetition-penalty processor receives multi-codebook history. The
+comparison explicitly sets repetition penalty to 1 in both implementations.
+Production keeps its default 1.1, covered by the sampler unit tests; this comparison
+does not claim default stochastic sampling or CUDA fast-runtime parity.
+
+From the repository root, prepare the isolated reference environment once:
+
+```bash
+breeze_workspace="$PWD"
+git clone https://github.com/breezeblue-ai/breeze-tts.git .venv/breeze-reference
+git -C .venv/breeze-reference checkout 58ec70ce5fa4cc361bdebf77ec40d1365da00ab2
+uv venv --python 3.12 .venv/breeze-tts
+uv pip install --python .venv/breeze-tts/bin/python \
+  -r .venv/breeze-reference/requirements.txt typer
+```
+
+Reuse an existing checkout/environment when present. Generate the English WAV
+from the earlier API example as `breeze.wav`; its transcript must be exactly
+"Hello, this is Breeze speaking on a Mac." Then export reference results:
+
+```bash
+breeze_workspace="$PWD"
+(
+  cd .venv/breeze-reference
+  PYTORCH_ENABLE_MPS_FALLBACK=0 PYTHONPATH=. \
+    "$breeze_workspace/.venv/breeze-tts/bin/python" \
+    "$breeze_workspace/scripts/apple/breeze_reference.py" \
+    "$breeze_workspace/.venv/breeze-checkpoint" \
+    "$breeze_workspace/breeze.wav" \
+    "$breeze_workspace/results/breeze-tts/parity"
+)
+
+PYTORCH_ENABLE_MPS_FALLBACK=0 \
+BREEZE_CHECKPOINT=.venv/breeze-checkpoint \
+BREEZE_REFERENCE_DIRECTORY=results/breeze-tts/parity \
+  .venv-apple/bin/python -m pytest tests/test_model/test_breeze_tts_reference.py -q
+```
+
+Replace the checkpoint path with your existing local model directory. The exporter
+checks the reference Git revision and records dependency versions, generation
+settings, checkpoint-config and reference-audio SHA-256 digests. It copies the
+reference audio beside the token arrays; keep these artifacts outside Git.
+
+Observed on the tested Mac with the generated English reference:
+
+| Case (target: Hello.) | CFG | Audio frames | Termination |
+| --- | --- | --- | --- |
+| Plain | 1 | 120 | Frame limit in both implementations |
+| Voice instruction | 4 | 7 | EOS in both implementations |
+| Reference cloning | 1 | 10 | EOS in both implementations |
+| Reference and instruction | 4 | 10 | EOS in both implementations |
+
+All 2,352 audio tokens matched exactly. EOS rows in the reference are stored as
+padding and are checked separately, not passed to the codec. The plain greedy
+case does not reach EOS within this limit; it is a bounded-generation check, not
+an example of successful natural termination. These four cases do not measure
+speaker similarity or establish BF16/stochastic equivalence across versions.
+
+## CI coverage and lifecycle checks
+
+The existing `.github/workflows/test.yaml` unit job runs
+`pytest tests/ -v -m "not benchmark and not accelerator" -x` with CUDA hidden.
+It collects the Breeze CPU tests and shared `tests/unit_test/audio/` tests.
+This job still uses an H100-labelled runner and is gated by the parent Omni CI;
+the separate Intel CPU workflow only runs `tests/unit_test/cpu/`.
+Real MPS HTTP and reference-parity tests skip unless their environment variables
+are supplied. A missing `run-ci` label in a fork prevents the gated jobs from
+running; local results are not a substitute for a claimed GitHub run.
+
+The controlled-producer scheduler test requires a stream message to arrive while
+the producer is still blocked, before completion. Other checks cover active
+cancellation, shutdown, failure after a streamed chunk and a subsequent healthy
+request. A tiny real text encoder verifies cancellation prevents the next CFG
+branch from starting. HTTP tests verify streamed/complete byte equality, client
+errors and disconnect recovery; network chunk counts alone are not evidence of
+real-time generation. Shared codec tests live under `audio/`; Qwen-specific arena,
+CUDA graph and installation tests remain under `qwen3_tts/`.
+
+The existing shared compatibility adapter must run before importing the external
+`qwen_tts` package with Transformers 5.12. The factory's explicit dynamic import
+preserves that order without import-time global patching. This is a constrained
+third-party compatibility exception, not a new Breeze patch implementation.
 
 ## Reference and license
 

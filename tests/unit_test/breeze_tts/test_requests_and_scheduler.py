@@ -56,7 +56,9 @@ def payload(text: str, *, streaming: bool = False) -> StagePayload:
 
 
 def test_http_defaults_do_not_override_model_sampling() -> None:
-    request = CreateSpeechRequest(input="Hello", cfg_scale=4, seed=73)
+    request = CreateSpeechRequest(
+        input="Hello", instructions="Calm voice", cfg_scale=4, seed=73
+    )
     stage_payload = payload(request.input)
     stage_payload.request.params.update(temperature=0.7, top_p=0.7, top_k=20)
     stage_payload.request.metadata = {"tts_params": build_tts_params(request)}
@@ -93,6 +95,7 @@ def test_explicit_sampling_and_inline_reference() -> None:
         {"language": "French"},
         {"task_type": "CustomVoice"},
         {"cfg_scale": float("nan")},
+        {"cfg_scale": 4},
         {"token_count": 10},
     ],
 )
@@ -131,6 +134,8 @@ def test_abort_releases_active_stream_and_next_request_completes() -> None:
         )
         first = scheduler.outbox.get(timeout=5)
         assert first.type == "stream"
+        assert not runtime.release.is_set()
+        assert not runtime.closed.is_set()
         scheduler.abort("wait")
         runtime.release.set()
         assert runtime.observed_cancellation.wait(5)
@@ -141,6 +146,31 @@ def test_abort_releases_active_stream_and_next_request_completes() -> None:
         assert scheduler.outbox.empty()
     finally:
         runtime.release.set()
+        scheduler.stop()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert scheduler.cancel_events == {}
+
+
+def test_stream_failure_emits_error_and_worker_recovers() -> None:
+    runtime = ControlledRuntime()
+    scheduler = BreezeScheduler(runtime)
+    worker = Thread(target=scheduler.start)
+    worker.start()
+    try:
+        scheduler.enqueue(
+            IncomingMessage("fail", "new_request", payload("fail", streaming=True))
+        )
+        assert scheduler.outbox.get(timeout=5).type == "stream"
+        failure = scheduler.outbox.get(timeout=5)
+        assert failure.type == "error"
+        assert "codec failure" in str(failure.data)
+        assert runtime.closed.wait(5)
+        scheduler.enqueue(IncomingMessage("next", "new_request", payload("next")))
+        result = scheduler.outbox.get(timeout=5)
+        assert result.type == "result"
+        assert result.request_id == "next"
+    finally:
         scheduler.stop()
         worker.join(timeout=5)
     assert not worker.is_alive()
