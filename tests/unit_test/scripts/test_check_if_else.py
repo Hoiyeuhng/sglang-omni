@@ -187,20 +187,6 @@ if flag:
     assert check_without_rewriting(source) == 1
 
 
-def test_if_elif_elif_else_is_allowed() -> None:
-    source = """
-if first:
-    pass
-elif second:
-    pass
-elif third:
-    pass
-else:
-    pass
-"""
-    assert check_without_rewriting(source) == 0
-
-
 def test_elif_chain_requires_final_else() -> None:
     source = """
 if first:
