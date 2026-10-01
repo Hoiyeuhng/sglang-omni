@@ -1,19 +1,14 @@
 # Breeze TTS 2
 
-The integration described in this guide currently supports only Apple Silicon
-with the MPS backend.
-
-Breeze TTS 2 can generate English and Chinese speech on the Apple GPU through
-Omni's `/v1/audio/speech` API. The implementation supports voice design,
-reference-audio cloning, reference-guided voice direction, seeded sampling and
-incremental PCM streaming. Requests run serially; concurrent clients queue.
-There is no claim of continuous batching or guaranteed real-time playback.
+**Currently supported: Apple Silicon (MPS) only.** The `/v1/audio/speech` API
+supports English/Chinese synthesis, voice design, reference cloning, voice
+direction, seeded sampling and incremental PCM streaming. Requests execute
+serially; concurrent clients queue.
 
 ## Install and launch
 
-Use the repository's [Apple environment setup](qwen3_asr.md#apple-silicon-mlx) with
-Python 3.12. The native model uses Omni's pinned Torch and Transformers versions.
-Install the codec package without replacing those dependencies:
+Follow the [Apple environment setup](qwen3_asr.md#apple-silicon-mlx) with Python
+3.12, then install the codec without replacing the project's dependency pins:
 
 ```bash
 uv pip install --python .venv-apple/bin/python --no-deps qwen-tts==0.1.1
@@ -23,21 +18,15 @@ PYTORCH_ENABLE_MPS_FALLBACK=0 .venv-apple/bin/python -m sglang_omni.cli serve \
   --host 127.0.0.1 --port 8000 --model-name breeze-tts-2
 ```
 
-The config pins the checkpoint revision. It is public and ungated, so anonymous
-Hugging Face downloads work; no token needs to be added to the code or PR. A full
-checkpoint takes several GB. For an existing local download, add
-`--model-path /path/to/breeze-checkpoint`. Model files remain outside Git.
+The config pins a public, ungated checkpoint (several GB; no token required).
+For an existing download, add `--model-path /path/to/breeze-checkpoint`.
+The model uses BF16 and the codec FP32 on MPS; CUDA, an NVIDIA GPU and
+FlashAttention are not required. The launcher may report zero configured GPUs
+because this stage loads MPS directly rather than using CUDA placement.
 
-The tested machine is an M5 Pro with 48 GB unified memory and macOS 26.6. A
-minimum-memory configuration has not been established. The model uses BF16 and
-the codec uses FP32 on MPS. CUDA, FlashAttention and an NVIDIA GPU are not required.
-The shared launcher may report zero configured GPUs because this stage does not
-use CUDA placement; its factory explicitly loads the model onto MPS.
-
-For compressed reference audio, follow the linked Apple instructions for
-`ffmpeg@7` and `DYLD_LIBRARY_PATH`. WAV reference decoding can use the existing
-SoundFile fallback. Optional SoX and FlashAttention import warnings from the
-codec package do not prevent the validated WAV workflow.
+For compressed reference audio, follow the Apple setup's `ffmpeg@7` and
+`DYLD_LIBRARY_PATH` instructions. WAV decoding has a SoundFile fallback;
+optional SoX/FlashAttention import warnings do not prevent this WAV workflow.
 
 ## Generate speech
 
@@ -54,56 +43,148 @@ curl http://127.0.0.1:8000/v1/audio/speech \
   }' --output breeze.wav
 ```
 
-For Chinese, use Chinese text and voice instructions. To stream, set
-`"stream": true` and `"response_format": "pcm"`; audio is mono, 24 kHz signed
-16-bit little-endian PCM. The default codec chunk contains two frames (160 ms of
-output audio), and a final partial chunk is retained. Change the server chunk
-size with `--tts.factory.chunk_frames 4`.
+| Option | Behavior |
+| --- | --- |
+| Language | `English` / `en`, `Chinese` / `zh`, or `auto`; use Chinese text and instructions for Chinese synthesis. |
+| Cloning / direction | Supply `ref_audio` and its exact `ref_text`; add `instructions` for voice direction. Use an audio data URI or another reference accepted by the media policy. Local files require `--allowed-local-media-path`. |
+| Voices | Uploaded voices use the shared Omni voice API; no built-in named speaker presets. Use your own, consented or permitted synthetic recordings. |
+| Streaming | Set `stream: true`, `response_format: "pcm"`: mono 24 kHz signed 16-bit little-endian PCM. Default chunks contain two frames (160 ms); final partial chunks are retained. Override with `--tts.factory.chunk_frames 4`. |
+| Sampling defaults | Temperature **0.9**, top-k **50**, top-p **1**, repetition penalty **1.1**, CFG scale **1**, maximum **750 audio frames**. Explicit API values override these; implicit defaults from other models do not. Temperature **0** selects greedy decoding. |
+| Guidance / speed | CFG other than 1 requires instructions or returns a client error. `speed` must be 1; request pace changes through instructions. |
+| Context | The **2,048 positions** include text and reference frames. Oversized prompts are rejected; generation is bounded by remaining space. |
+| Seed | Controls a request-local CPU sampler while model computation stays on MPS; it does not promise bitwise equality across devices or dependency versions. |
 
-For voice cloning, supply `ref_audio` (an audio data URI or a reference accepted
-by the server's media policy) and its exact `ref_text`. Add `instructions` for
-voice direction. Use your own recording, a consented recording, or a synthetic
-reference you may use. Local file references require the standard
-`--allowed-local-media-path` server setting. Uploaded voices use the shared Omni
-voice API. There are no built-in named speaker presets.
+## Accuracy Test
 
-Generation defaults are temperature 0.9, top-k 50, top-p 1, repetition penalty
-1.1, CFG scale 1 and at most 750 audio frames. Explicit API sampling values
-replace these defaults; implicit defaults belonging to other models do not.
-CFG values other than 1 require voice instructions; requests without instructions
-are rejected instead of silently ignoring guidance. Temperature zero selects greedy decoding. A seed controls a request-local CPU
-sampling generator; model computation remains on MPS. This does not promise
-bitwise equality across devices, dependency versions, or the CUDA reference.
+### Tested configuration
 
-The 2,048-position checkpoint context includes text and reference frames. An
-oversized prompt is rejected instead of silently truncated; generation is
-bounded by the remaining space. `speed` must be 1; use instructions to request
-pace changes. Supported language hints are `English` / `en`, `Chinese` / `zh`
-and `auto`.
+| Component | Configuration |
+| --- | --- |
+| Hardware | M5 Pro, 48 GB unified memory, macOS 26.6; MPS CPU fallback disabled |
+| Omni | `62c99c8c7d080b0d592adf8d5d7892e74dec466c`; Torch 2.13.0, Transformers 5.12.1, SDPA |
+| Reference | `58ec70ce5fa4cc361bdebf77ec40d1365da00ab2`; Torch 2.9.1, Transformers 4.57.3, eager attention (as in its entry point) |
+| Checkpoint | `3e28c5151381a722f1d8661b4118c298caa77aa4`; BF16 model, FP32 codec |
+| Inputs | First 50 EN + 50 ZH rows, unfiltered, from SeedTTS-Eval revision `27f4c1adee83b5b29b7c4b375f6b976324bda308`; identical texts, cloning audio and transcripts |
+| Shared sampling | Temperature 0.9, top-k 50, top-p 1, seed 42, cap 750 frames; **repetition penalty 1.0** |
+| Scorer | Whisper large-v3-turbo `41f01f3fe87f28c78e2fbf8b568835947dd65ed9`; FP32 MPS, greedy transcription, explicit language, overlapping 30-second chunks |
+| Normalization | Repository English/Chinese normalization; OpenCC t2s on both Chinese texts before character scoring. Torch 2.13.0, Transformers 5.12.1, jiwer 4.0.0, openai-whisper 20250625, opencc-python-reimplemented 0.1.7 |
 
-## Implementation and tests
+**Sampling exception:** the reference's legacy repetition-penalty processor fails
+with a tensor-rank error on multi-codebook history at its default 1.1. Paired
+runs explicitly use 1.0 on both sides; serving retains 1.1. This compares a
+common configuration, not unmodified defaults. Equal CPU/MPS seeds need not
+produce equal random draws.
 
-```text
-OpenAI speech request
-  -> validated Breeze request
-  -> independently encoded T5Gemma2 text segments + reference codec frames
-  -> Qwen3 backbone: first codebook / EOS
-       -> Llama depth decoder: remaining 15 codebooks
-       -> complete frame feeds the next backbone step
-  -> shared Qwen3-TTS incremental codec
-  -> streamed PCM or accumulated WAV
-```
+### Results
 
-Each request owns its guidance-branch KV caches, depth cache, RNG and codec
-state. The scheduler reuses the common inbox/outbox lifecycle and checks a
-cancellation event between depth steps. Generator cleanup releases state when a
-client disconnects, generation fails, or the server shuts down. Cancellation is
-checked between prompt-preparation operations and generation steps; a currently
-running encoder or GPU operation is allowed to return before cancellation takes effect. The codec and
-its existing Transformers compatibility adapter are shared with Qwen3-TTS;
-Breeze does not add another global patch implementation.
+Both runtimes generated and scored all 100 inputs, all reaching EOS with **zero
+failures, timeouts, frame-limit or context-limit terminations**.
 
-Run the tests without downloading weights:
+| Runtime | English WER (errors / words) | Chinese CER (errors / characters) |
+| --- | --- | --- |
+| Omni | 1.95% (11 / 564) | 1.72% (16 / 931) |
+| Reference | 1.06% (6 / 564) | 2.26% (21 / 931) |
+
+These are corpus rates, not mean per-request rates. No sample exceeded 50%
+error. Totals retain numeral-format differences (`zh-034`), contraction
+expansion (`en-010`) and a source typo (`zh-001`). Omni has five more English
+word errors and five fewer Chinese character errors; this single-seed subset
+does not establish a general quality ranking.
+
+Supplemental cases use the first target per language in plain no-reference and
+instruction-only modes. All four cases in each run reached EOS and scored:
+
+| Run | EN WER, plain / instruction | ZH CER, plain / instruction |
+| --- | --- | --- |
+| Omni, common penalty 1.0 | 0% / 0% | 4.55% / 9.09% |
+| Omni, default penalty 1.1 | 0% / 0% | 13.64% / 9.09% |
+| Reference, common penalty 1.0 | 0% / 0% | 9.09% / 0% |
+
+These check execution and transcription, not adherence to voice style. Earlier
+Whisper-tiny checks recovered the example English text and
+“今天天气很好，我们一起去公园散步吧。” (Chinese transcription used traditional
+characters); these were only small intelligibility checks, not listening tests.
+
+### Independent FP32 parity
+
+With the same environments, MPS fallback disabled, greedy FP32 decoding and
+repetition penalty 1.0, all **2,352 codec tokens matched exactly**:
+
+| Case (target: Hello.) | CFG | Audio frames | Termination |
+| --- | --- | --- | --- |
+| Plain | 1 | 120 | Frame limit in both implementations |
+| Voice instruction | 4 | 7 | EOS in both implementations |
+| Reference cloning | 1 | 10 | EOS in both implementations |
+| Reference and instruction | 4 | 10 | EOS in both implementations |
+
+The target is `Hello.` and the reference is the generated English example WAV.
+EOS padding rows are checked separately and excluded from decoding. Plain
+generation hitting the shared cap is a bounded-generation check, not successful
+natural termination. This does not establish BF16/stochastic or CUDA fast-runtime
+parity. [Reproduction commands](#fp32-parity).
+
+## Benchmark & Profiling
+
+### Direct runtime
+
+Runtimes ran sequentially with one excluded warmup per language. Values are
+means unless marked p95. Timing includes prompt preparation, autoregressive
+generation, codec decoding and CPU waveform availability; it excludes loading,
+weight hashing, file writes, HTTP and queueing.
+
+| Runtime / language | Complete seconds | p95 seconds | Audio seconds | First audio seconds | RTF | Requests / compute second |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Omni / EN | 5.909 | 10.670 | 4.166 | 0.388 | 1.423 | 0.1692 |
+| Reference / EN | 15.945 | 25.814 | 4.216 | 15.945 | 3.799 | 0.0627 |
+| Omni / ZH | 7.865 | 11.255 | 5.782 | 0.336 | 1.361 | 0.1272 |
+| Reference / ZH | 21.723 | 30.653 | 5.912 | 21.723 | 3.664 | 0.0460 |
+
+Reference/Omni mean completion-time ratios are **2.70x EN / 2.76x ZH**. RTF is
+mean per-request elapsed/audio seconds, accounting for different generated
+lengths. Mean RTF remains **above 1**, so these results do not establish real-time
+playback. Reference audio arrives only after full decoding (first audio equals
+completion); Omni emits two-frame chunks.
+
+| Runtime / language | Mean live MPS tensor GiB | Mean MPS driver GiB |
+| --- | ---: | ---: |
+| Omni / EN | 6.170 | 6.940 |
+| Omni / ZH | 6.170 | 6.944 |
+| Reference / EN | 7.277 | 9.532 |
+| Reference / ZH | 7.277 | 10.094 |
+
+Memory values are **post-request snapshots**, in GiB (bytes / 2^30), from
+`current_allocated_memory` and `driver_allocated_memory`. Driver allocation
+includes allocator/runtime resources beyond live tensors. Neither measures
+peak allocation, RSS, total system memory or minimum required memory.
+
+### HTTP end to end
+
+The same native runtime served the first four inputs per language, twice per
+concurrency level, with one excluded warmup per level. **48/48 succeeded**;
+each input's PCM SHA-256 matched across repetitions and concurrency levels.
+Timing includes server queueing; p95 pools 16 measured requests per level.
+
+| Client concurrency | Requests / second | First audio mean / p95 seconds | Complete mean / p95 seconds | Mean RTF |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 0.1332 | 0.330 / 0.446 | 7.508 / 11.999 | 1.400 |
+| 2 | 0.1345 | 6.841 / 11.946 | 13.979 / 21.401 | 2.929 |
+| 4 | 0.1357 | 16.724 / 28.463 | 23.798 / 36.369 | 4.798 |
+
+Throughput stays nearly flat as queueing raises latency: client concurrency
+is not model batching. This eight-input load test is separate from the
+100-input direct-runtime evaluation.
+
+## Validation and Limitations
+
+| Check | Result / scope |
+| --- | --- |
+| Related unit suites | **520 passed, 176 skipped** for hardware/optional dependencies; Breeze, shared audio, Qwen3-TTS and speech error/protocol tests |
+| Real HTTP suite | **10 passed**: `en`/`zh`, exact streamed PCM/complete WAV equality, cloning, direction with a generated reference, client errors and disconnect recovery |
+| Repository checks | Full `pre-commit run --all-files` passed |
+| Interpretation | Different dependency versions, attention kernels, samplers and codec execution make this a runtime-stack comparison, not a scheduler-only speedup. |
+| Coverage limits | No full-corpus, speaker-similarity, human-rated naturalness, statistical-significance, CUDA performance or minimum-memory claim. ASR/normalization affect WER/CER; cold-start timings are not presented as warmed performance. Review this subset before expanding it. |
+
+Run unit checks without downloading weights:
 
 ```bash
 .venv-apple/bin/python -m pytest tests/unit_test/breeze_tts \
@@ -111,44 +192,26 @@ Run the tests without downloading weights:
   tests/unit_test/audio/test_qwen3_tts_codec.py -q
 ```
 
-The model tests instantiate small real Transformer modules. Scheduler tests use
-one controlled audio producer at the model boundary, with bounded waits and
-cleanup; they do not patch the scheduler, queues, cancellation or global imports.
-
-After starting the real server, run:
+Run the real-server suite after launch (skipped without `BREEZE_TEST_BASE_URL`):
 
 ```bash
 BREEZE_TEST_BASE_URL=http://127.0.0.1:8000 .venv-apple/bin/python \
   -m pytest tests/test_model/test_breeze_tts_apple.py -q
 ```
 
-The opt-in suite covers bilingual WAV/streamed PCM equality, cloning and voice
-direction using a generated synthetic reference, client errors and disconnect
-recovery. It is skipped when the server URL is absent. It does not represent
-upstream GPU CI or a full-corpus quality benchmark.
+The existing `.github/workflows/test.yaml` unit job collects Breeze and shared
+`audio/` tests with `pytest tests/ -v -m "not benchmark and not accelerator" -x`
+and CUDA hidden. It still uses an H100-labelled runner under the parent Omni CI;
+the separate Intel CPU workflow runs only `tests/unit_test/cpu/`. MPS HTTP and
+parity tests need their environment variables. Missing `run-ci` labels prevent
+gated fork jobs from executing; local counts do not imply hosted CI passed.
 
-Initial real-weight checks on the tested Mac produced the English sentence
-above and “今天天气很好，我们一起去公园散步吧。” Independent Whisper-tiny transcription
-recovered both texts (Chinese used traditional characters). This is a small
-intelligibility check, not human listening, speaker-similarity evaluation or a
-quality ranking. Cold-start timings are not presented as warmed performance.
+## Reproduce the evaluations
 
-## Reproduce reference parity
+### Reference environment
 
-The reference exporter runs in a separate environment because the pinned reference
-uses Torch 2.9.1 and Transformers 4.57.3. The native implementation uses the project
-pins (Torch 2.13.0 and Transformers 5.12.1). Both use MPS with CPU fallback disabled,
-FP32 and greedy decoding. The reference uses eager attention; native uses SDPA.
-The acceptance criterion is exact equality of every generated codec token and the
-same termination behavior, with no numerical tolerance on token IDs.
-
-The reference's legacy non-streaming generation raises a tensor-rank error when
-its standard repetition-penalty processor receives multi-codebook history. The
-comparison explicitly sets repetition penalty to 1 in both implementations.
-Production keeps its default 1.1, covered by the sampler unit tests; this comparison
-does not claim default stochastic sampling or CUDA fast-runtime parity.
-
-From the repository root, prepare the isolated reference environment once:
+Reuse existing environments/checkpoints where available; otherwise prepare the
+isolated reference environment from the repository root:
 
 ```bash
 breeze_workspace="$PWD"
@@ -159,9 +222,10 @@ uv pip install --python .venv/breeze-tts/bin/python \
   -r .venv/breeze-reference/requirements.txt typer
 ```
 
-Reuse an existing checkout/environment when present. Generate the English WAV
-from the earlier API example as `breeze.wav`; its transcript must be exactly
-"Hello, this is Breeze speaking on a Mac." Then export reference results:
+### FP32 parity
+
+Create `breeze.wav` with the API example above, with exact transcript
+`Hello, this is Breeze speaking on a Mac.`, then run:
 
 ```bash
 breeze_workspace="$PWD"
@@ -181,168 +245,14 @@ BREEZE_REFERENCE_DIRECTORY=results/breeze-tts/parity \
   .venv-apple/bin/python -m pytest tests/test_model/test_breeze_tts_reference.py -q
 ```
 
-Replace the checkpoint path with your existing local model directory. The exporter
-checks the reference Git revision and records dependency versions, generation
-settings, checkpoint-config and reference-audio SHA-256 digests. It copies the
-reference audio beside the token arrays; keep these artifacts outside Git.
+Replace the local checkpoint path as needed. The exporter verifies the reference
+revision and saves versions, settings, checkpoint-config/reference-audio hashes
+and a copy of the reference alongside token arrays. Acceptance requires exact
+token equality and matching termination, with no token-ID tolerance.
 
-Observed on the tested Mac with the generated English reference:
+### Paired BF16 generation
 
-| Case (target: Hello.) | CFG | Audio frames | Termination |
-| --- | --- | --- | --- |
-| Plain | 1 | 120 | Frame limit in both implementations |
-| Voice instruction | 4 | 7 | EOS in both implementations |
-| Reference cloning | 1 | 10 | EOS in both implementations |
-| Reference and instruction | 4 | 10 | EOS in both implementations |
-
-All 2,352 audio tokens matched exactly. EOS rows in the reference are stored as
-padding and are checked separately, not passed to the codec. The plain greedy
-case does not reach EOS within this limit; it is a bounded-generation check, not
-an example of successful natural termination. These four cases do not measure
-speaker similarity or establish BF16/stochastic equivalence across versions.
-
-## Accuracy Test
-
-The paired BF16 run tested Omni commit
-`62c99c8c7d080b0d592adf8d5d7892e74dec466c` against reference commit
-`58ec70ce5fa4cc361bdebf77ec40d1365da00ab2`, using checkpoint
-`3e28c5151381a722f1d8661b4118c298caa77aa4` on the M5 Pro described above.
-Both implementations generated and scored all 50 English and 50 Chinese inputs.
-Every measured generation reached EOS; there were no failures, timeouts,
-frame-limit terminations or context-limit terminations.
-
-| Runtime | English WER (errors / words) | Chinese CER (errors / characters) |
-| --- | --- | --- |
-| Omni | 1.95% (11 / 564) | 1.72% (16 / 931) |
-| Reference | 1.06% (6 / 564) | 2.26% (21 / 931) |
-
-These are corpus error rates from the same Whisper large-v3-turbo scorer and
-normalization, not subjective quality scores. The scorer used Torch 2.13.0,
-Transformers 5.12.1, jiwer 4.0.0, openai-whisper 20250625 and
-opencc-python-reimplemented 0.1.7. No sample exceeded 50% error. Errors include
-shared scoring effects: Chinese numerals transcribed as digits in `zh-034`,
-English contraction expansion in `en-010`, and a source-text typo in `zh-001`.
-The original targets and these errors remain in the reported totals.
-Omni had five more English word errors and five fewer Chinese character errors;
-this small, single-seed subset does not establish a general quality ranking.
-
-The supplemental manifest uses the first target per language in plain
-no-reference and instruction-only modes. All four requests generated to EOS
-and scored successfully in each of three runs: Omni/common penalty 1.0,
-Omni/default penalty 1.1, and reference/common penalty 1.0. Both English cases
-had 0% WER in all runs. Chinese CER was 4.55% / 9.09% for Omni/common,
-13.64% / 9.09% for Omni/default, and 9.09% / 0% for reference/common
-(plain / instruction). These one-sentence checks establish execution and
-transcription behavior, not whether the requested voice style was followed.
-
-## Benchmark & Profiling
-
-The following measurements are direct runtime calls, with one excluded warmup
-per language. The two implementations ran sequentially. Values are means unless
-marked p95; seconds include prompt preparation through CPU waveform availability.
-
-| Runtime / language | Complete seconds | p95 seconds | Audio seconds | First audio seconds | RTF | Requests / compute second |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Omni / EN | 5.909 | 10.670 | 4.166 | 0.388 | 1.423 | 0.1692 |
-| Reference / EN | 15.945 | 25.814 | 4.216 | 15.945 | 3.799 | 0.0627 |
-| Omni / ZH | 7.865 | 11.255 | 5.782 | 0.336 | 1.361 | 0.1272 |
-| Reference / ZH | 21.723 | 30.653 | 5.912 | 21.723 | 3.664 | 0.0460 |
-
-The ratio of reference to Omni mean completion time is 2.70x for English and
-2.76x for Chinese. Generated durations differ, so RTF is also reported as the
-mean of each request's elapsed seconds divided by its audio seconds. Mean RTF
-remains above 1. These results do not establish real-time playback.
-The reference returns audio only after full decoding; its first-audio column
-is completion latency, not a streaming measurement. Omni uses two-frame
-incremental codec chunks. These numbers exclude HTTP transport and queueing.
-
-| Runtime / language | Mean live MPS tensor GiB | Mean MPS driver GiB |
-| --- | ---: | ---: |
-| Omni / EN | 6.170 | 6.940 |
-| Omni / ZH | 6.170 | 6.944 |
-| Reference / EN | 7.277 | 9.532 |
-| Reference / ZH | 7.277 | 10.094 |
-
-GiB means bytes divided by 2^30. These are post-request snapshots from
-`current_allocated_memory` and `driver_allocated_memory`, respectively.
-Driver allocation includes allocator/runtime resources beyond live tensors.
-Neither column measures peak allocation, process RSS, total system memory,
-or a minimum-memory requirement.
-
-### HTTP end-to-end measurements
-
-The same native runtime served the first four inputs per language, twice at
-each concurrency level, with a separate excluded warmup before each level.
-All 48 measured requests succeeded. Each input's PCM SHA-256 was identical
-across repetitions and concurrency levels. HTTP timings include server queueing;
-percentiles pool the 16 measured requests at each concurrency level.
-
-| Client concurrency | Requests / second | First audio mean / p95 seconds | Complete mean / p95 seconds | Mean RTF |
-| --- | ---: | ---: | ---: | ---: |
-| 1 | 0.1332 | 0.330 / 0.446 | 7.508 / 11.999 | 1.400 |
-| 2 | 0.1345 | 6.841 / 11.946 | 13.979 / 21.401 | 2.929 |
-| 4 | 0.1357 | 16.724 / 28.463 | 23.798 / 36.369 | 4.798 |
-
-Throughput remains nearly flat while queueing raises latency. Client concurrency
-does not enable model batching in this implementation. This eight-input HTTP
-subset is separate from the 100-input direct-runtime comparison; it is not a
-full-corpus load test. Raw requests, group wall times and configuration are in
-the `http` result directory, with `http-comparison.json` / `.csv` beside the
-direct-runtime summaries.
-
-## Validation and Limitations
-
-The final Breeze, shared audio, Qwen3-TTS and speech error/protocol unit suites
-passed 520 tests, with 176 hardware/optional-dependency skips. The full
-`pre-commit run --all-files` check passed. The real
-HTTP suite passed all 10 tests, including `en` / `zh` language hints, exact
-streamed PCM versus complete WAV equality, reference cloning, voice direction,
-client errors and recovery after disconnect. These runs used the same native
-runtime revision as the paired evaluation.
-
-The main paired run uses the common repetition penalty 1.0 because the reference
-fails its 1.1 preflight. Other settings and reproduction commands appear below.
-The model remains BF16 and the codec FP32. Different Torch/Transformers versions,
-attention kernels, samplers and codec execution are part of the runtime-stack
-comparison; the timing ratio cannot be attributed solely to the scheduler.
-Equal seeds do not imply equal stochastic token sequences. The separate FP32
-greedy token comparison above is the exact-parity evidence.
-
-The fixed 100-input subset covers reference-audio cloning. It does not establish
-speaker similarity, human-rated naturalness, robustness on the full corpus,
-CUDA performance or statistical significance. WER/CER includes ASR and text
-normalization effects. Expanding the corpus should follow review of these
-results rather than being inferred from this run.
-
-Raw request records, scorer configuration, per-sample transcriptions and
-`comparison.json` / `comparison.csv` are retained under
-`results/breeze-tts/bf16-eval`. The report can be regenerated from those records.
-The manifest and generation metadata record input and checkpoint hashes.
-Model weights, generated audio and large evaluation assets stay outside Git.
-
-## Reproduce the paired BF16 evaluation
-
-The evaluation scripts use the first 50 rows of each English and Chinese split
-from SeedTTS-Eval revision `27f4c1adee83b5b29b7c4b375f6b976324bda308`, without
-filtering. The manifest records source IDs, row indices, texts and reference-audio
-SHA-256 hashes. Both implementations receive the same manifest. This fixed
-100-request subset is not the full corpus.
-
-The shared configuration uses BF16 model weights, an FP32 codec, temperature
-0.9, top-k 50, top-p 1, seed 42 and at most 750 frames. Repetition penalty is
-explicitly set to 1: the standard reference raises a tensor-rank error with
-1.1 on the paired preflight inputs. This is a common-configuration comparison,
-not a claim that the unmodified defaults work in both implementations. Equal
-seeds do not produce identical draws in the CPU and MPS samplers.
-
-The reference environment uses Torch 2.9.1, Transformers 4.57.3 and eager
-attention, matching its entry point. Omni uses Torch 2.13.0, Transformers 5.12.1
-and SDPA. This compares complete runtime stacks, including their different
-dependency versions, attention implementations and codec execution.
-
-Reuse the environments and checkpoint from the setup above. Set the FFmpeg
-library path before starting either process. Run them sequentially on an idle
-Apple GPU:
+Run sequentially on an idle Apple GPU using the configuration above:
 
 ```bash
 breeze_workspace="$PWD"
@@ -369,30 +279,20 @@ export DYLD_LIBRARY_PATH="$(brew --prefix ffmpeg@7)/lib${DYLD_LIBRARY_PATH:+:$DY
 )
 ```
 
-Use `--limit-per-language 2` and new output directories for a preflight. The
-first selected input in each language is a separate, excluded warmup. Each
-request has a 300-second deadline. Output records retain failures, timeouts and
-frame/context-limit termination. Existing request logs are not overwritten.
-The preparation script also creates `smoke.json` with no-reference and
-instruction-only variants of the first target text in each language.
-For the supplemental comparison, repeat both generation commands with
-`smoke.json` and fresh `native-smoke-common` / `reference-smoke-common`
-directories. Also run the native command with `--repetition-penalty 1.1` into
-`native-smoke-default`. Score all three directories with the same scorer.
-Report the two common-configuration directories together, using `smoke.json`
-as the manifest; retain the default run separately because its sampling differs.
+Preflight with `--limit-per-language 2` and fresh output directories. Each run
+adds one excluded warmup per language and a **300-second request deadline**.
+Logs retain failures, timeouts and frame/context-limit termination and refuse
+to overwrite existing request records.
 
-Runtime latency includes prompt preparation, autoregressive generation, codec
-decoding and CPU waveform availability. It excludes model loading, weight
-hashing, audio-file writes and HTTP transport. The reference decodes the complete
-waveform before returning audio; its first-audio latency equals completion
-latency. Native decoding emits two-frame chunks. MPS tensor and driver memory
-are sampled after each request; neither counter is a peak-memory measurement.
+For supplemental cases, replace `manifest.json` with generated `smoke.json` and
+use fresh `native-smoke-common` / `reference-smoke-common` directories. Run
+native again with `--repetition-penalty 1.1` into `native-smoke-default`. Score
+all three; report only the two common runs together with `smoke.json`, keeping
+the differently configured default run separate.
 
-Score both directories with the same locally downloaded Whisper large-v3-turbo
-checkpoint, pinned to `41f01f3fe87f28c78e2fbf8b568835947dd65ed9`. Place its files
-under `assets/whisper-large-v3-turbo` and save an adjacent `assets/asr-model.json`
-containing its `model_id` and `revision`:
+### Shared scoring and report
+
+Download the pinned scorer and write its adjacent model metadata:
 
 ```bash
 .venv-apple/bin/python - "$breeze_evaluation/assets" <<'PY'
@@ -414,7 +314,7 @@ snapshot_download(model_id, revision=revision,
 PY
 ```
 
-Install the normalization dependency and run the shared scorer:
+Install normalization support, score both outputs and aggregate:
 
 ```bash
 uv pip install --python .venv-apple/bin/python opencc-python-reimplemented==0.1.7
@@ -426,22 +326,9 @@ uv pip install --python .venv-apple/bin/python opencc-python-reimplemented==0.1.
   "$breeze_evaluation/native-bf16" "$breeze_evaluation/reference-bf16"
 ```
 
-Scoring uses the repository's English normalization and Chinese character
-normalization. OpenCC converts both Chinese reference and hypothesis to
-simplified characters before scoring. The scorer uses FP32 MPS inference,
-greedy transcription, explicit language hints and overlapping 30-second chunks.
-The summary reports corpus WER/CER, not the mean of individual error rates, and
-keeps generation and scoring failure counts visible.
-Latency and RTF distributions cover successful generations. Direct-runtime
-throughput divides successful requests by the summed measured time of all
-attempts, including failures; it excludes file-writing and between-request
-overhead. Quality scores cover successfully scored outputs, alongside explicit
-requested/generated/scored counts.
-The reporter rejects mismatched input manifests, weight hashes, sampling
-settings and ASR configurations instead of combining incompatible runs.
+### HTTP benchmark
 
-For HTTP measurements, stop direct inference processes and start the server
-from the launch section. Run:
+Stop direct inference, launch the server, then run:
 
 ```bash
 .venv-apple/bin/python -m scripts.apple.breeze_eval_http \
@@ -453,49 +340,59 @@ from the launch section. Run:
   --http-directory "$breeze_evaluation/http"
 ```
 
-This uses four inputs per language, two repetitions, and client concurrency
-1/2/4. A separate warmup precedes each concurrency level. Measurements include
-server queueing; the model still executes requests serially. Request logs record
-first-audio and completion latency, duration and PCM hashes; group logs record
-wall time and successful requests per second. Keep model files, reference audio
-and generated waveforms outside Git. HTTP percentiles pool the measured requests
-across repetitions. The report also checks PCM hash consistency across the
-concurrency levels and repetitions.
+### Artifacts and metric definitions
 
-## CI coverage and lifecycle checks
+All results stay under `results/breeze-tts/bf16-eval`; keep weights, reference
+audio, generated waveforms and large assets outside Git.
 
-The existing `.github/workflows/test.yaml` unit job runs
-`pytest tests/ -v -m "not benchmark and not accelerator" -x` with CUDA hidden.
-It collects the Breeze CPU tests and shared `tests/unit_test/audio/` tests.
-This job still uses an H100-labelled runner and is gated by the parent Omni CI;
-the separate Intel CPU workflow only runs `tests/unit_test/cpu/`.
-Real MPS HTTP and reference-parity tests skip unless their environment variables
-are supplied. A missing `run-ci` label in a fork prevents the gated jobs from
-running; local results are not a substitute for a claimed GitHub run.
+| Artifact / statistic | Contents / definition |
+| --- | --- |
+| Manifest / generation metadata | Source IDs, row indices, texts, reference-audio hashes, input/checkpoint hashes and configuration |
+| Request / score logs | Per-request timing, termination, waveform metadata, scorer versions and transcriptions; explicit requested/generated/scored counts |
+| `comparison.json` / `.csv` | Recomputable direct-runtime summaries; latency/RTF cover successful generations, quality covers scored outputs |
+| Direct throughput | Successful requests / summed measured time of **all attempts**, including failures; excludes writes and between-request overhead |
+| `http/` | Request first-audio/completion latency, duration and PCM hashes; group wall times, successful requests/second and configuration |
+| `http-comparison.json` / `.csv` | HTTP summaries beside direct summaries; percentiles pool repetitions; verifies PCM hash consistency |
+| Report integrity | Rejects mismatched manifests, weights, sampling or scorer configurations |
 
-The controlled-producer scheduler test requires a stream message to arrive while
-the producer is still blocked, before completion. Other checks cover active
-cancellation, shutdown, failure after a streamed chunk and a subsequent healthy
-request. A tiny real text encoder verifies cancellation prevents the next CFG
-branch from starting. HTTP tests verify streamed/complete byte equality, client
-errors and disconnect recovery; network chunk counts alone are not evidence of
-real-time generation. Shared codec tests live under `audio/`; Qwen-specific arena,
-CUDA graph and installation tests remain under `qwen3_tts/`.
+## Implementation notes
 
-The existing shared compatibility adapter must run before importing the external
-`qwen_tts` package with Transformers 5.12. The factory's explicit dynamic import
-preserves that order without import-time global patching. This is a constrained
-third-party compatibility exception, not a new Breeze patch implementation.
+```text
+OpenAI speech request
+  -> validated Breeze request
+  -> independently encoded T5Gemma2 text segments + reference codec frames
+  -> Qwen3 backbone: first codebook / EOS
+       -> Llama depth decoder: remaining 15 codebooks
+       -> complete frame feeds the next backbone step
+  -> shared Qwen3-TTS incremental codec
+  -> streamed PCM or accumulated WAV
+```
+
+Each request owns guidance-branch KV caches, depth cache, RNG and codec state.
+The scheduler reuses the shared inbox/outbox lifecycle. Cancellation is checked
+between prompt-preparation operations, generation and depth steps; in-flight
+encoder/GPU operations finish first. Generator cleanup releases state on
+disconnect, failure or shutdown.
+
+The shared Qwen3-TTS codec and Transformers compatibility adapter are reused.
+The adapter must run before importing external `qwen_tts` with Transformers
+5.12; the factory's explicit dynamic import preserves that order without
+import-time global patching or a new Breeze patch implementation. The released
+runtime uses the bundled Qwen3-TTS tokenizer, not the unused legacy Mimi weights.
+
+Model tests use small real Transformers. Scheduler tests use a bounded,
+controlled audio producer without patching scheduler/queues/cancellation/global
+imports, and verify a chunk arrives before the blocked producer completes.
+They cover active cancellation, shutdown, failure after a chunk and subsequent
+recovery; a tiny text encoder checks cancellation before the next CFG branch.
+HTTP chunk counts alone do not prove real-time generation. Shared codec tests
+live in `audio/`; Qwen-specific arena, CUDA graph and installation tests remain
+in `qwen3_tts/`.
 
 ## Reference and license
 
-The inference layout follows the
-[official reference](https://github.com/breezeblue-ai/breeze-tts/tree/58ec70ce5fa4cc361bdebf77ec40d1365da00ab2).
-The checkpoint is pinned to `3e28c5151381a722f1d8661b4118c298caa77aa4`.
-The unused legacy Mimi weights are not instantiated; the released runtime uses
-the bundled Qwen3-TTS tokenizer instead.
-
-Reference source code and Qwen3-TTS tokenizer code are Apache-2.0. Breeze weights,
-converted weights and self-hosted outputs have separate research/non-commercial
-terms; see the [model license](https://huggingface.co/BreezeBlue/Breeze-TTS-2/blob/3e28c5151381a722f1d8661b4118c298caa77aa4/LICENSE).
-No model weights or generated audio are included in the PR.
+The layout follows the [pinned official reference](https://github.com/breezeblue-ai/breeze-tts/tree/58ec70ce5fa4cc361bdebf77ec40d1365da00ab2).
+Reference and Qwen3-TTS tokenizer code are Apache-2.0. Breeze weights, converted
+weights and self-hosted outputs have separate research/non-commercial terms;
+see the [model license](https://huggingface.co/BreezeBlue/Breeze-TTS-2/blob/3e28c5151381a722f1d8661b4118c298caa77aa4/LICENSE).
+No weights or generated audio are included in the PR.
