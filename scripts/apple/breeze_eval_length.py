@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from scripts.apple.breeze_eval_common import AudioChunk, EvaluationManifest
 from scripts.apple.breeze_eval_http import request_audio
+from scripts.apple.breeze_eval_report import ComparisonConfiguration
 
 app = typer.Typer()
 BUCKETS = ("15s", "30s", "45-55s", "over60s")
@@ -29,10 +30,10 @@ class LengthPassages(BaseModel):
 
 class LengthRequest(BaseModel):
     sample_id: str
-    language: str
+    language: Literal["en", "zh"]
     warmup: bool
     status: Literal["success", "error", "timeout"]
-    termination: str = ""
+    termination: Literal["eos", "frame_limit", "context_limit", ""] = ""
     elapsed_seconds: float = 0
     audio_seconds: float = 0
     first_audio_seconds: float = 0
@@ -42,7 +43,7 @@ class LengthRequest(BaseModel):
 
 class LengthScore(BaseModel):
     sample_id: str
-    status: str
+    status: Literal["success", "generation_failed", "scoring_failed"]
     reference_normalized: str = ""
     hypothesis_normalized: str = ""
     substitutions: int = 0
@@ -103,10 +104,25 @@ def prepare(reference_manifest: Path, passages: Path, output: Path) -> None:
 def report(
     results: list[Path],
     output: Path = typer.Option(...),
-    initial_buffer_seconds: float = 1,
+    initial_delay_seconds: float = 1,
 ) -> None:
-    if initial_buffer_seconds < 0:
-        raise ValueError("Initial buffer cannot be negative")
+    if initial_delay_seconds < 0:
+        raise ValueError("Initial delay cannot be negative")
+    else:
+        pass
+    configurations = [
+        ComparisonConfiguration.model_validate_json(
+            (directory / "metadata.json").read_text()
+        )
+        for directory in results
+    ]
+    scorers = [
+        json.loads((directory / "scorer.json").read_text()) for directory in results
+    ]
+    if any(configuration != configurations[0] for configuration in configurations):
+        raise ValueError("Generation configurations differ")
+    elif any(scorer != scorers[0] for scorer in scorers):
+        raise ValueError("Scorer configurations differ")
     else:
         pass
     rows = []
@@ -116,11 +132,26 @@ def report(
             LengthRequest.model_validate_json(line)
             for line in (directory / "requests.jsonl").read_text().splitlines()
         ]
-        scores = {
-            score.sample_id: score
-            for line in (directory / "scores.jsonl").read_text().splitlines()
-            for score in [LengthScore.model_validate_json(line)]
+        expected_ids = {
+            f"{language}-{bucket}-{index}"
+            for language in ("en", "zh")
+            for bucket in BUCKETS
+            for index in range(1, 4)
         }
+        observed_ids = [request.sample_id for request in requests if not request.warmup]
+        if len(observed_ids) != len(expected_ids) or set(observed_ids) != expected_ids:
+            raise ValueError(f"Missing or duplicate requests: {directory}")
+        else:
+            pass
+        score_records = [
+            LengthScore.model_validate_json(line)
+            for line in (directory / "scores.jsonl").read_text().splitlines()
+        ]
+        scores = {score.sample_id: score for score in score_records}
+        if len(score_records) != len(expected_ids) or set(scores) != expected_ids:
+            raise ValueError(f"Missing or duplicate scores: {directory}")
+        else:
+            pass
         for language in ("en", "zh"):
             for bucket in BUCKETS:
                 selected = [
@@ -129,17 +160,11 @@ def report(
                     if not request.warmup
                     and request.sample_id.startswith(f"{language}-{bucket}-")
                 ]
-                if len(selected) != 3:
-                    raise ValueError(
-                        f"Expected three requests: {directory}/{language}/{bucket}"
-                    )
-                else:
-                    pass
                 errors = 0
                 reference_units = 0
-                stalls = []
-                gaps = []
-                required_buffers = []
+                stall_seconds = []
+                chunk_gap_seconds = []
+                required_start_delay_seconds = []
                 successful = [
                     request for request in selected if request.status == "success"
                 ]
@@ -174,13 +199,15 @@ def report(
                     else:
                         pass
                     total_stall_seconds = 0.0
-                    minimum_buffer_seconds = 0.0
+                    minimum_start_delay_seconds = 0.0
                     max_gap_seconds = 0.0
                     if request.chunks:
-                        first_seconds = request.chunks[0].arrival_seconds
-                        playback_end_seconds = first_seconds + initial_buffer_seconds
+                        first_arrival_seconds = request.chunks[0].arrival_seconds
+                        playback_end_seconds = (
+                            first_arrival_seconds + initial_delay_seconds
+                        )
                         available_seconds = 0.0
-                        previous_seconds = first_seconds
+                        previous_arrival_seconds = first_arrival_seconds
                         for chunk in request.chunks:
                             total_stall_seconds += max(
                                 0, chunk.arrival_seconds - playback_end_seconds
@@ -189,21 +216,21 @@ def report(
                                 max(playback_end_seconds, chunk.arrival_seconds)
                                 + chunk.duration_seconds
                             )
-                            minimum_buffer_seconds = max(
-                                minimum_buffer_seconds,
+                            minimum_start_delay_seconds = max(
+                                minimum_start_delay_seconds,
                                 chunk.arrival_seconds
-                                - first_seconds
+                                - first_arrival_seconds
                                 - available_seconds,
                             )
                             max_gap_seconds = max(
                                 max_gap_seconds,
-                                chunk.arrival_seconds - previous_seconds,
+                                chunk.arrival_seconds - previous_arrival_seconds,
                             )
-                            previous_seconds = chunk.arrival_seconds
+                            previous_arrival_seconds = chunk.arrival_seconds
                             available_seconds += chunk.duration_seconds
-                        stalls.append(total_stall_seconds)
-                        gaps.append(max_gap_seconds)
-                        required_buffers.append(minimum_buffer_seconds)
+                        stall_seconds.append(total_stall_seconds)
+                        chunk_gap_seconds.append(max_gap_seconds)
+                        required_start_delay_seconds.append(minimum_start_delay_seconds)
                     else:
                         pass
                     details.append(
@@ -220,8 +247,8 @@ def report(
                             "stall_seconds": (
                                 total_stall_seconds if request.chunks else None
                             ),
-                            "minimum_buffer_seconds": (
-                                minimum_buffer_seconds if request.chunks else None
+                            "minimum_start_delay_seconds": (
+                                minimum_start_delay_seconds if request.chunks else None
                             ),
                             "max_chunk_gap_seconds": (
                                 max_gap_seconds if request.chunks else None
@@ -265,19 +292,19 @@ def report(
                             else None
                         ),
                         "mean_stall_seconds": (
-                            statistics.mean(stalls) if stalls else None
+                            statistics.mean(stall_seconds) if stall_seconds else None
                         ),
-                        "max_chunk_gap_seconds": max(gaps, default=None),
-                        "max_minimum_buffer_seconds": max(
-                            required_buffers, default=None
+                        "max_chunk_gap_seconds": max(chunk_gap_seconds, default=None),
+                        "max_minimum_start_delay_seconds": max(
+                            required_start_delay_seconds, default=None
                         ),
                     }
                 )
     output.write_text(
         json.dumps(
             {
-                "initial_buffer_seconds": initial_buffer_seconds,
-                "playback_definition": "Start playback one initial buffer after first arrival; consume at 1x; count stalls only while waiting for subsequent chunks. Excludes network and device playback.",
+                "initial_delay_seconds": initial_delay_seconds,
+                "playback_definition": "Start playback after the configured initial delay from first arrival; consume at 1x; count stalls only while waiting for subsequent chunks. Excludes network and device playback.",
                 "tail_definition": "Deleted reference units in final 20 percent under ASR alignment; a diagnostic, not human judgment or a completeness guarantee.",
                 "groups": rows,
                 "samples": details,
@@ -296,7 +323,12 @@ async def probe_recovery(manifest: Path, base_url: str, output: Path) -> None:
         with output.open("x") as stream:
             for language in ("en", "zh"):
                 for index in range(1, 4):
-                    for bucket in ("over60s", "15s"):
+                    baseline_sha256 = None
+                    for role, bucket in (
+                        ("baseline", "15s"),
+                        ("over_limit", "over60s"),
+                        ("recovery", "15s"),
+                    ):
                         sample = by_id[f"{language}-{bucket}-{index}"]
                         response = await request_audio(
                             client,
@@ -310,9 +342,17 @@ async def probe_recovery(manifest: Path, base_url: str, output: Path) -> None:
                         record = response.model_dump()
                         record["health_status_after_request"] = health.status_code
                         record["repetition_penalty"] = 1.1
-                        record["role"] = (
-                            "over_limit" if bucket == "over60s" else "recovery"
-                        )
+                        record["role"] = role
+                        if role == "baseline":
+                            baseline_sha256 = response.audio_sha256
+                        elif role == "recovery":
+                            record["matches_baseline"] = (
+                                response.status == "success"
+                                and baseline_sha256 is not None
+                                and response.audio_sha256 == baseline_sha256
+                            )
+                        else:
+                            pass
                         serialized = json.dumps(record)
                         stream.write(serialized + "\n")
                         stream.flush()

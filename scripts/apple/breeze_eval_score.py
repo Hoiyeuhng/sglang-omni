@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Score saved Breeze waveforms with one pinned ASR model and normalization."""
 
+import hashlib
 import importlib.metadata
 import json
 import math
@@ -30,7 +31,7 @@ class RequestRecord(BaseModel):
     error: str = ""
 
 
-def main(model_path: Path, results: list[Path]) -> None:
+def main(model_path: Path, results: list[Path], long_form: bool = False) -> None:
     processor = WhisperProcessor.from_pretrained(model_path)
     model = WhisperForConditionalGeneration.from_pretrained(
         model_path, dtype=torch.float32, attn_implementation="sdpa"
@@ -41,8 +42,8 @@ def main(model_path: Path, results: list[Path]) -> None:
         tokenizer=processor.tokenizer,
         feature_extractor=processor.feature_extractor,
         device="mps",
-        chunk_length_s=30,
-        stride_length_s=5,
+        chunk_length_s=None if long_form else 30,
+        stride_length_s=None if long_form else 5,
     )
     simplified = OpenCC("t2s")
     for directory in results:
@@ -55,6 +56,9 @@ def main(model_path: Path, results: list[Path]) -> None:
             json.dumps(
                 {
                     "model": str(model_path),
+                    "script_sha256": hashlib.sha256(
+                        Path(__file__).read_bytes()
+                    ).hexdigest(),
                     "model_pin": json.loads(
                         (model_path.parent / "asr-model.json").read_text()
                     ),
@@ -75,8 +79,10 @@ def main(model_path: Path, results: list[Path]) -> None:
                         "do_sample": False,
                         "task": "transcribe",
                         "language": "per-sample",
-                        "chunk_seconds": 30,
-                        "stride_seconds": 5,
+                        "chunk_seconds": None if long_form else 30,
+                        "stride_seconds": None if long_form else 5,
+                        "long_form": long_form,
+                        "return_timestamps": long_form,
                     },
                 },
                 indent=2,
@@ -106,6 +112,7 @@ def main(model_path: Path, results: list[Path]) -> None:
                         ).astype(np.float32)
                         transcript = transcriber(
                             {"raw": waveform, "sampling_rate": 16000},
+                            return_timestamps=True if long_form else None,
                             generate_kwargs={
                                 "language": request.language,
                                 "task": "transcribe",

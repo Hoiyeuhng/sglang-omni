@@ -59,9 +59,9 @@ curl http://127.0.0.1:8000/v1/audio/speech \
 | Cloning / direction | Supply `ref_audio` and its exact `ref_text`; add `instructions` for voice direction. Use an audio data URI or another reference accepted by the media policy. Local files require `--allowed-local-media-path`. |
 | Voices | Uploaded voices use the shared Omni voice API; no built-in named speaker presets. Use your own, consented or permitted synthetic recordings. |
 | Streaming | Set `stream: true`, `response_format: "pcm"`: mono 24 kHz signed 16-bit little-endian PCM. Default chunks contain two frames (160 ms); final partial chunks are retained. Override with `--tts.factory.chunk_frames 4`. |
-| Sampling defaults | Temperature **0.9**, top-k **50**, top-p **1**, repetition penalty **1.1**, CFG scale **1**, maximum **750 audio frames**. Explicit API values override these; implicit defaults from other models do not. Temperature **0** selects greedy decoding. |
+| Sampling defaults | Temperature **0.9**, top-k **50**, top-p **1**, repetition penalty **1.1**, CFG scale **1**, maximum **750 audio frames (about 60 seconds)**. Explicit API values override these; implicit defaults from other models do not. Temperature **0** selects greedy decoding. |
 | Guidance / speed | CFG other than 1 requires instructions or returns a client error. `speed` must be 1; request pace changes through instructions. |
-| Context | The **2,048 positions** include text and reference frames. Oversized prompts are rejected; generation is bounded by remaining space. |
+| Context | The **2,048 positions** include text and reference frames. Oversized prompts are rejected; generation is bounded by remaining space. Text is not automatically split; reaching the frame/context limit can truncate output. |
 | Seed | Controls a request-local CPU sampler while model computation stays on MPS; it does not promise bitwise equality across devices or dependency versions. |
 
 ## Accuracy Test
@@ -183,6 +183,52 @@ Timing includes server queueing; p95 pools 16 measured requests per level.
 Throughput stays nearly flat as queueing raises latency: client concurrency
 is not model batching. This eight-input load test is separate from the
 100-input direct-runtime evaluation.
+
+### Length boundary test
+
+Each runtime receives **24 fixed cloning inputs**: three stories per language at
+four cumulative lengths, retaining all actual durations. Omni uses `7efa6788`
+with timing instrumentation; other pins/common sampling are as above, with one
+excluded warmup per language and a 600-second deadline. Both use **750 frames**
+(about 60 seconds); the reference entry point normally defaults to 1,500.
+
+All 48 outputs generated and scored, without runtime errors, timeouts or context
+limits. Each runtime has **16 EOS and 8 frame-limit terminations**: six deliberate
+over-limit inputs and two nominal long inputs. All capped outputs have tail
+deletions in ASR; EOS outputs have no ASR deletions. Paired columns are **Omni / reference**; errors are corpus
+EN WER or ZH CER.
+
+| Language / nominal target | Actual audio seconds, range | EOS | WER / CER | Mean RTF |
+| --- | --- | --- | --- | --- |
+| EN / 15s | 11.7–15.4 / 12.4–15.0 | 3/3 / 3/3 | 0.00% / 0.00% | 1.41 / 3.92 |
+| EN / 30s | 26.3–28.6 / 26.1–30.6 | 3/3 / 3/3 | 0.00% / 0.42% | 1.41 / 4.50 |
+| EN / 45-55s | 57.0–60.0 / 48.6–52.9 | 2/3 / 3/3 | 4.34% / 0.24% | 1.39 / 3.96 |
+| EN / over60s | 60.0 / 60.0 | 0/3 / 0/3 | 36.35% / 35.33% | 1.38 / 3.92 |
+| ZH / 15s | 15.8–17.4 / 16.0–19.4 | 3/3 / 3/3 | 2.86% / 6.29% | 1.39 / 3.72 |
+| ZH / 30s | 27.8–35.1 / 24.0–41.2 | 3/3 / 3/3 | 2.47% / 2.78% | 1.40 / 3.87 |
+| ZH / 45-55s | 48.9–60.0 / 56.9–60.0 | 2/3 / 1/3 | 6.57% / 17.05% | 1.42 / 3.73 |
+| ZH / over60s | 60.0 / 60.0 | 0/3 / 0/3 | 54.74% / 50.77% | 1.43 / 3.72 |
+
+Scoring uses the pinned Whisper model's **native long-form transcription with
+timestamps**. All 48 waveforms were rescored after overlapping-chunk transcription
+omitted middle text and hallucinated repetition; initial results remain in
+`scores-chunked.jsonl`. Chinese orthographic/name differences are retained.
+This small ASR-scored subset does not establish a general quality ranking.
+
+Starting playback one second after the first chunk produces **21.3–24.8 seconds
+of mean simulated stalls** in Omni's long/over-limit groups. Maximum chunk gap:
+**0.77 seconds**; maximum required startup delay: **26.42 seconds**. These traces
+exclude HTTP/audio-device buffering. The report retains final-20%-of-text
+deletions as a diagnostic; neither EOS nor that metric guarantees completeness.
+
+Maximum post-request MPS driver snapshots are **27.56 / 17.25 GiB**; live tensors
+remain about **6.17 / 7.28 GiB**. These are not peak or minimum-memory measurements.
+
+At serving-default repetition penalty **1.1**, all **18/18 HTTP requests**
+completed and all post-request health checks returned 200. Each of six 60-second
+capped requests was bracketed by identical short requests; all **6/6 recovery
+responses matched the baseline PCM SHA-256**. Client chunk timings are retained
+in `http-recovery.jsonl`.
 
 ## Validation and Limitations
 
@@ -350,9 +396,43 @@ Stop direct inference, launch the server, then run:
   --http-directory "$breeze_evaluation/http"
 ```
 
+### Length and recovery probes
+
+Prepare the length inputs from the frozen manifest, using the variables above:
+
+```bash
+breeze_length="$PWD/results/breeze-tts/length-eval"
+.venv-apple/bin/python -m scripts.apple.breeze_eval_length prepare \
+  "$breeze_evaluation/manifest.json" \
+  scripts/apple/fixtures/breeze_length_passages.json "$breeze_length"
+```
+
+Repeat the paired generation commands with `$breeze_length/manifest.json` and
+fresh `$breeze_length/native` / `$breeze_length/reference` outputs. Set
+`--repetition-penalty 1 --max-new-tokens 750 --timeout-seconds 600` on both.
+Score with Whisper's native long-form transcription and summarize:
+
+```bash
+.venv-apple/bin/python -m scripts.apple.breeze_eval_score \
+  "$breeze_evaluation/assets/whisper-large-v3-turbo" \
+  "$breeze_length/native" "$breeze_length/reference" --long-form
+.venv-apple/bin/python -m scripts.apple.breeze_eval_length report \
+  "$breeze_length/native" "$breeze_length/reference" \
+  --output "$breeze_length/summary.json"
+```
+
+After direct inference finishes, launch the server and run the six
+baseline/over-limit/recovery groups at serving-default repetition penalty **1.1**:
+
+```bash
+.venv-apple/bin/python -m scripts.apple.breeze_eval_length http \
+  "$breeze_length/manifest.json" http://127.0.0.1:8000 \
+  "$breeze_length/http-recovery.jsonl"
+```
+
 ### Artifacts and metric definitions
 
-All results stay under `results/breeze-tts/bf16-eval`; keep weights, reference
+Results stay under `results/breeze-tts/bf16-eval` or `length-eval`; keep weights, reference
 audio, generated waveforms and large assets outside Git.
 
 | Artifact / statistic | Contents / definition |
