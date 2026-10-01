@@ -39,24 +39,27 @@ def reference_audio(client: httpx.Client) -> bytes:
 
 
 @pytest.mark.parametrize(
-    "text,instructions",
+    "text,instructions,language",
     [
         (
             "Hello, this is Breeze speaking on a Mac.",
             "A warm female voice speaking clearly.",
+            "en",
         ),
         (
             "今天天气很好，我们一起去公园散步吧。",
             "一位温柔的女性，语气自然，吐字清晰。",
+            "zh",
         ),
     ],
 )
 def test_streaming_matches_complete_audio(
-    client: httpx.Client, text: str, instructions: str
+    client: httpx.Client, text: str, instructions: str, language: str
 ) -> None:
     request = {
         "input": text,
         "instructions": instructions,
+        "language": language,
         "seed": 42,
         "cfg_scale": 4,
         "max_new_tokens": 100,
