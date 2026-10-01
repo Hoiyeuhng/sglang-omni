@@ -442,6 +442,28 @@ def test_speech_websocket_config_uses_served_model_and_default_voice() -> None:
     asyncio.run(run())
 
 
+def test_speech_websocket_preserves_guidance_scale() -> None:
+    async def run() -> None:
+        service = SpeechRequestValidator(default_model="breeze-tts-2")
+        session = SpeechWebSocketSession(
+            RecordingWebSocket(),
+            client=StreamingSpeechClient(),
+            speech_service=service,
+        )
+        configuration = await session.parse_config(
+            {
+                "type": "session.config",
+                "instructions": "A calm voice.",
+                "cfg_scale": 4,
+            }
+        )
+        request = session.speech_request_from_config(configuration, "Hello.")
+        generated = service.build_generate_request(request)
+        assert generated.metadata["tts_params"]["cfg_scale"] == 4
+
+    asyncio.run(run())
+
+
 def test_speech_websocket_rejects_missing_initial_config() -> None:
     client = TestClient(create_app(StreamingSpeechClient(), model_name="tts"))
 

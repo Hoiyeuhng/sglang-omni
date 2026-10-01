@@ -3,7 +3,8 @@
 **Currently supported: Apple Silicon (MPS) only.** The `/v1/audio/speech` API
 supports English/Chinese synthesis, voice design, reference cloning, voice
 direction, seeded sampling and incremental PCM streaming. Requests execute
-serially; concurrent clients queue.
+serially; concurrent clients queue. This uses the English/Chinese open-weight
+checkpoint; BreezeBlue's hosted Multilingual model is outside this integration.
 
 ## Install and launch
 
@@ -61,6 +62,7 @@ curl http://127.0.0.1:8000/v1/audio/speech \
 | Streaming | Set `stream: true`, `response_format: "pcm"`: mono 24 kHz signed 16-bit little-endian PCM. Default chunks contain two frames (160 ms); final partial chunks are retained. Override with `--tts.factory.chunk_frames 4`. |
 | Sampling defaults | Temperature **0.9**, top-k **50**, top-p **1**, repetition penalty **1.1**, CFG scale **1**, maximum **750 audio frames (about 60 seconds)**. Explicit API values override these; implicit defaults from other models do not. Temperature **0** selects greedy decoding. |
 | Guidance / speed | CFG other than 1 requires instructions or returns a client error. `speed` must be 1; request pace changes through instructions. |
+| Unsupported controls | `stream_codec_output` and `initial_codec_chunk_frames` return client errors; configure chunk size with `--tts.factory.chunk_frames`. Non-finite reference audio is rejected. |
 | Context | The **2,048 positions** include text and reference frames. Oversized prompts are rejected; generation is bounded by remaining space. Text is not automatically split; reaching the frame/context limit can truncate output. |
 | Seed | Controls a request-local CPU sampler while model computation stays on MPS; it does not promise bitwise equality across devices or dependency versions. |
 
@@ -132,6 +134,10 @@ EOS padding rows are checked separately and excluded from decoding. Plain
 generation hitting the shared cap is a bounded-generation check, not successful
 natural termination. This does not establish BF16/stochastic or CUDA fast-runtime
 parity. [Reproduction commands](#fp32-parity).
+
+The real FP32 codec also matches full decoding within `rtol=2e-4, atol=2e-5`
+when the 120-frame reference sequence is split into 1, 2, 7 or 32-frame chunks,
+including final partial chunks and sliding-window boundaries.
 
 ## Benchmark & Profiling
 
@@ -234,8 +240,9 @@ in `http-recovery.jsonl`.
 
 | Check | Result / scope |
 | --- | --- |
-| Related unit suites | **520 passed, 176 skipped** for hardware/optional dependencies; Breeze, shared audio, Qwen3-TTS and speech error/protocol tests |
-| Real HTTP suite | **10 passed**: `en`/`zh`, exact streamed PCM/complete WAV equality, cloning, direction with a generated reference, client errors and disconnect recovery |
+| Related unit suites | **1,108 passed, 176 skipped**, with one existing NVIDIA launcher failure also reproduced on unchanged `main` (`nvidia-smi` unavailable on macOS); Breeze, shared audio, Qwen3-TTS and the full `serve/` suite |
+| Real HTTP suite | **14 passed**: `en`/`zh`, exact streamed PCM/complete WAV equality, cloning, direction with a generated reference, unsupported controls, non-finite reference rejection and disconnect recovery |
+| Real checkpoint suite | **8 passed**: four FP32 token-parity cases and four full/incremental codec comparisons |
 | Repository checks | Full `pre-commit run --all-files` passed |
 | Interpretation | Different dependency versions, attention kernels, samplers and codec execution make this a runtime-stack comparison, not a scheduler-only speedup. |
 | Coverage limits | No full-corpus, speaker-similarity, human-rated naturalness, statistical-significance, CUDA performance or minimum-memory claim. ASR/normalization affect WER/CER; cold-start timings are not presented as warmed performance. Review this subset before expanding it. |

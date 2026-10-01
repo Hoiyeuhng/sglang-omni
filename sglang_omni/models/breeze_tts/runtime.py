@@ -112,6 +112,8 @@ class BreezeRuntime:
             )
             if waveform.size == 0:
                 raise BreezeRequestError("Reference audio is empty")
+            elif not np.isfinite(waveform).all():
+                raise BreezeRequestError("Reference audio contains non-finite samples")
             elif waveform.size > maximum_samples:
                 raise BreezeRequestError(
                     "Reference audio exceeds the model context window"

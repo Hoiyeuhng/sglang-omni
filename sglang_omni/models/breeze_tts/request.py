@@ -66,6 +66,8 @@ class SpeechOptions(BaseModel):
     token_count: None = None
     duration_tokens: None = None
     suppress_bootstrap_silence: Literal[False] | None = None
+    stream_codec_output: None = None
+    initial_codec_chunk_frames: None = None
     explicit_generation_params: list[str] = Field(default_factory=list)
 
 

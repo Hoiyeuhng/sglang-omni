@@ -488,6 +488,7 @@ class SpeechStreamSessionConfig(BaseModel):
     task_type: str | None = None
     language: str | None = None
     instructions: str | None = None
+    cfg_scale: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     ref_audio: str | None = None
     ref_text: str | None = None
     references: list[SpeechReference] | None = None

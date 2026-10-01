@@ -85,3 +85,24 @@ def test_reference_full_sequence_and_eos(
     else:
         assert len(reference) == sampling.max_new_tokens
         np.testing.assert_array_equal(actual, reference)
+
+
+@pytest.mark.parametrize("chunk_frames", [1, 2, 7, 32])
+@torch.inference_mode()
+def test_reference_codes_decode_equally_across_chunk_sizes(
+    runtime: BreezeRuntime, chunk_frames: int
+) -> None:
+    assert REFERENCE_DIRECTORY is not None
+    reference = np.load(Path(REFERENCE_DIRECTORY) / "plain.npy")[0]
+    codes = torch.from_numpy(reference).to(runtime.device).T.unsqueeze(0)
+    expected = runtime.audio_tokenizer.model.decoder(codes).float().cpu()
+    state = runtime.codec.init_state(
+        batch_size=1, device=runtime.device, dtype=torch.float32
+    )
+    chunks = [
+        runtime.codec.decode(part, state).float().cpu()
+        for part in codes.split(chunk_frames, dim=-1)
+    ]
+    actual = torch.cat(chunks, dim=-1)
+    assert actual.shape[-1] == len(reference) * runtime.codec.total_upsample
+    torch.testing.assert_close(actual, expected, rtol=2e-4, atol=2e-5)

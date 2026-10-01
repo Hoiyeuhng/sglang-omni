@@ -121,6 +121,8 @@ def test_reference_clone_and_direction(
         {"ref_text": "No audio"},
         {"language": "French"},
         {"cfg_scale": 4},
+        {"stream_codec_output": False},
+        {"initial_codec_chunk_frames": 8},
     ],
 )
 def test_request_errors_are_client_errors(
@@ -152,3 +154,23 @@ def test_disconnect_does_not_block_next_request(client: httpx.Client) -> None:
     response.raise_for_status()
     waveform, _ = sf.read(io.BytesIO(response.content))
     assert waveform.size > 0
+
+
+@pytest.mark.parametrize("invalid_sample", [float("nan"), float("inf")])
+def test_nonfinite_reference_is_a_client_error(
+    client: httpx.Client, invalid_sample: float
+) -> None:
+    audio = io.BytesIO()
+    waveform = np.zeros(24000, dtype=np.float32)
+    waveform[12000] = invalid_sample
+    sf.write(audio, waveform, 24000, format="WAV", subtype="FLOAT")
+    response = client.post(
+        "/v1/audio/speech",
+        json={
+            "input": "Hello.",
+            "ref_audio": "data:audio/wav;base64,"
+            + base64.b64encode(audio.getvalue()).decode(),
+            "ref_text": "Reference.",
+        },
+    )
+    assert response.status_code == 400, response.text

@@ -110,6 +110,8 @@ def test_explicit_sampling_and_inline_reference() -> None:
         {"cfg_scale": float("nan")},
         {"cfg_scale": 4},
         {"token_count": 10},
+        {"stream_codec_output": False},
+        {"initial_codec_chunk_frames": 8},
     ],
 )
 def test_unsupported_or_incomplete_requests(

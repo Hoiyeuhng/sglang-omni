@@ -2,14 +2,19 @@
 
 from pathlib import Path
 from threading import Event
+from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
 from pydantic import ValidationError
 from safetensors.torch import save_file
 
 from sglang_omni.models.breeze_tts.model import BreezeCheckpointConfig, BreezeModel
-from sglang_omni.models.breeze_tts.request import BreezeSpeechRequest
+from sglang_omni.models.breeze_tts.request import (
+    BreezeRequestError,
+    BreezeSpeechRequest,
+)
 from sglang_omni.models.breeze_tts.runtime import BreezeRuntime
 from sglang_omni.models.breeze_tts.sampling import BreezeSamplingParams, sample_token
 
@@ -41,6 +46,29 @@ def test_cancelled_prompt_does_not_start_guidance_branch(model: BreezeModel) -> 
     with pytest.raises(InterruptedError, match="cancelled"):
         runtime.prepare_prompts(request, cancelled)
     assert runtime.encoded_segments == 1
+
+
+@pytest.mark.parametrize("invalid_sample", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_reference_is_rejected_before_encoding(
+    model: BreezeModel, monkeypatch: pytest.MonkeyPatch, invalid_sample: float
+) -> None:
+    waveform = np.array([0.0, invalid_sample], dtype=np.float32)
+    monkeypatch.setattr(
+        "sglang_omni.models.breeze_tts.runtime.load_audio", Mock(return_value=waveform)
+    )
+    tokenizer = Mock()
+    tokenizer.get_input_sample_rate.return_value = 24000
+    runtime = BreezeRuntime.__new__(BreezeRuntime)
+    runtime.model = model
+    runtime.audio_tokenizer = tokenizer
+    runtime.sample_rate_hz = 24000
+    runtime.codec = Mock(total_upsample=1920)
+    request = BreezeSpeechRequest(
+        text="Hello", ref_audio="reference.wav", ref_text="Reference"
+    )
+    with pytest.raises(BreezeRequestError, match="non-finite"):
+        runtime.prepare_prompts(request, Event())
+    tokenizer.encode.assert_not_called()
 
 
 @pytest.fixture
