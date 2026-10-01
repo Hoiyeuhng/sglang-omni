@@ -7,16 +7,24 @@ serially; concurrent clients queue.
 
 ## Install and launch
 
-Follow the [Apple environment setup](qwen3_asr.md#apple-silicon-mlx) with Python
-3.12, then install the codec without replacing the project's dependency pins:
+Requires macOS 14 or newer on Apple Silicon and Homebrew. From this repository's
+root, create or reuse the Python 3.12 environment and install the codec:
 
 ```bash
+./install.sh
+source .venv-apple/bin/activate
 uv pip install --python .venv-apple/bin/python --no-deps qwen-tts==0.1.1
 
+export DYLD_LIBRARY_PATH="$(brew --prefix ffmpeg@7)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 PYTORCH_ENABLE_MPS_FALLBACK=0 .venv-apple/bin/python -m sglang_omni.cli serve \
   --config examples/configs/breeze_tts_apple.yaml \
   --host 127.0.0.1 --port 8000 --model-name breeze-tts-2
 ```
+
+The installer supplies `uv`, `ffmpeg@7`, the pinned SGLang `all_mps` dependencies
+and this checkout. `--no-deps` keeps the codec from replacing those pins.
+For installer options, see the shared
+[Apple Silicon installation guide](../get_started/installation.md#macos-apple-silicon).
 
 The config pins a public, ungated checkpoint (several GB; no token required).
 For an existing download, add `--model-path /path/to/breeze-checkpoint`.
@@ -24,9 +32,11 @@ The model uses BF16 and the codec FP32 on MPS; CUDA, an NVIDIA GPU and
 FlashAttention are not required. The launcher may report zero configured GPUs
 because this stage loads MPS directly rather than using CUDA placement.
 
-For compressed reference audio, follow the Apple setup's `ffmpeg@7` and
-`DYLD_LIBRARY_PATH` instructions. WAV decoding has a SoundFile fallback;
-optional SoX/FlashAttention import warnings do not prevent this WAV workflow.
+Keep the FFmpeg library export when starting the server: compressed references
+need it, while WAV decoding has a SoundFile fallback. Use `ffmpeg@7` for the
+pinned TorchCodec; optional SoX/FlashAttention warnings do not prevent the WAV
+workflow. If a macOS launcher strips `DYLD_*`, set the variable on the final
+server process.
 
 ## Generate speech
 
