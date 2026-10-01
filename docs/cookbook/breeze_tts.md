@@ -1,4 +1,7 @@
-# Breeze TTS 2 on Apple Silicon
+# Breeze TTS 2
+
+The integration described in this guide currently supports only Apple Silicon
+with the MPS backend.
 
 Breeze TTS 2 can generate English and Chinese speech on the Apple GPU through
 Omni's `/v1/audio/speech` API. The implementation supports voice design,
