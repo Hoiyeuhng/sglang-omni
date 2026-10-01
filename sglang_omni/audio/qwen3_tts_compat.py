@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Compatibility shims for upstream qwen-tts."""
+"""Shared compatibility shims for the qwen-tts codec and model package."""
 
 from __future__ import annotations
 

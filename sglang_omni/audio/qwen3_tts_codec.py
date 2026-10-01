@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Stateful incremental decoder for the Qwen3-TTS speech tokenizer."""
+"""Shared stateful incremental decoder for the Qwen3-TTS speech tokenizer."""
 
 from __future__ import annotations
 

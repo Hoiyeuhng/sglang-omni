@@ -117,7 +117,7 @@ stores the value. The bump that introduced the read-only record turned
 several write-then-read-back sites into hard errors.
 
 **Compat overlays.** `sglang_omni/models/dots_tts/compat.py`,
-`sglang_omni/models/qwen3_tts/compat.py` and
+`sglang_omni/audio/qwen3_tts_compat.py` and
 `sglang_omni/models/qwen3_omni/components/vision_compat.py` bridge a pinned
 third-party package to the pinned stack, and each carries its removal
 condition in its docstring. Read the condition against the new stack and

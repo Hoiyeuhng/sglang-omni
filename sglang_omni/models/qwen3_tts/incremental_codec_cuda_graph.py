@@ -14,8 +14,8 @@ from typing import Any, Literal
 
 import torch
 
+from sglang_omni.audio.qwen3_tts_codec import Qwen3TTSIncrementalDecoder
 from sglang_omni.models.qwen3_tts.codec_state_arena import Qwen3TTSCodecStateArena
-from sglang_omni.models.qwen3_tts.incremental_codec import Qwen3TTSIncrementalDecoder
 from sglang_omni.utils.gpu_memory import format_bytes_gib
 
 logger = logging.getLogger(__name__)

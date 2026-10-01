@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from sglang_omni.models.qwen3_tts.incremental_codec import Qwen3TTSIncrementalCodecState
+from sglang_omni.audio.qwen3_tts_codec import Qwen3TTSIncrementalCodecState
 from sglang_omni.models.qwen3_tts.incremental_codec_cuda_graph import (
     CaptureResourceSet,
     IncrementalCodecGraphKey,

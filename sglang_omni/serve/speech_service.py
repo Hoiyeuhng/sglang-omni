@@ -972,6 +972,10 @@ def build_tts_params(
         tts_params["instructions"] = request.instructions
     else:
         pass
+    if request.cfg_scale is not None:
+        tts_params["cfg_scale"] = request.cfg_scale
+    else:
+        pass
     if request.ref_audio is not None:
         tts_params["ref_audio"] = request.ref_audio
     else:

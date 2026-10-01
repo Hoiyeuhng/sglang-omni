@@ -9,10 +9,10 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from sglang_omni.models.qwen3_tts import speaker_encoder_cuda_graph
-from sglang_omni.models.qwen3_tts.compat import (
+from sglang_omni.audio.qwen3_tts_compat import (
     apply_qwen_tts_transformers_compatibility_patches,
 )
+from sglang_omni.models.qwen3_tts import speaker_encoder_cuda_graph
 from sglang_omni.models.qwen3_tts.speaker_encoder_cuda_graph import (
     SPEAKER_MEL_HOP,
     Qwen3TTSSpeakerEncoderCudaGraphRunner,
