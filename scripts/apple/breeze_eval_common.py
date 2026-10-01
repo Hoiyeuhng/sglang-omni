@@ -6,7 +6,7 @@ import json
 import signal
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import FrameType
 from typing import Literal, Protocol
@@ -38,12 +38,19 @@ class EvaluationManifest(BaseModel):
 
 
 @dataclass(kw_only=True)
+class AudioChunk:
+    arrival_seconds: float
+    duration_seconds: float
+
+
+@dataclass(kw_only=True)
 class GeneratedAudio:
     waveform: NDArray[np.float32]
     sample_rate_hz: int
     frames: int
     termination: Literal["eos", "frame_limit", "context_limit"]
     first_audio_seconds: float
+    chunks: list[AudioChunk] = field(default_factory=list)
 
 
 class EvaluationEngine(Protocol):
@@ -171,6 +178,7 @@ def evaluate(
                             "first_audio_seconds": audio.first_audio_seconds,
                             "rtf": elapsed_seconds / duration_seconds,
                             "frames": audio.frames,
+                            "chunks": [asdict(chunk) for chunk in audio.chunks],
                             "termination": audio.termination,
                             "peak_amplitude": float(np.abs(audio.waveform).max()),
                             "rms_amplitude": float(np.sqrt(np.mean(audio.waveform**2))),

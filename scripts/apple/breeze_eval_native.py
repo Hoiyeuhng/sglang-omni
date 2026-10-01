@@ -9,7 +9,12 @@ import numpy as np
 import torch
 import typer
 
-from scripts.apple.breeze_eval_common import EvaluationSample, GeneratedAudio, evaluate
+from scripts.apple.breeze_eval_common import (
+    AudioChunk,
+    EvaluationSample,
+    GeneratedAudio,
+    evaluate,
+)
 from sglang_omni.models.breeze_tts.request import BreezeSpeechRequest
 from sglang_omni.models.breeze_tts.runtime import BreezeRuntime
 from sglang_omni.models.breeze_tts.sampling import BreezeSamplingParams
@@ -52,6 +57,7 @@ class NativeEvaluation:
         )
         pending = []
         chunks = []
+        chunk_timings: list[AudioChunk] = []
         frame_count = 0
         first_audio_seconds = None
         for frame in self.runtime.model.generate_frames(
@@ -61,6 +67,12 @@ class NativeEvaluation:
             frame_count += 1
             if len(pending) == self.runtime.chunk_frames:
                 chunks.append(self.runtime.decode_frames(pending, state))
+                chunk_timings.append(
+                    AudioChunk(
+                        arrival_seconds=time.perf_counter() - started_seconds,
+                        duration_seconds=chunks[-1].size / self.runtime.sample_rate_hz,
+                    )
+                )
                 pending.clear()
                 if first_audio_seconds is None:
                     first_audio_seconds = time.perf_counter() - started_seconds
@@ -70,6 +82,12 @@ class NativeEvaluation:
                 pass
         if pending:
             chunks.append(self.runtime.decode_frames(pending, state))
+            chunk_timings.append(
+                AudioChunk(
+                    arrival_seconds=time.perf_counter() - started_seconds,
+                    duration_seconds=chunks[-1].size / self.runtime.sample_rate_hz,
+                )
+            )
         else:
             pass
         if first_audio_seconds is None:
@@ -88,6 +106,7 @@ class NativeEvaluation:
             frames=frame_count,
             termination=termination,
             first_audio_seconds=first_audio_seconds,
+            chunks=chunk_timings,
         )
 
 

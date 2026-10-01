@@ -11,9 +11,13 @@ from typing import Literal
 
 import httpx
 import typer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from scripts.apple.breeze_eval_common import EvaluationManifest, EvaluationSample
+from scripts.apple.breeze_eval_common import (
+    AudioChunk,
+    EvaluationManifest,
+    EvaluationSample,
+)
 
 
 class HttpResult(BaseModel):
@@ -27,6 +31,7 @@ class HttpResult(BaseModel):
     audio_seconds: float | None = None
     audio_sha256: str | None = None
     error: str | None = None
+    chunks: list[AudioChunk] = Field(default_factory=list)
 
 
 async def request_audio(
@@ -35,6 +40,7 @@ async def request_audio(
     manifest_directory: Path,
     concurrency: int,
     repetition: int,
+    repetition_penalty: float = 1.0,
 ) -> HttpResult:
     reference = (manifest_directory / sample.ref_audio).read_bytes()
     if hashlib.sha256(reference).hexdigest() != sample.reference_sha256:
@@ -52,7 +58,7 @@ async def request_audio(
         "temperature": 0.9,
         "top_k": 50,
         "top_p": 1.0,
-        "repetition_penalty": 1.0,
+        "repetition_penalty": repetition_penalty,
         "max_new_tokens": 750,
         "stream": True,
         "response_format": "pcm",
@@ -60,6 +66,7 @@ async def request_audio(
     started_seconds = time.perf_counter()
     first_audio_seconds = None
     chunks = []
+    chunk_timings: list[AudioChunk] = []
     try:
         async with client.stream("POST", "/v1/audio/speech", json=payload) as response:
             if response.status_code != 200:
@@ -74,6 +81,12 @@ async def request_audio(
                 else:
                     pass
                 chunks.append(chunk)
+                chunk_timings.append(
+                    AudioChunk(
+                        arrival_seconds=time.perf_counter() - started_seconds,
+                        duration_seconds=len(chunk) / (24000 * 2),
+                    )
+                )
         waveform = b"".join(chunks)
         if not waveform or len(waveform) % 2:
             raise ValueError("Empty or malformed signed-16-bit PCM")
@@ -89,6 +102,7 @@ async def request_audio(
             first_audio_seconds=first_audio_seconds,
             audio_seconds=len(waveform) / (24000 * 2),
             audio_sha256=hashlib.sha256(waveform).hexdigest(),
+            chunks=chunk_timings,
         )
     except (httpx.HTTPError, ValueError) as error:
         return HttpResult(
