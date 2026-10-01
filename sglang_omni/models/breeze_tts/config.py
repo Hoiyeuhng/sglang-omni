@@ -22,6 +22,7 @@ class BreezeTTSPipelineConfig(PipelineConfig):
     architecture: ClassVar[str] = "BreezeForConditionalGeneration"
     requires_model_capabilities: ClassVar[bool] = True
     speech_reference_text_required: ClassVar[bool] = True
+    additional_speech_languages: ClassVar[frozenset[str]] = frozenset({"en", "zh"})
     stage_config_types: ClassVar[dict[str, type[StageConfig]]] = {
         "tts": BreezeStageConfig
     }

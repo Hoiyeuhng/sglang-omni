@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from sglang_omni.models.breeze_tts.config import BreezeTTSPipelineConfig
 from sglang_omni.models.breeze_tts.request import (
     BreezeRequestError,
     BreezeSpeechRequest,
@@ -17,7 +18,19 @@ from sglang_omni.models.breeze_tts.stages import BreezeScheduler
 from sglang_omni.proto.request import OmniRequest, StagePayload
 from sglang_omni.scheduling.message import IncomingMessage
 from sglang_omni.serve.protocol import CreateSpeechRequest
-from sglang_omni.serve.speech_service import build_tts_params
+from sglang_omni.serve.speech_service import SpeechRequestValidator, build_tts_params
+
+
+@pytest.mark.parametrize("language", ["en", "zh", "English", "Chinese", "auto"])
+def test_http_language_hints_reach_breeze(language: str) -> None:
+    validator = SpeechRequestValidator(
+        default_model="breeze-tts-2",
+        additional_speech_languages=BreezeTTSPipelineConfig.additional_speech_languages,
+    )
+    request = validator.parse_request({"input": "Hello", "language": language})
+    stage_payload = payload(request.input)
+    stage_payload.request.metadata = {"tts_params": build_tts_params(request)}
+    assert parse_request(stage_payload).text == "Hello"
 
 
 class ControlledRuntime(BreezeRuntime):
