@@ -70,6 +70,46 @@ It:
 
 Use it when you want the standard out-of-the-box server path.
 
+### Shared duplex session timeouts
+
+Shared duplex deployments have two timeouts:
+
+- The admission timeout limits the wait for `session.update` before the session
+  opens. The default is 10 seconds.
+- The input-idle timeout limits inactivity after the session opens. The default
+  is 30 seconds.
+
+Both timeout options require `--enable-realtime` and a pipeline with
+`realtime_deployment_factory`. The built-in `MiniCPMODuplexPipelineConfig`
+declares that factory.
+
+Use these server options to change the timeouts:
+
+| Server option | Python keyword argument | Example value |
+| --- | --- | --- |
+| `--realtime-admission-timeout-s` | `realtime_admission_timeout_s` | `20` seconds |
+| `--realtime-idle-input-timeout-s` | `realtime_idle_input_timeout_s` | `300` seconds |
+
+Each value must be finite and greater than zero. If you omit an option, the
+server uses the deployment limit. Pass the Python keyword arguments to
+`launch_server` or `run_server`. Do not put these options in the pipeline YAML.
+
+The admission timeout does not apply while the adapter opens or during cleanup
+after an open failure. After that cleanup succeeds, the client has a new
+admission timeout period to try again.
+
+The runtime starts a new input-idle timeout period after each of these events:
+
+- The runtime accepts audio input or an image.
+- An input clear or input end command completes.
+- The adapter completes an input unit.
+
+The runtime does not apply the input-idle timeout while an input unit is in
+progress or a command holds the command lock. WebSocket pings and session
+configuration updates do not start a new input-idle timeout period.
+For clients with long pauses between audio inputs, increase the input-idle
+timeout.
+
 ## Route Surface
 
 The current server exposes these main routes:
