@@ -137,7 +137,7 @@ def test_timeout_configuration_reaches_served_capabilities(
         ) as runner_factory,
         patch(
             "sglang_omni.serve.launcher.import_string",
-            return_value=lambda client: deployment,
+            return_value=lambda client, pipeline_config: deployment,
         ),
         patch.object(
             PipelineUvicornServer,

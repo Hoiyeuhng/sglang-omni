@@ -189,14 +189,16 @@ async def test_context_exhaustion_closes_session() -> None:
         async def process(self, unit: Unit) -> int:
             raise RuntimeError(message)
 
-    runtime = await open_runtime(FailingAdapter([]))
-    await runtime.append(b"\1" * UNIT_BYTES, 0, None, "append")
-    envelopes = await asyncio.wait_for(receive_until(runtime, Closed), 5)
-    failures = [entry.event for entry in envelopes if isinstance(entry.event, Failure)]
-    assert len(failures) == 1
-    assert failures[0].code == "context_exhausted"
-    assert failures[0].is_fatal
-    assert message in failures[0].message
+    async with open_runtime(FailingAdapter([])) as runtime:
+        await runtime.append(b"\1" * UNIT_BYTES, 0, None, "append")
+        envelopes = await receive_until(runtime, Closed)
+        failures = [
+            entry.event for entry in envelopes if isinstance(entry.event, Failure)
+        ]
+        assert len(failures) == 1
+        assert failures[0].code == "context_exhausted"
+        assert failures[0].is_fatal
+        assert message in failures[0].message
 
 
 def test_output_budget_counts_outbound_events_only() -> None:
@@ -265,6 +267,35 @@ async def test_failed_admission_grants_full_retry_window(
                 "admission_timeout",
             )
             assert time.monotonic() - rejected_at_s >= ACTIVITY_TIMEOUT_S
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_valid_image", [False, True])
+async def test_only_accepted_images_extend_idle_timeout(is_valid_image: bool) -> None:
+    adapter = GatedAdapter([])
+    runtime = SessionRuntime(
+        MODEL_NAME,
+        Capabilities(input_modalities=("audio", "image")),
+        lambda: adapter,
+        ACTIVITY_LIMITS,
+    )
+    async with running_runtime(runtime):
+        await runtime.update({}, "client_update")
+        await asyncio.sleep(ACTIVITY_TIMEOUT_S / 2)
+        if is_valid_image:
+            await runtime.append_image(b"\xff\xd8frame", 0, "client_image")
+        else:
+            with pytest.raises(ProtocolError, match="image must be JPEG or PNG"):
+                await runtime.append_image(b"invalid", 0, "client_image")
+
+        image_sent_s = time.monotonic()
+        envelopes = await receive_until(runtime, Closed)
+        assert closing_failure(envelopes) == ("idle_timeout", "idle_timeout")
+        idle_after_image_s = time.monotonic() - image_sent_s
+        if is_valid_image:
+            assert idle_after_image_s >= ACTIVITY_TIMEOUT_S
+        else:
+            assert idle_after_image_s < ACTIVITY_TIMEOUT_S
 
 
 @pytest.mark.asyncio

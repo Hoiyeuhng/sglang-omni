@@ -80,8 +80,8 @@ Shared duplex deployments have two timeouts:
   is 30 seconds.
 
 Both timeout options require `--enable-realtime` and a pipeline with
-`realtime_deployment_factory`. No built-in pipeline in this revision declares
-that factory.
+`realtime_deployment_factory`. The built-in `MiniCPMODuplexPipelineConfig`
+declares that factory.
 
 Use these server options to change the timeouts:
 
@@ -100,7 +100,7 @@ admission timeout period to try again.
 
 The runtime starts a new input-idle timeout period after each of these events:
 
-- The runtime accepts audio input.
+- The runtime accepts audio input or an image.
 - An input clear or input end command completes.
 - The adapter completes an input unit.
 

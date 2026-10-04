@@ -288,6 +288,7 @@ class SessionRuntime:
             else:
                 self.pending_frames.setdefault(unit_index, []).append((t_ms, image))
                 self.notify(ImageAccepted(f"unit_{unit_index}", event_id))
+                self.last_activity_s = time.monotonic()
 
     async def clear(self, event_id: str) -> None:
         async with self.command_lock:
