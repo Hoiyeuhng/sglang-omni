@@ -72,16 +72,43 @@ Use it when you want the standard out-of-the-box server path.
 
 ### Shared duplex session timeouts
 
-With `--enable-realtime`, shared duplex deployments accept
-`--realtime-admission-timeout-s 20` and `--realtime-idle-input-timeout-s 300`.
-These are server options, not pipeline YAML fields. Values must be finite and
-positive; omitted options preserve deployment limits (normally 10s and 30s).
-Python callers can pass the corresponding keyword arguments to `launch_server`.
+Shared duplex deployments have two timeouts:
 
-Both options require a pipeline declaring `realtime_deployment_factory`; no
-built-in pipeline currently does. Admission limits the wait for `session.update`;
-input-idle limits inactivity after admission. WebSocket pings do not refresh
-input activity. Increase the idle timeout for clients with long silent pauses.
+- The admission timeout limits the wait for `session.update` before the session
+  opens. The default is 10 seconds.
+- The input-idle timeout limits inactivity after the session opens. The default
+  is 30 seconds.
+
+Both timeout options require `--enable-realtime` and a pipeline with
+`realtime_deployment_factory`. No built-in pipeline in this revision declares
+that factory.
+
+Use these server options to change the timeouts:
+
+| Server option | Python keyword argument | Example value |
+| --- | --- | --- |
+| `--realtime-admission-timeout-s` | `realtime_admission_timeout_s` | `20` seconds |
+| `--realtime-idle-input-timeout-s` | `realtime_idle_input_timeout_s` | `300` seconds |
+
+Each value must be finite and greater than zero. If you omit an option, the
+server uses the deployment limit. Pass the Python keyword arguments to
+`launch_server` or `run_server`. Do not put these options in the pipeline YAML.
+
+The admission timeout does not apply while the adapter opens or during cleanup
+after an open failure. After that cleanup succeeds, the client has a new
+admission timeout period to try again.
+
+The runtime starts a new input-idle timeout period after each of these events:
+
+- The runtime accepts audio input.
+- An input clear or input end command completes.
+- The adapter completes an input unit.
+
+The runtime does not apply the input-idle timeout while an input unit is in
+progress or a command holds the command lock. WebSocket pings and session
+configuration updates do not start a new input-idle timeout period.
+For clients with long pauses between audio inputs, increase the input-idle
+timeout.
 
 ## Route Surface
 
