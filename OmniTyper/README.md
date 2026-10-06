@@ -312,7 +312,8 @@ move or delete the repository or virtual environment while the app relies on it.
 
 Builds use ad-hoc signing by default. Set `CODE_SIGN_IDENTITY` to an appropriate
 code-signing identity for a stable designated requirement across rebuilds. Public
-distribution requires your own Developer ID signing and Apple notarization.
+distribution requires Developer ID signing and Apple notarization by the release
+publisher. See [Public release signing](#public-release-signing).
 
 ### Homebrew packaging
 
@@ -401,14 +402,48 @@ The Cask leaves user settings, recordings, and Hugging Face caches in place.
 It does not remove the shared FFmpeg dependency. Stop the local HTTP server after
 the test. A development Mac test does not replace validation on a clean Mac.
 
+#### Public release signing
+
+Project maintainers manage the Apple Developer Program account, Developer ID
+Application certificate, private key, and notarization credentials for official
+releases. Packaging contributors do not need to provide a personal certificate
+or pay for the project's membership. Keep private keys and credentials out of
+the repository. For CI releases, use secrets controlled by the maintainers and
+restrict their use to the release workflow.
+
+Open-source status alone does not qualify for free membership. Eligible nonprofit
+organizations, accredited educational institutions, and government entities can
+apply for an [Apple membership fee waiver](https://developer.apple.com/help/account/membership/fee-waivers/).
+
+The release publisher must first [create a Developer ID Application certificate](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/)
+and install it with its private key in the signing Mac's Keychain. Check the
+installed identity, then save notarization credentials:
+
+```bash
+security find-identity -v -p codesigning
+xcrun notarytool store-credentials omnityper-notary \
+  --apple-id "YOUR_APPLE_ID" --team-id "YOUR_TEAM_ID"
+```
+
+Enter an Apple app-specific password at the secure prompt. The command stores it
+in Keychain. Do not put the password in a command or build log. See
+[Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
+for credential options and submission details.
+
 For a public release, set `CODE_SIGN_IDENTITY` to a Developer ID Application
 identity and `OMNITYPER_NOTARY_PROFILE` to a configured `notarytool` Keychain
-profile. Use the final HTTPS release-asset URL instead of the local HTTP URL.
+profile, such as `omnityper-notary`. Use the final HTTPS release-asset URL instead
+of the local HTTP URL.
 The script signs nested native code, submits the app for notarization, staples
 the ticket, and checks Gatekeeper before it creates the final archive. The Python
 runtime permits JIT and loading the Homebrew FFmpeg libraries; the app itself
 keeps its existing entitlements. Without those settings, the output is ad-hoc
 signed and is intended for local development tests only.
+
+Sign and notarize each new release archive. Before publication, test the signed
+and notarized package through Homebrew on a clean Mac. Confirm that the app
+launches and dictation works. Local tests with an ad-hoc signature do not validate
+this release procedure.
 
 Upload the ZIP before publishing its generated `Casks/omnityper.rb`. Keep each
 published archive unchanged. To release an update, increment the app version,
