@@ -350,6 +350,17 @@ git -C /tmp/omnityper-package -c user.name='Local Package Test' \
   -c user.email='local@example.invalid' commit -m 'Add local OmniTyper cask'
 brew tap omnityper/local /tmp/omnityper-package
 brew install --cask omnityper/local/omnityper
+```
+
+Homebrew applies download quarantine. An ad-hoc signed package can install but
+macOS can block both the app and its Python executable because Apple has not
+notarized them. The tested Homebrew 7.0.7 rejects `--no-quarantine`. Do not disable
+Gatekeeper for this test. A successful install alone does not establish that a
+publicly distributed app can launch.
+
+For a Developer ID signed and notarized package, launch the installed app:
+
+```bash
 open /Applications/OmniTyper.app
 ```
 
@@ -367,6 +378,16 @@ python3 OmniTyper/backend/smoke.py --app /Applications/OmniTyper.app
 This test does not require a text API. It checks the packaged worker and real ASR
 model. It does not test microphone capture, shortcuts, or insertion into another
 app. Add `--audio /absolute/path/to/audio.wav` to use an existing recording.
+
+Without a signing identity, test relocation using the original archive created
+on this Mac. This validates the bundled runtime separately from Homebrew's
+download quarantine and does not establish Gatekeeper acceptance:
+
+```bash
+mkdir -p /tmp/omnityper-relocated
+ditto -x -k /tmp/omnityper-package/OmniTyper-0.1.0-arm64.zip /tmp/omnityper-relocated
+python3 OmniTyper/backend/smoke.py --app /tmp/omnityper-relocated/OmniTyper.app
+```
 
 Check the Cask and remove the test installation when finished:
 

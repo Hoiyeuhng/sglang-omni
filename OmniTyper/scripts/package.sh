@@ -78,10 +78,12 @@ cask "omnityper" do
   homepage "https://github.com/sgl-project/sglang-omni/tree/main/OmniTyper"
 
   depends_on arch: :arm64
-  depends_on macos: ">= :sonoma"
   depends_on formula: "ffmpeg@7"
+  depends_on macos: :sonoma
 
   app "OmniTyper.app"
+
+  uninstall quit: "org.sglang.OmniTyper"
 end
 EOF
 echo "Archive: $ARCHIVE"
