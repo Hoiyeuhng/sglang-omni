@@ -311,7 +311,14 @@ final class WorkerClient: ObservableObject {
         }
     }
 
-    private func resolvePython(_ supplied: String) throws -> URL {
+    func resolvePython(_ supplied: String, bundle: Bundle = .main) throws -> URL {
+        if bundle.object(forInfoDictionaryKey: "OmniTyperBundledRuntime") as? Bool == true {
+            let executable = bundle.bundleURL.appendingPathComponent("Contents/Resources/runtime/bin/python3")
+            guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+                throw Failure("worker.pythonNotExecutable", executable.path)
+            }
+            return executable
+        }
         let expanded = (supplied.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
         guard !expanded.isEmpty else { throw Failure("worker.choosePython") }
         if expanded.contains("/") {

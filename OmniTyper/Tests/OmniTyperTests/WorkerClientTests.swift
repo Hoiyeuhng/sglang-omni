@@ -6,6 +6,38 @@ import Darwin
 
 @Suite(.serialized)
 struct WorkerClientTests {
+    @Test @MainActor
+    func testBundledPythonSurvivesRelocationAndIgnoresSavedSourcePath() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let application = directory.appendingPathComponent("Original.app")
+        let relativePython = "Contents/Resources/runtime/bin/python3"
+        let executable = application.appendingPathComponent(relativePython)
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let properties: [String: Any] = [
+            "CFBundleIdentifier": "org.sglang.OmniTyper.runtime-test.\(UUID().uuidString)",
+            "CFBundlePackageType": "APPL",
+            "OmniTyperBundledRuntime": true
+        ]
+        try PropertyListSerialization.data(fromPropertyList: properties, format: .xml, options: 0)
+            .write(to: application.appendingPathComponent("Contents/Info.plist"))
+        let client = WorkerClient()
+        let originalBundle = try #require(Bundle(url: application))
+        #expect(try client.resolvePython("/missing/developer/python", bundle: originalBundle) == executable)
+
+        let relocated = directory.appendingPathComponent("Installed App.app")
+        try FileManager.default.moveItem(at: application, to: relocated)
+        let installedBundle = try #require(Bundle(url: relocated))
+        let installedPython = relocated.appendingPathComponent(relativePython)
+        #expect(try client.resolvePython("/missing/developer/python", bundle: installedBundle) == installedPython)
+        try FileManager.default.removeItem(at: installedPython)
+        #expect(throws: (any Error).self) {
+            try client.resolvePython("/usr/bin/python3", bundle: installedBundle)
+        }
+    }
+
     @Test func testAudioResamplingAndRecordingLimit() throws {
         final class Packets: @unchecked Sendable {
             let lock = NSLock()

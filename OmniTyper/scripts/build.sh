@@ -6,7 +6,7 @@ CONFIGURATION="${CONFIGURATION:-release}"
 PYTHON_BIN="${OMNITYPER_PYTHON:-$APP_ROOT/.venv/bin/python}"
 swift build --package-path "$APP_ROOT" -c "$CONFIGURATION"
 BIN_DIR="$(swift build --package-path "$APP_ROOT" -c "$CONFIGURATION" --show-bin-path)"
-APP_BUNDLE="$APP_ROOT/dist/OmniTyper.app"
+APP_BUNDLE="${OMNITYPER_DIST_DIR:-$APP_ROOT/dist}/OmniTyper.app"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources/backend"
 cp "$BIN_DIR/OmniTyper" "$APP_BUNDLE/Contents/MacOS/"
 cp "$APP_ROOT/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
@@ -19,7 +19,14 @@ for LPROJ in "$APP_ROOT"/Sources/OmniTyper/Resources/*.lproj; do
   rm -rf "$APP_BUNDLE/Contents/Resources/$(basename "$LPROJ")"
   cp -R "$LPROJ" "$APP_BUNDLE/Contents/Resources/"
 done
-/usr/libexec/PlistBuddy -c "Add :OmniTyperPython string $PYTHON_BIN" "$APP_BUNDLE/Contents/Info.plist"
+if [[ -n "${OMNITYPER_RUNTIME:-}" ]]; then
+  [[ -x "$OMNITYPER_RUNTIME/bin/python3" ]] || { echo 'Runtime Python is missing.' >&2; exit 1; }
+  [[ ! -e "$APP_BUNDLE/Contents/Resources/runtime" ]] || { echo 'Use a new output directory for a packaged build.' >&2; exit 1; }
+  cp -R "$OMNITYPER_RUNTIME" "$APP_BUNDLE/Contents/Resources/runtime"
+  /usr/libexec/PlistBuddy -c 'Add :OmniTyperBundledRuntime bool true' "$APP_BUNDLE/Contents/Info.plist"
+else
+  /usr/libexec/PlistBuddy -c "Add :OmniTyperPython string $PYTHON_BIN" "$APP_BUNDLE/Contents/Info.plist"
+fi
 ICONSET="$APP_ROOT/.build/AppIcon.iconset"
 mkdir -p "$ICONSET"
 swift "$APP_ROOT/scripts/icon.swift" "$ICONSET"
