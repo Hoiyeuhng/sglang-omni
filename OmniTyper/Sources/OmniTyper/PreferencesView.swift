@@ -62,9 +62,11 @@ struct PreferencesView: View {
                         Button(L("settings.unloadASR")) { model.releaseModels() }.disabled(model.isBusy)
                     }
                     if model.phase == .preparing { PreparationCard(model: model, worker: model.worker) }
-                    DisclosureGroup(L("settings.runtime")) {
-                        TextField(L("settings.python"), text: $store.preferences.pythonExecutable).textFieldStyle(.roundedBorder).padding(.top, 8)
-                        Text(L("settings.runtimeNote")).font(.caption).foregroundStyle(.secondary)
+                    if Bundle.main.object(forInfoDictionaryKey: "OmniTyperBundledRuntime") as? Bool != true {
+                        DisclosureGroup(L("settings.runtime")) {
+                            TextField(L("settings.python"), text: $store.preferences.pythonExecutable).textFieldStyle(.roundedBorder).padding(.top, 8)
+                            Text(L("settings.runtimeNote")).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     Text(L("settings.downloadNote")).font(.caption).foregroundStyle(.secondary)
                 }

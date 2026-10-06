@@ -22,6 +22,9 @@ project and is not affiliated with Typeless.
 
 ## Quick start
 
+For a Homebrew package build or a local installation test, see
+[Homebrew packaging](#homebrew-packaging). The commands below build from source.
+
 Run these commands from the `sglang-omni` repository root:
 
 ```bash
@@ -302,7 +305,7 @@ Model smoke tests require cached or downloadable ASR weights and, where applicab
 a running text API. Set `HF_HUB_OFFLINE=1` to prevent Hugging Face downloads when
 weights are cached. This does not prevent network access to the configured text API.
 
-The app bundle includes worker source files and records the Python executable's
+The source-built app includes worker source files and records the Python executable's
 absolute path in `Info.plist`. It does not bundle Python or model weights. On
 another Mac, rerun setup or configure an existing compatible environment. Do not
 move or delete the repository or virtual environment while the app relies on it.
@@ -310,6 +313,92 @@ move or delete the repository or virtual environment while the app relies on it.
 Builds use ad-hoc signing by default. Set `CODE_SIGN_IDENTITY` to an appropriate
 code-signing identity for a stable designated requirement across rebuilds. Public
 distribution requires your own Developer ID signing and Apple notarization.
+
+### Homebrew packaging
+
+Run the package script on Apple Silicon with Homebrew, `uv`, `ffmpeg@7`, and Xcode
+Command Line Tools installed. The script creates a private Python 3.12 runtime,
+installs the backend, and builds an app that does not require the source checkout.
+It also creates a ZIP and a Cask with the ZIP's SHA-256 checksum. The model weights
+remain a first-use download. FFmpeg remains a Homebrew dependency.
+
+The output directory must not exist. For a local test, run from the repository root:
+
+```bash
+bash OmniTyper/scripts/package.sh /tmp/omnityper-package \
+  http://127.0.0.1:18765/OmniTyper-0.1.0-arm64.zip
+```
+
+Use the version in `OmniTyper/Resources/Info.plist` in the archive URL. The build
+records its source commit and installed Python package versions in the app's
+Resources directory. Dependency versions are resolved during the build; this is
+not a byte-for-byte reproducible build.
+
+Serve the archive in a separate terminal:
+
+```bash
+python3 -m http.server 18765 --bind 127.0.0.1 --directory /tmp/omnityper-package
+```
+
+Register the generated Cask as a local tap, then install it. These commands create
+a local Git repository; they do not publish a repository or a release:
+
+```bash
+git -C /tmp/omnityper-package init
+git -C /tmp/omnityper-package add Casks/omnityper.rb
+git -C /tmp/omnityper-package -c user.name='Local Package Test' \
+  -c user.email='local@example.invalid' commit -m 'Add local OmniTyper cask'
+brew tap omnityper/local /tmp/omnityper-package
+brew install --cask omnityper/local/omnityper
+open /Applications/OmniTyper.app
+```
+
+Quit an existing OmniTyper instance before testing. Grant Microphone and
+Accessibility through System Settings. Test dictation from the installed app.
+The packaged app always uses its bundled Python, including when saved settings
+contain a Python path from a source build.
+
+To test the installed backend with a generated speech sample:
+
+```bash
+python3 OmniTyper/backend/smoke.py --app /Applications/OmniTyper.app
+```
+
+This test does not require a text API. It checks the packaged worker and real ASR
+model. It does not test microphone capture, shortcuts, or insertion into another
+app. Add `--audio /absolute/path/to/audio.wav` to use an existing recording.
+
+Check the Cask and remove the test installation when finished:
+
+```bash
+brew style --cask omnityper/local/omnityper
+brew uninstall --cask omnityper/local/omnityper
+brew untap omnityper/local
+```
+
+The Cask leaves user settings, recordings, and Hugging Face caches in place.
+It does not remove the shared FFmpeg dependency. Stop the local HTTP server after
+the test. A development Mac test does not replace validation on a clean Mac.
+
+For a public release, set `CODE_SIGN_IDENTITY` to a Developer ID Application
+identity and `OMNITYPER_NOTARY_PROFILE` to a configured `notarytool` Keychain
+profile. Use the final HTTPS release-asset URL instead of the local HTTP URL.
+The script signs nested native code, submits the app for notarization, staples
+the ticket, and checks Gatekeeper before it creates the final archive. The Python
+runtime permits JIT and loading the Homebrew FFmpeg libraries; the app itself
+keeps its existing entitlements. Without those settings, the output is ad-hoc
+signed and is intended for local development tests only.
+
+Upload the ZIP before publishing its generated `Casks/omnityper.rb`. Keep each
+published archive unchanged. To release an update, increment the app version,
+build a new archive, and review the generated Cask update in a PR. Users then run
+`brew update` and `brew upgrade --cask <owner>/<tap>/omnityper`.
+
+The Cask can live in this repository's root `Casks/` directory, or in a separate
+`homebrew-tap` repository. A separate tap supports automatic tap discovery with
+`brew install --cask <owner>/tap/omnityper`. No published OmniTyper Cask or release
+asset is assumed by this build script. A fork or an unmerged PR checkout can run
+the same local test without publishing anything.
 
 ### Migrating from OpenTypeless
 

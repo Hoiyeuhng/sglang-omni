@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Exercise the real worker, native MLX speech server, and a configured text API.
+"""Exercise native MLX speech recognition and an optional text API.
 
 Run with the prepared environment: python backend/smoke.py [--audio /path.wav]
 Without --audio, macOS's built-in Samantha voice creates a known test phrase.
@@ -19,10 +19,11 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audio", type=Path)
-    parser.add_argument("--base-url", default="http://127.0.0.1:11434/v1")
     parser.add_argument(
-        "--model", required=True, help="Model name exposed by your text API"
+        "--app", type=Path, help="Test an installed app and its bundled Python"
     )
+    parser.add_argument("--base-url", default="http://127.0.0.1:11434/v1")
+    parser.add_argument("--model", help="Also test text processing with this API model")
     parser.add_argument(
         "--options", default="{}", help="Additional chat-completion JSON fields"
     )
@@ -63,11 +64,25 @@ def main() -> None:
                 ],
                 check=True,
             )
+        if args.app is None:
+            python = Path(sys.executable)
+            worker = Path(__file__).with_name("worker.py")
+        else:
+            resources = args.app.resolve() / "Contents/Resources"
+            python = resources / "runtime/bin/python3"
+            worker = resources / "backend/worker.py"
+        environment = os.environ.copy()
+        environment.pop("PYTHONPATH", None)
+        environment.pop("PYTHONHOME", None)
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
         process = subprocess.Popen(
-            [sys.executable, str(Path(__file__).with_name("worker.py"))],
+            [str(python), "-u", str(worker)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
+            cwd=directory,
+            env=environment,
         )
         try:
             cases = [
@@ -109,8 +124,15 @@ def main() -> None:
                     "text": "What is two plus two?",
                 },
             ]
+            if args.model is None:
+                cases = cases[:1]
+            else:
+                pass
             for request in cases:
-                request.update(api)
+                if args.model is not None:
+                    request.update(api)
+                else:
+                    pass
                 process.stdin.write(json.dumps(request) + "\n")
                 process.stdin.flush()
                 while True:
