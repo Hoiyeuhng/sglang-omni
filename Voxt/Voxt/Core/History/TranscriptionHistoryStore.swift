@@ -371,6 +371,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         refreshEntryIndexes()
         publishVisibleEntries()
         cleanupRetainedEntriesIfNeeded()
+        applyAudioStorageQuotaIfNeeded()
         return entry.id
     }
 
@@ -458,6 +459,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         let updatedEntry = existingEntry.updatingAudioRelativePath(resolvedRelativePath)
         cacheUpdatedEntry(updatedEntry)
         persistEntry(updatedEntry)
+        applyAudioStorageQuotaIfNeeded()
         return updatedEntry
     }
 
@@ -469,6 +471,41 @@ final class TranscriptionHistoryStore: ObservableObject {
         try audioArchive.exportAllArchives(to: destinationDirectoryURL) { visitBatch in
             forEachHistoryBatch(visitBatch)
         }
+    }
+
+    /// Reclaim the oldest audio archives without deleting their text history entries.
+    /// Only referenced, readable audio is counted; the configured root may live outside App Support.
+    func applyAudioStorageQuotaIfNeeded() {
+        let configured = defaults.object(forKey: "historyAudioStorageLimitMB") as? Int ?? 100
+        guard configured > 0 else { return } // 0 = unlimited
+        let limit = Int64(configured) * 1_024 * 1_024
+        var archives: [(entry: TranscriptionHistoryEntry, size: Int64)] = []
+        forEachHistoryBatch { batch in
+            for entry in batch {
+                guard let url = audioArchive.audioURL(for: entry),
+                      let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+                else { continue }
+                archives.append((entry, Int64(size)))
+            }
+        }
+        var total = archives.reduce(Int64(0)) { $0 + $1.size }
+        guard total > limit else { return }
+        // Retain the newest recordings. A single oversized recording is also eligible for eviction.
+        for archive in archives.sorted(by: {
+            $0.entry.createdAt == $1.entry.createdAt
+                ? $0.entry.id.uuidString < $1.entry.id.uuidString
+                : $0.entry.createdAt < $1.entry.createdAt
+        }) {
+            guard total > limit else { break }
+            let updated = archive.entry.removingAudioArchiveReferences()
+            // Commit metadata before removing a file so history never points at a deleted archive.
+            guard persistEntry(updated) else { continue }
+            audioArchive.removeArchive(for: archive.entry)
+            cacheUpdatedEntry(updated)
+            total -= archive.size
+        }
+        refreshEntryIndexes()
+        publishVisibleEntries()
     }
 
     func currentAudioArchiveStorageStats() -> HistoryAudioStorageStats {
