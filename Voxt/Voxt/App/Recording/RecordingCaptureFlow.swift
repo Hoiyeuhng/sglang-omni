@@ -43,6 +43,9 @@ extension AppDelegate {
             )
         }
         let sessionID = activeRecordingSessionID
+        if UserDefaults.standard.bool(forKey: "recordingDiagnosticsEnabled") {
+            VoxtLog.asr("diagnostic event=mlx_session_start session=\(sessionID.uuidString)")
+        }
         overlayState.statusMessage = ""
         mlx.transcribedText = ""
         mlx.sessionAllowsRealtimeTextDisplay = transcriptionCapturePipeline.usesLiveDisplay
@@ -79,6 +82,9 @@ extension AppDelegate {
                       self.isSessionActive
                 else { return }
                 VoxtLog.asrWarning("MLX recording session did not enter recording state. reason=\(startFailureMessage)")
+                if UserDefaults.standard.bool(forKey: "recordingDiagnosticsEnabled") {
+                    VoxtLog.asr("diagnostic event=mlx_session_start_failed session=\(sessionID.uuidString)")
+                }
                 self.handleRecordingStartFailure(startFailureMessage)
                 return
             }
@@ -589,6 +595,9 @@ extension AppDelegate {
             useCase: useCase,
             backend: ASRVoiceActivityRuntimePolicy.effectiveBackend(mode: mode, useCase: useCase)
         )
+        if UserDefaults.standard.bool(forKey: "recordingDiagnosticsEnabled") {
+            VoxtLog.asr("diagnostic event=vad_start backend=\(recordingVoiceActivityDebugStats.backend.rawValue) mode=\(mode.rawValue)")
+        }
         VoxtLog.vad(
             "Recording VAD debug start. mode=\(mode.rawValue), backend=\(recordingVoiceActivityDebugStats.backend.rawValue), useCase=\(useCase.rawValue)"
         )
@@ -699,6 +708,9 @@ extension AppDelegate {
     }
 
     private func logRecordingVoiceActivityDebugSummary(reason: String) {
+        if UserDefaults.standard.bool(forKey: "recordingDiagnosticsEnabled") {
+            VoxtLog.asr("diagnostic event=vad_summary \(recordingVoiceActivityDebugStats.telemetrySummary)")
+        }
         VoxtLog.vad(
             "Recording VAD debug summary. reason=\(reason), \(recordingVoiceActivityDebugStats.telemetrySummary)"
         )
