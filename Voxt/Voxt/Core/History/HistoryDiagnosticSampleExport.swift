@@ -17,7 +17,7 @@ nonisolated final class HistoryDiagnosticAudioSource: @unchecked Sendable {
     private let modificationSeconds: Int
     private let modificationNanoseconds: Int
 
-    init(rootURL: URL, relativePath: String) throws {
+    init(rootURL: URL, relativePath: String, resolvedAudioURL: URL? = nil) throws {
         let components = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         let folders = ["transcription", "translation", "rewrite", "transcript"]
         guard components.count == 2, folders.contains(components[0]),
@@ -25,7 +25,14 @@ nonisolated final class HistoryDiagnosticAudioSource: @unchecked Sendable {
               !relativePath.contains("\0"), components[1].hasSuffix(".wav") else {
             throw HistoryDiagnosticSampleError.unsafeAudioPath
         }
-        let rootDescriptor = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+        if let resolvedAudioURL {
+            guard resolvedAudioURL.lastPathComponent == components[1],
+                  resolvedAudioURL.deletingLastPathComponent().lastPathComponent == components[0] else {
+                throw HistoryDiagnosticSampleError.unsafeAudioPath
+            }
+        }
+        let selectedRootURL = resolvedAudioURL?.deletingLastPathComponent().deletingLastPathComponent() ?? rootURL
+        let rootDescriptor = open(selectedRootURL.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
         guard rootDescriptor >= 0 else { throw HistoryDiagnosticSampleError.audioUnavailable }
         defer { close(rootDescriptor) }
         let folderDescriptor = openat(rootDescriptor, components[0], O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)

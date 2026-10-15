@@ -16,7 +16,7 @@ nonisolated enum HistoryDiagnosticSampleChecks {
         ("cleanup-failure-disclosure", cleanupFailureDisclosure), ("source-path-boundaries", sourcePathBoundaries),
         ("source-unlinked", sourceUnlinked), ("source-mutated", sourceMutated),
         ("manifest-privacy", manifestPrivacy), ("private-permissions", privatePermissions),
-        ("synthetic-audio-roundtrip", syntheticAudioRoundtrip), ("retained-audio-preview", retainedAudioPreview)
+        ("synthetic-audio-roundtrip", syntheticAudioRoundtrip), ("retained-audio-preview", retainedAudioPreview), ("previous-audio-location", previousAudioLocation)
     ]
 
     static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
@@ -256,6 +256,23 @@ nonisolated enum HistoryDiagnosticSampleChecks {
                 let permissions = try FileManager.default.attributesOfItem(atPath: output.appendingPathComponent(file).path)[.posixPermissions] as! NSNumber
                 try require(permissions.intValue == 0o600, "Public sensitive file")
             }
+        }
+    }
+
+    static func previousAudioLocation() throws {
+        try withDirectory { root in
+            let contents = Data("selected-previous-root".utf8)
+            _ = try source(in: root, contents: contents)
+            let currentRoot = root.appendingPathComponent("new-current-root")
+            try FileManager.default.createDirectory(at: currentRoot, withIntermediateDirectories: false)
+            let path = "transcription/sample.wav"
+            let audio = try HistoryDiagnosticAudioSource(rootURL: currentRoot, relativePath: path, resolvedAudioURL: root.appendingPathComponent(path))
+            let output = try HistoryDiagnosticSampleExporter.export(request(audio: audio, includeAudio: true), to: currentRoot)
+            let exported = try Data(contentsOf: output.appendingPathComponent("recording.wav"))
+            try require(exported == contents, "Directory switch lost the selected archive")
+            try expectFailure({
+                _ = try HistoryDiagnosticAudioSource(rootURL: currentRoot, relativePath: path, resolvedAudioURL: root.appendingPathComponent("translation/wrong.wav"))
+            }, matching: .unsafeAudioPath)
         }
     }
 

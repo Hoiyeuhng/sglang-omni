@@ -5,6 +5,7 @@ struct HistoryDiagnosticSampleSheet: View {
     @Environment(\.dismiss) private var dismiss
     let entry: TranscriptionHistoryEntry
     let audioRootURL: URL
+    let resolvedAudioURL: URL?
 
     @StateObject private var playbackController = HistoryAudioPlaybackController(audioURL: nil)
     @State private var includeTranscription = false
@@ -107,12 +108,16 @@ struct HistoryDiagnosticSampleSheet: View {
         .task {
             let relativePath = entry.audioRelativePath ?? entry.transcriptAudioRelativePath
             let rootURL = audioRootURL
-            let didStartAccess = rootURL.startAccessingSecurityScopedResource()
+            let selectedAudioURL = resolvedAudioURL
+            let accessURL = selectedAudioURL ?? rootURL
+            let didStartAccess = accessURL.startAccessingSecurityScopedResource()
             let preparedSource = await Task.detached(priority: .utility) {
                 defer {
-                    if didStartAccess { rootURL.stopAccessingSecurityScopedResource() }
+                    if didStartAccess { accessURL.stopAccessingSecurityScopedResource() }
                 }
-                return relativePath.flatMap { try? HistoryDiagnosticAudioSource(rootURL: rootURL, relativePath: $0) }
+                return relativePath.flatMap {
+                    try? HistoryDiagnosticAudioSource(rootURL: rootURL, relativePath: $0, resolvedAudioURL: selectedAudioURL)
+                }
             }.value
             guard !Task.isCancelled else { return }
             audioSource = preparedSource

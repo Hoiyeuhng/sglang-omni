@@ -299,7 +299,8 @@ struct HistorySettingsView: View {
         .sheet(item: $pendingDebugSample) { entry in
             HistoryDiagnosticSampleSheet(
                 entry: entry,
-                audioRootURL: HistoryAudioStorageDirectoryManager.resolvedRootURL()
+                audioRootURL: HistoryAudioStorageDirectoryManager.resolvedRootURL(),
+                resolvedAudioURL: historyStore.audioURL(for: entry)
             )
         }
         .sheet(item: $selectedHistoryInfoEntry) { entry in
