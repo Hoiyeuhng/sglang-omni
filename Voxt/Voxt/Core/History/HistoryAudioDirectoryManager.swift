@@ -5,7 +5,7 @@ import Foundation
 import AppKit
 
 enum HistoryAudioStorageDirectoryManager {
-    private static var securityScopedURL: URL?
+    private static var securityScopedURLs: [String: URL] = [:]
     private static let fileManager = FileManager.default
 
     static var defaultRootURL: URL {
@@ -30,6 +30,22 @@ enum HistoryAudioStorageDirectoryManager {
         return defaultRootURL
     }
 
+    static func knownRootURLs() -> [URL] {
+        let defaults = UserDefaults.standard
+        let current = resolvedRootURL()
+        var roots = [current]
+        let bookmarks = defaults.dictionary(forKey: "historyAudioPreviousRootBookmarks") as? [String: Data] ?? [:]
+        for path in defaults.stringArray(forKey: "historyAudioPreviousRootPaths") ?? [] {
+            if let bookmark = bookmarks[path], let resolved = resolveSecurityScopedURL(from: bookmark) {
+                roots.append(resolved)
+            } else {
+                roots.append(URL(fileURLWithPath: path, isDirectory: true))
+            }
+        }
+        var seen = Set<String>()
+        return roots.filter { seen.insert($0.resolvingSymlinksInPath().standardizedFileURL.path).inserted }
+    }
+
     static func saveUserSelectedRootURL(_ url: URL) throws {
         let normalized = url.standardizedFileURL
         let bookmark = try normalized.bookmarkData(
@@ -39,6 +55,15 @@ enum HistoryAudioStorageDirectoryManager {
         )
 
         let defaults = UserDefaults.standard
+        let previous = resolvedRootURL()
+        var paths = defaults.stringArray(forKey: "historyAudioPreviousRootPaths") ?? []
+        if !paths.contains(previous.path) { paths.append(previous.path) }
+        defaults.set(paths, forKey: "historyAudioPreviousRootPaths")
+        var bookmarks = defaults.dictionary(forKey: "historyAudioPreviousRootBookmarks") as? [String: Data] ?? [:]
+        if let previousBookmark = defaults.data(forKey: AppPreferenceKey.historyAudioStorageRootBookmark) {
+            bookmarks[previous.path] = previousBookmark
+        }
+        defaults.set(bookmarks, forKey: "historyAudioPreviousRootBookmarks")
         defaults.set(normalized.path, forKey: AppPreferenceKey.historyAudioStorageRootPath)
         defaults.set(bookmark, forKey: AppPreferenceKey.historyAudioStorageRootBookmark)
 
@@ -68,11 +93,8 @@ enum HistoryAudioStorageDirectoryManager {
             return nil
         }
 
-        if securityScopedURL?.path != resolved.path {
-            securityScopedURL?.stopAccessingSecurityScopedResource()
-            if resolved.startAccessingSecurityScopedResource() {
-                securityScopedURL = resolved
-            }
+        if securityScopedURLs[resolved.path] == nil, resolved.startAccessingSecurityScopedResource() {
+            securityScopedURLs[resolved.path] = resolved
         }
 
         if isStale,
@@ -81,7 +103,14 @@ enum HistoryAudioStorageDirectoryManager {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
            ) {
-            UserDefaults.standard.set(refreshed, forKey: AppPreferenceKey.historyAudioStorageRootBookmark)
+            let defaults = UserDefaults.standard
+            if defaults.string(forKey: AppPreferenceKey.historyAudioStorageRootPath) == resolved.path {
+                defaults.set(refreshed, forKey: AppPreferenceKey.historyAudioStorageRootBookmark)
+            } else {
+                var bookmarks = defaults.dictionary(forKey: "historyAudioPreviousRootBookmarks") as? [String: Data] ?? [:]
+                bookmarks[resolved.path] = refreshed
+                defaults.set(bookmarks, forKey: "historyAudioPreviousRootBookmarks")
+            }
         }
 
         return resolved

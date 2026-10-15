@@ -2375,3 +2375,37 @@
 "Open Notes from the main window" = "Open Notes from the main window";
 "Try Later" = "Try Later";
 "Less" = "Less";
+
+"Audio storage limit" = "Audio storage limit";
+
+"Existing audio remains Unlimited until you choose a limit. A finite limit deletes the oldest saved audio, preserving text history." = "Existing audio remains Unlimited until you choose a limit. A finite limit deletes the oldest saved audio, preserving text history.";
+
+"Use 100 MB and clean oldest audio" = "Use 100 MB and clean oldest audio";
+
+"Keep Unlimited" = "Keep Unlimited";
+
+"Other Local Storage" = "Other Local Storage";
+
+"Diagnostic logs" = "Diagnostic logs";
+
+"Diagnostic log limit" = "Diagnostic log limit";
+
+"Includes current, rotated and legacy Voxt logs. Default: 12 MiB. Logs rotate independently of audio." = "Includes current, rotated and legacy Voxt logs. Default: 12 MiB. Logs rotate independently of audio.";
+
+"Log cleanup or writing failed; storage may remain over limit." = "Log cleanup or writing failed; storage may remain over limit.";
+
+"Database files (shared)" = "Database files (shared)";
+
+"Includes SQLite, WAL and SHM for history, notes and dictionaries. Text and notes are not quota caches." = "Includes SQLite, WAL and SHM for history, notes and dictionaries. Text and notes are not quota caches.";
+
+"Audio imports and active files can temporarily exceed the limit. A recording larger than the limit is not saved; its text is retained." = "Audio imports and active files can temporarily exceed the limit. A recording larger than the limit is not saved; its text is retained.";
+
+"New history audio is stored here. Previous locations remain managed; switching does not move files." = "New history audio is stored here. Previous locations remain managed; switching does not move files.";
+
+"Storage usage unavailable" = "Storage usage unavailable";
+
+"Cleanup failed; retained files will be retried." = "Cleanup failed; retained files will be retried.";
+
+"Over limit: audio in use will be retried after release." = "Over limit: audio in use will be retried after release.";
+
+"Audio cleanup is waiting for files in use." = "Audio cleanup is waiting for files in use.";

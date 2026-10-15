@@ -11,6 +11,7 @@ final class HistoryAudioPlaybackController: ObservableObject {
     @Published var duration: TimeInterval = 0
     @Published var isPlaying = false
 
+    private var audioUse: HistoryAudioFileUse?
     private var player: AVAudioPlayer?
     private var timer: Timer?
 
@@ -33,7 +34,9 @@ final class HistoryAudioPlaybackController: ObservableObject {
         duration = 0
         player = nil
 
+        audioUse = nil
         guard let audioURL else { return }
+        audioUse = HistoryAudioFileUse(url: audioURL)
         player = try? AVAudioPlayer(contentsOf: audioURL)
         player?.prepareToPlay()
         duration = player?.duration ?? 0

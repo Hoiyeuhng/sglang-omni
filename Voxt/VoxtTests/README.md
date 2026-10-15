@@ -106,3 +106,16 @@ Startup installation regression: `ModelConfigurationIssueResolverTests` adds fiv
 Reuse [TestSupport](TestSupport/README.md), isolated defaults and temporary directories. Delete a test only when its contract is retired or equivalent coverage is identified; do not discard cancellation, migration, security or provider-specific regressions as duplication.
 
 Model tests are opt-in through `VOXT_RUN_MODEL_TESTS=1`; `VOXT_MODEL_STORAGE_ROOT` can point to existing checkpoints. Report skips separately from passes. See the [regression matrix](../docs/LocalRegressionMatrix.md) for hardware/model checks.
+
+
+## History storage quotas
+
+Run `bash tools/run_history_storage_tests.sh` from Voxt for the same 13 Foundation contracts used by `HistoryAudioQuotaTests`. The runner compiles the production quota and log store using Swift 6.2+ with MainActor default isolation; every fixture and preference suite is temporary. It does not run the app or require a microphone, model, signing changes or real history access.
+
+Also run `SQLiteStorageRepositoryTests`, `TranscriptionHistoryStoreAsyncTests`, `HistoryAudioArchiveSupportTests`, `MeetingAudioArchiveTests` and `VoxtLogFileStoreTests` in the hosted Xcode scheme. The standalone contracts do not replace complete app compilation, actor-isolation checking or XCTest discovery.
+
+New installations default to 100 decimal MB for history audio, with saving still disabled. Existing nonempty histories stay Unlimited until the user acknowledges migration and chooses a quota. Logs have a separate 12 MiB default (the previous six 2 MiB files), counting current, numbered archives and recognized legacy logs. Database usage is SQLite plus WAL/SHM for the shared history, dictionary and notes database; it is never presented as exact text-only size.
+
+Only catalog-owned archives and valid database-referenced WAV files are adopted. Unknown, previously unreferenced files in a custom directory are not claimed or deleted. Previous selected roots remain managed; directory changes do not move recordings. A corrupt/missing-access root or ambiguous relative path reports unavailable usage, rather than zero. No recursive cleanup is used. Durable catalog deletion intent and transactional SQLite tombstones recover deletion/database failures, including explicit deletion and replacement under Unlimited. Duplicate references are counted once, and shared references survive replacement until the final owner changes.
+
+Audio exceeding the selected quota is rejected before other history is evicted; text remains. Already stored oversized audio is considered before smaller recordings. Active imports/playback/merge/export can temporarily retain bytes above quota; cleanup retries after release and at startup/settings changes. This is a bounded retention policy, not an absolute instantaneous disk limit. Cross-volume imports may temporarily require both source and destination copies. Final user exports are outside automatic retention. Directory-bookmark permission changes, real sandbox access and interactive playback require manual acceptance on a signed application.

@@ -97,8 +97,11 @@ extension TranscriptionHistoryEntry {
         copy(audioRelativePath: .set(audioRelativePath))
     }
 
-    func removingAudioArchiveReferences() -> TranscriptionHistoryEntry {
-        copy(audioRelativePath: .set(nil), transcriptAudioRelativePath: .set(nil))
+    func removingAudioArchiveReference(path: String) -> TranscriptionHistoryEntry {
+        copy(
+            audioRelativePath: audioRelativePath == path ? .set(nil) : .keep,
+            transcriptAudioRelativePath: transcriptAudioRelativePath == path ? .set(nil) : .keep
+        )
     }
 
     func updatingOutputDestination(

@@ -20,13 +20,18 @@ protocol HistoryAudioArchiveManaging: AnyObject {
     ) throws -> HistoryAudioExportSummary
     func storageStats(audioPaths: [String]) -> HistoryAudioStorageStats
     func rootURL() throws -> URL
+    func releaseImportedArchive(path: String)
+    func managedRootURLs() throws -> [URL]
 }
 
 final class HistoryAudioArchiveService: HistoryAudioArchiveManaging {
     private let fileManager: FileManager
+    private let isolatedRootURL: URL?
+    private var importedUses: [String: HistoryAudioFileUse] = [:]
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default, rootURL: URL? = nil) {
         self.fileManager = fileManager
+        self.isolatedRootURL = rootURL
     }
 
     func importArchive(
@@ -38,28 +43,24 @@ final class HistoryAudioArchiveService: HistoryAudioArchiveManaging {
             preferredFileName?.trimmingCharacters(in: .whitespacesAndNewlines),
             fallbackKind: kind
         )
-        let relativePath = "\(folderName(for: kind))/\(resolvedFileName)"
-        let destinationURL = try rootURL().appendingPathComponent(relativePath)
-        try fileManager.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try fileManager.removeItem(at: destinationURL)
+        let relativePath = "\(folderName(for: kind))/\(UUID().uuidString)-\(resolvedFileName)"
+        let root = try rootURL()
+        importedUses[relativePath] = HistoryAudioFileUse(url: root.appendingPathComponent(relativePath))
+        do {
+            try HistoryAudioQuota(rootURL: root).importArchive(from: sourceURL, path: relativePath)
+        } catch {
+            importedUses.removeValue(forKey: relativePath)
+            throw error
         }
-        try fileManager.moveItem(at: sourceURL, to: destinationURL)
         return relativePath
     }
 
+    func releaseImportedArchive(path: String) {
+        importedUses.removeValue(forKey: path)
+    }
+
     func replaceArchive(for entry: TranscriptionHistoryEntry, with sourceURL: URL) throws -> String {
-        let relativePath = entry.audioRelativePath ?? entry.transcriptAudioRelativePath
-        let resolvedRelativePath = relativePath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? relativePath!
-            : "\(folderName(for: entry.kind))/\(sanitizedFileName(nil, fallbackKind: entry.kind))"
-        let destinationURL = try rootURL().appendingPathComponent(resolvedRelativePath)
-        try fileManager.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try fileManager.removeItem(at: destinationURL)
-        }
-        try fileManager.moveItem(at: sourceURL, to: destinationURL)
-        return resolvedRelativePath
+        try importArchive(from: sourceURL, kind: entry.kind)
     }
 
     func audioURL(for entry: TranscriptionHistoryEntry) -> URL? {
@@ -67,7 +68,10 @@ final class HistoryAudioArchiveService: HistoryAudioArchiveManaging {
         guard let relativePath, !relativePath.isEmpty else {
             return nil
         }
-        return try? rootURL().appendingPathComponent(relativePath)
+        let matches = (try? managedRootURLs())?.compactMap {
+            try? HistoryAudioQuota(rootURL: $0).validatedURL(path: relativePath)
+        }
+        return matches?.count == 1 ? matches?[0] : nil
     }
 
     func removeArchive(for entry: TranscriptionHistoryEntry) {
@@ -106,6 +110,8 @@ final class HistoryAudioArchiveService: HistoryAudioArchiveManaging {
                     continue
                 }
 
+                let audioUse = HistoryAudioFileUse(url: sourceURL)
+                defer { withExtendedLifetime(audioUse) {} }
                 do {
                     let folderURL = destinationDirectoryURL.appendingPathComponent(folderName(for: entry.kind), isDirectory: true)
                     try fileManager.createDirectory(at: folderURL, withIntermediateDirectories: true)
@@ -133,30 +139,30 @@ final class HistoryAudioArchiveService: HistoryAudioArchiveManaging {
     }
 
     func rootURL() throws -> URL {
-        try HistoryAudioStorageDirectoryManager.ensureRootDirectoryExists()
+        if let isolatedRootURL {
+            try fileManager.createDirectory(at: isolatedRootURL, withIntermediateDirectories: true)
+            return isolatedRootURL
+        }
+        return try HistoryAudioStorageDirectoryManager.ensureRootDirectoryExists()
+    }
+
+    func managedRootURLs() throws -> [URL] {
+        isolatedRootURL == nil ? HistoryAudioStorageDirectoryManager.knownRootURLs() : [try rootURL()]
     }
 
     nonisolated static func storageStats(rootURL: URL?, audioPaths: [String]) -> HistoryAudioStorageStats {
-        var storedFileCount = 0
-        var totalBytes: Int64 = 0
-        let fileManager = FileManager.default
-
-        for relativePath in audioPaths {
-            guard let sourceURL = rootURL?.appendingPathComponent(relativePath),
-                  fileManager.fileExists(atPath: sourceURL.path)
-            else {
-                continue
-            }
-
-            storedFileCount += 1
-            let fileSize = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            totalBytes += Int64(fileSize)
+        guard let rootURL else { return HistoryAudioStorageStats(storedFileCount: 0, totalBytes: 0, measurementFailed: true) }
+        do {
+            let quota = HistoryAudioQuota(rootURL: rootURL)
+            try quota.registerExisting(paths: audioPaths)
+            let snapshot = quota.snapshot(limitBytes: nil)
+            return HistoryAudioStorageStats(
+                storedFileCount: snapshot.fileCount, totalBytes: snapshot.totalBytes,
+                measurementFailed: snapshot.measurementFailed
+            )
+        } catch {
+            return HistoryAudioStorageStats(storedFileCount: 0, totalBytes: 0, measurementFailed: true)
         }
-
-        return HistoryAudioStorageStats(
-            storedFileCount: storedFileCount,
-            totalBytes: totalBytes
-        )
     }
 
     private func folderName(for kind: TranscriptionHistoryKind) -> String {
@@ -203,4 +209,10 @@ struct HistoryAudioExportSummary: Equatable {
 struct HistoryAudioStorageStats: Equatable {
     let storedFileCount: Int
     let totalBytes: Int64
+    var measurementFailed = false
+}
+
+extension HistoryAudioArchiveManaging {
+    func releaseImportedArchive(path: String) {}
+    func managedRootURLs() throws -> [URL] { [try rootURL()] }
 }

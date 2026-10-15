@@ -8,10 +8,12 @@ final class VoxtDatabase: @unchecked Sendable {
     static let shared = VoxtDatabase()
 
     let dbQueue: DatabaseQueue
+    let databaseURL: URL
 
     init(fileManager: FileManager = .default, databaseURL: URL? = nil) {
         do {
             let resolvedURL = try databaseURL ?? Self.defaultDatabaseURL(fileManager: fileManager)
+            self.databaseURL = resolvedURL
             try fileManager.createDirectory(
                 at: resolvedURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -241,6 +243,10 @@ final class VoxtDatabase: @unchecked Sendable {
                 CREATE INDEX IF NOT EXISTS idx_dictionary_entries_category
                     ON dictionary_entries(categoryID, updatedAt DESC);
                 """)
+        }
+
+        migrator.registerMigration("v7_history_audio_deletions") { db in
+            try db.execute(sql: "CREATE TABLE history_audio_deletions (path TEXT PRIMARY KEY NOT NULL, pending INTEGER NOT NULL DEFAULT 0)")
         }
 
         return migrator

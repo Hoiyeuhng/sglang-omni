@@ -40,7 +40,9 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
     }
 
     func testRetentionCleanupPreservesMeetingHistory() async throws {
-        let defaults = UserDefaults.standard
+        let suite = "VoxtHistoryRetentionTests-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
         let cleanupEnabledKey = AppPreferenceKey.historyCleanupEnabled
         let retentionPeriodKey = AppPreferenceKey.historyRetentionPeriod
         let retentionCountKey = AppPreferenceKey.historyRetentionCount
@@ -74,7 +76,7 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
         let rewrite = makeEntry(index: 2, kind: .rewrite, createdAt: oldDate)
         let meeting = makeEntry(index: 3, kind: .transcript, createdAt: oldDate)
         let repository = try makeFixture(entries: [transcription, translation, rewrite, meeting])
-        let store = TranscriptionHistoryStore(repository: repository)
+        let store = TranscriptionHistoryStore(repository: repository, defaults: defaults)
 
         XCTAssertNil(store.entry(id: transcription.id))
         XCTAssertNil(store.entry(id: translation.id))
@@ -84,7 +86,9 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
     }
 
     func testRetentionCountCleanupKeepsNewestPerKindAndPreservesMeetings() async throws {
-        let defaults = UserDefaults.standard
+        let suite = "VoxtHistoryRetentionTests-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
         let cleanupEnabledKey = AppPreferenceKey.historyCleanupEnabled
         let retentionPeriodKey = AppPreferenceKey.historyRetentionPeriod
         let retentionCountKey = AppPreferenceKey.historyRetentionCount
@@ -136,7 +140,7 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
         entries.append(meeting)
 
         let repository = try makeFixture(entries: entries)
-        let store = TranscriptionHistoryStore(repository: repository)
+        let store = TranscriptionHistoryStore(repository: repository, defaults: defaults)
 
         for id in newestNormalIDs {
             XCTAssertNotNil(store.entry(id: id))

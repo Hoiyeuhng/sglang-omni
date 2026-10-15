@@ -312,6 +312,8 @@ extension AppDelegate {
         if storesAudioForMode, let archivedAudioURL = result.archivedAudioURL, archivedAudioExists {
             do {
                 audioRelativePath = try historyStore.importAudioArchive(from: archivedAudioURL, kind: .transcript)
+            } catch HistoryAudioQuotaError.oversized {
+                audioRelativePath = nil
             } catch {
                 VoxtLog.meetingWarning("Meeting audio persistence failed. error=\(error.localizedDescription)")
                 return nil

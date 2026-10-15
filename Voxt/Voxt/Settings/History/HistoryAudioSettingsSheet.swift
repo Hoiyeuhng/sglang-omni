@@ -12,6 +12,8 @@ struct HistoryAudioSettingsSheet: View {
     @Binding var historyRetentionPeriodRaw: String
     @Binding var historyRetentionCountRaw: String
     @Binding var historyAudioStorageLimitMB: Int
+    @Binding var historyAudioQuotaMigrationPending: Bool
+    @Binding var diagnosticLogStorageLimitMiB: Int
     @Binding var historyAudioStorageEnabled: Bool
     @Binding var historyAudioStorageDisplayPath: String
     @Binding var historyAudioStorageSelectionError: String?
@@ -21,6 +23,9 @@ struct HistoryAudioSettingsSheet: View {
     let historyRetentionPeriod: HistoryRetentionPeriod
     let historyRetentionCount: HistoryRetentionCount
     let historyAudioStorageStatsSummary: String
+    let diagnosticStorageSummary: String
+    let databaseStorageSummary: String
+    let diagnosticStorageIssue: Bool
     let onOpenHistoryAudioStorageInFinder: () -> Void
     let onChooseHistoryAudioStorageDirectory: () -> Void
     let onExportAllHistoryAudio: () -> Void
@@ -77,15 +82,27 @@ struct HistoryAudioSettingsSheet: View {
                     isOn: $historyAudioStorageEnabled
                 )
 
+                if historyAudioQuotaMigrationPending {
+                    Text("Existing audio remains Unlimited until you choose a limit. A finite limit deletes the oldest saved audio, preserving text history.")
+                        .font(.caption)
+                    HStack {
+                        Button("Use 100 MB and clean oldest audio") {
+                            historyAudioQuotaMigrationPending = false
+                            historyAudioStorageLimitMB = 100
+                        }
+                        Button("Keep Unlimited") {
+                            historyAudioQuotaMigrationPending = false
+                            historyAudioStorageLimitMB = 0
+                        }
+                    }
+                }
                 HStack {
                     Text("Audio storage limit")
                     Spacer()
                     Picker("Audio storage limit", selection: $historyAudioStorageLimitMB) {
-                        Text("50 MB").tag(50)
-                        Text("100 MB").tag(100)
-                        Text("250 MB").tag(250)
-                        Text("500 MB").tag(500)
-                        Text("Unlimited").tag(0)
+                        ForEach(HistoryAudioQuotaPreference.choices, id: \.self) { limit in
+                            Text(limit == 0 ? localizedHistoryAudioSettings("Unlimited") : "\(limit) MB").tag(limit)
+                        }
                     }
                     .labelsHidden()
                     .frame(width: 160)
@@ -105,7 +122,7 @@ struct HistoryAudioSettingsSheet: View {
                         onChoose: onChooseHistoryAudioStorageDirectory
                     )
 
-                    Text(localizedHistoryAudioSettings("New history audio is stored here. Switching the path will not move existing audio files."))
+                    Text(localizedHistoryAudioSettings("New history audio is stored here. Previous locations remain managed; switching does not move files."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -119,6 +136,35 @@ struct HistoryAudioSettingsSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            GeneralSettingsCard(titleText: localizedHistoryAudioSettings("Other Local Storage")) {
+                HStack {
+                    Text("Diagnostic logs")
+                    Spacer()
+                    Text(diagnosticStorageSummary)
+                    Picker("Diagnostic log limit", selection: $diagnosticLogStorageLimitMiB) {
+                        ForEach(VoxtLogFileStore.quotaChoices, id: \.self) { limit in
+                            Text(limit == 0 ? localizedHistoryAudioSettings("Unlimited") : "\(limit) MiB").tag(limit)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 130)
+                }
+                Text("Includes current, rotated and legacy Voxt logs. Default: 12 MiB. Logs rotate independently of audio.")
+                    .font(.caption)
+                if diagnosticStorageIssue {
+                    Text("Log cleanup or writing failed; storage may remain over limit.").foregroundStyle(.red)
+                }
+                HStack {
+                    Text("Database files (shared)")
+                    Spacer()
+                    Text(databaseStorageSummary)
+                }
+                Text("Includes SQLite, WAL and SHM for history, notes and dictionaries. Text and notes are not quota caches.")
+                    .font(.caption)
+                Text("Audio imports and active files can temporarily exceed the limit. A recording larger than the limit is not saved; its text is retained.")
+                    .font(.caption)
             }
 
             if historyAudioStorageEnabled {
