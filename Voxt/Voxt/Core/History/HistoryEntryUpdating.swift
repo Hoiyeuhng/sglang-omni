@@ -97,6 +97,10 @@ extension TranscriptionHistoryEntry {
         copy(audioRelativePath: .set(audioRelativePath))
     }
 
+    func removingAudioArchiveReferences() -> TranscriptionHistoryEntry {
+        copy(audioRelativePath: .set(nil), transcriptAudioRelativePath: .set(nil))
+    }
+
     func updatingOutputDestination(
         focusedAppName: String?,
         focusedAppBundleID: String?,
@@ -122,6 +126,7 @@ extension TranscriptionHistoryEntry {
         browserURLHost: HistoryEntryUpdate<String?> = .keep,
         browserURLOrigin: HistoryEntryUpdate<String?> = .keep,
         audioRelativePath: HistoryEntryUpdate<String?> = .keep,
+        transcriptAudioRelativePath: HistoryEntryUpdate<String?> = .keep,
         whisperWordTimings: HistoryEntryUpdate<[WhisperHistoryWordTiming]?> = .keep,
         senseVoiceMetadata: HistoryEntryUpdate<SenseVoiceTranscriptMetadata?> = .keep,
         transcriptSegments: HistoryEntryUpdate<[TranscriptSegment]?> = .keep,
@@ -167,7 +172,7 @@ extension TranscriptionHistoryEntry {
             whisperWordTimings: whisperWordTimings.resolved(current: self.whisperWordTimings),
             senseVoiceMetadata: senseVoiceMetadata.resolved(current: self.senseVoiceMetadata),
             transcriptSegments: transcriptSegments.resolved(current: self.transcriptSegments),
-            transcriptAudioRelativePath: transcriptAudioRelativePath,
+            transcriptAudioRelativePath: transcriptAudioRelativePath.resolved(current: self.transcriptAudioRelativePath),
             meetingCaptureMode: meetingCaptureMode,
             transcriptSummary: transcriptSummary.resolved(current: self.transcriptSummary),
             transcriptSummaryStale: transcriptSummaryStale.resolved(current: self.transcriptSummaryStale),
