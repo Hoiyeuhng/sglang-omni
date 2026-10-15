@@ -487,6 +487,7 @@ struct GeneralAppBehaviorCard: View {
 struct GeneralLoggingCard: View {
     @Binding var hotkeyDebugLoggingEnabled: Bool
     @Binding var llmDebugLoggingEnabled: Bool
+    @Binding var recordingDiagnosticsEnabled: Bool
     let onViewLogs: () -> Void
 
     var body: some View {
@@ -513,6 +514,12 @@ struct GeneralLoggingCard: View {
                 title: localizedKey("Enable model debug logs"),
                 description: localizedKey("Records local and remote model details, including LLM, ASR, model downloads, and model routing, for debugging."),
                 isOn: $llmDebugLoggingEnabled
+            )
+
+            GeneralToggleRow(
+                title: Text("Enable recording diagnostics"),
+                description: Text("Logs session IDs and recording/VAD pipeline events without audio or transcript content."),
+                isOn: $recordingDiagnosticsEnabled
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
