@@ -11,6 +11,7 @@ struct HistoryAudioSettingsSheet: View {
     @Binding var historyCleanupEnabled: Bool
     @Binding var historyRetentionPeriodRaw: String
     @Binding var historyRetentionCountRaw: String
+    @Binding var historyAudioStorageLimitMB: Int
     @Binding var historyAudioStorageEnabled: Bool
     @Binding var historyAudioStorageDisplayPath: String
     @Binding var historyAudioStorageSelectionError: String?
@@ -75,6 +76,23 @@ struct HistoryAudioSettingsSheet: View {
                     titleText: localizedHistoryAudioSettings("Save history audio"),
                     isOn: $historyAudioStorageEnabled
                 )
+
+                HStack {
+                    Text("Audio storage limit")
+                    Spacer()
+                    Picker("Audio storage limit", selection: $historyAudioStorageLimitMB) {
+                        Text("50 MB").tag(50)
+                        Text("100 MB").tag(100)
+                        Text("250 MB").tag(250)
+                        Text("500 MB").tag(500)
+                        Text("Unlimited").tag(0)
+                    }
+                    .labelsHidden()
+                    .frame(width: 160)
+                }
+                Text(historyAudioStorageStatsSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 if historyAudioStorageEnabled {
                     SettingsPathSelectionRow(
