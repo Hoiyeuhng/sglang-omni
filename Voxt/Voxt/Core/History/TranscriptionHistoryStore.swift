@@ -3,6 +3,7 @@
 
 import Foundation
 import Combine
+import os
 
 @MainActor
 final class TranscriptionHistoryStore: ObservableObject {
@@ -32,6 +33,7 @@ final class TranscriptionHistoryStore: ObservableObject {
     @Published private(set) var diagnosticStorageIssue = false
     @Published private(set) var audioQuotaSnapshot = HistoryAudioQuotaSnapshot(measurementFailed: true)
     private static let audioQuotaQueue = DispatchQueue(label: "app.voxt.history-audio-quota", qos: .utility)
+    private let requestedAudioQuotaLimitBytes = OSAllocatedUnfairLock<Int64?>(initialState: nil)
     private let repository: HistoryRepositoryProtocol
     private let audioArchive: HistoryAudioArchiveManaging
     private let logFileStore: VoxtLogFileStore
@@ -531,6 +533,9 @@ final class TranscriptionHistoryStore: ObservableObject {
     }
 
     func applyAudioStorageQuotaIfNeeded() {
+        let limitBytes = HistoryAudioQuotaPreference.limitBytes(defaults: defaults)
+        let requestedLimitBytes = requestedAudioQuotaLimitBytes
+        requestedLimitBytes.withLock { $0 = limitBytes }
         let roots: [URL]
         do {
             _ = try audioArchive.rootURL()
@@ -540,7 +545,6 @@ final class TranscriptionHistoryStore: ObservableObject {
             return
         }
         let repository = repository
-        let defaults = defaults
         let protectedPaths = Set(importedAudioUses.keys)
         let logFileStore = logFileStore
         Self.audioQuotaQueue.async { [weak self] in
@@ -551,7 +555,7 @@ final class TranscriptionHistoryStore: ObservableObject {
                     roots: roots,
                     referencedPaths: paths,
                     requestedDeletions: Set(try repository.pendingAudioDeletionPaths()),
-                    limitBytes: HistoryAudioQuotaPreference.limitBytes(defaults: defaults),
+                    limitBytes: requestedLimitBytes.withLock { $0 },
                     protectedPaths: protectedPaths,
                     clearReferences: repository.clearAudioReferences(path:)
                 )

@@ -1,11 +1,64 @@
 // TranscriptionHistoryStoreAsyncTests.swift
 
+import Combine
 import Foundation
 import XCTest
 @testable import Voxt
 
 @MainActor
 final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
+    func testQueuedQuotaUsesUnlimitedSelectedBeforeCleanupStarts() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voxt-history-quota-policy-\(UUID())", isDirectory: true)
+        let audioRootURL = directoryURL.appendingPathComponent("audio", isDirectory: true)
+        let relativePath = "transcription/fixture.wav"
+        let audioURL = audioRootURL.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: audioURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        try Data().write(to: audioURL)
+        let audioFile = try FileHandle(forWritingTo: audioURL)
+        try audioFile.truncate(atOffset: 60_000_000)
+        try audioFile.close()
+        try HistoryAudioQuota(rootURL: audioRootURL).register(path: relativePath)
+
+        let suite = "VoxtHistoryQuotaPolicyTests-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        HistoryAudioQuotaPreference.initialize(defaults: defaults, hasExistingData: false)
+        defaults.set(50, forKey: HistoryAudioQuotaPreference.limitKey)
+        let entry = makeEntry(index: 0).updatingAudioRelativePath(relativePath)
+        let repository = try makeFixture(entries: [entry])
+        repository.blockNextAudioPathsRequest()
+        let store = TranscriptionHistoryStore(
+            repository: repository,
+            audioArchive: HistoryAudioArchiveService(rootURL: audioRootURL),
+            defaults: defaults,
+            logFileStore: VoxtLogFileStore(baseDirectoryURL: directoryURL.appendingPathComponent("logs"))
+        )
+        XCTAssertTrue(repository.waitUntilRequestIsBlocked())
+        let refreshed = expectation(description: "Both queued quota requests complete")
+        refreshed.expectedFulfillmentCount = 2
+        let observation = store.$audioQuotaSnapshot.dropFirst().prefix(2).sink { snapshot in
+            XCTAssertFalse(snapshot.measurementFailed)
+            XCTAssertFalse(snapshot.cleanupFailed)
+            XCTAssertFalse(snapshot.overLimit)
+            XCTAssertEqual(snapshot.fileCount, 1)
+            XCTAssertEqual(snapshot.totalBytes, 60_000_000)
+            refreshed.fulfill()
+        }
+        defer { observation.cancel() }
+
+        defaults.set(0, forKey: HistoryAudioQuotaPreference.limitKey)
+        store.applyAudioStorageQuotaIfNeeded()
+        repository.releaseBlockedRequest()
+        await fulfillment(of: [refreshed], timeout: 3)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+        let persistedEntry = try XCTUnwrap(repository.entry(id: entry.id))
+        XCTAssertEqual(persistedEntry.audioRelativePath, relativePath)
+        XCTAssertEqual(persistedEntry.text, entry.text)
+    }
+
     func testClearAllInvalidatesInFlightReloadSnapshot() async throws {
         let repository = try makeFixture(entries: [makeEntry(index: 0)])
         let store = TranscriptionHistoryStore(repository: repository)
@@ -326,6 +379,7 @@ private final class BlockingHistoryRepository: HistoryRepositoryProtocol, @unche
     private let requestStarted = DispatchSemaphore(value: 0)
     private let requestRelease = DispatchSemaphore(value: 0)
     private var shouldBlockNextEntriesRequest = false
+    private var shouldBlockNextAudioPathsRequest = false
     private var shouldFailNextUpsertRequest = false
 
     init(base: HistoryRepositoryProtocol) {
@@ -335,6 +389,12 @@ private final class BlockingHistoryRepository: HistoryRepositoryProtocol, @unche
     func blockNextEntriesRequest() {
         lock.withLock {
             shouldBlockNextEntriesRequest = true
+        }
+    }
+
+    func blockNextAudioPathsRequest() {
+        lock.withLock {
+            shouldBlockNextAudioPathsRequest = true
         }
     }
 
@@ -389,7 +449,17 @@ private final class BlockingHistoryRepository: HistoryRepositoryProtocol, @unche
     }
 
     func audioRelativePaths() throws -> [String] {
-        try base.audioRelativePaths()
+        let snapshot = try base.audioRelativePaths()
+        let shouldBlock = lock.withLock {
+            let value = shouldBlockNextAudioPathsRequest
+            shouldBlockNextAudioPathsRequest = false
+            return value
+        }
+        if shouldBlock {
+            requestStarted.signal()
+            _ = requestRelease.wait(timeout: .now() + 2)
+        }
+        return snapshot
     }
 
     func entryCount(kind: TranscriptionHistoryKind?, query: String) throws -> Int {
