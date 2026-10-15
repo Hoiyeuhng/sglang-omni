@@ -2380,11 +2380,11 @@
 
 "Export diagnostic sample…" = "Export diagnostic sample…";
 
-"Choose content from this record only. Audio, transcription and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "Choose content from this record only. Audio, transcription and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust.";
+"Choose content from this record only. Audio, saved final text and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "Choose content from this record only. Audio, saved final text and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust.";
 
-"Include transcription" = "Include transcription";
+"Include saved final text" = "Include saved final text";
 
-"This record has no transcription." = "This record has no transcription.";
+"This record has no saved final text." = "This record has no saved final text.";
 
 "Include saved audio" = "Include saved audio";
 
@@ -2400,7 +2400,7 @@
 
 "Files to export:" = "Files to export:";
 
-"The manifest contains only a format version, numeric app version, selected filenames and audio byte count. It contains no settings, endpoints or diagnostic logs." = "The manifest contains only a format version, numeric app version, selected filenames and audio byte count. It contains no settings, endpoints or diagnostic logs.";
+"The manifest contains only a format version, numeric app version, selected filenames, audio byte count and final-text origin. It contains no settings, endpoints or diagnostic logs." = "The manifest contains only a format version, numeric app version, selected filenames, audio byte count and final-text origin. It contains no settings, endpoints or diagnostic logs.";
 
 "Show partial export in Finder" = "Show partial export in Finder";
 
@@ -2419,3 +2419,7 @@
 "Exporting…" = "Exporting…";
 
 "Partial diagnostic sample remains" = "Partial diagnostic sample remains";
+
+"Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output." = "Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output.";
+
+"This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved." = "This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved.";

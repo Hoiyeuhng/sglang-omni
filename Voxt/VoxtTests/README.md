@@ -113,6 +113,12 @@ Run `bash tools/run_history_diagnostic_sample_tests.sh` from the Voxt directory
 for isolated contract tests of the production exporter with Swift 6.2 or later.
 The runner uses Swift 5 mode with MainActor default isolation, temporary directories,
 synthetic audio, and the same assertions as `HistoryDiagnosticSampleExportTests`.
+Permission cases use a temporary inheritable ACL and temporarily lock only the
+new test staging directory to verify permission failure occurs before content
+is written. The flag is removed before cleanup; no user permissions are changed.
+The tests verify private ACLs before publication and after publication, preserve
+the destination ACL, and identify enhanced/translated stored text as final output
+in schema version 2 without claiming it is raw ASR text.
 It never loads app preferences, databases, Keychain, real recordings or microphone
 input. It decodes synthetic audio for preview metadata without playing it.
 

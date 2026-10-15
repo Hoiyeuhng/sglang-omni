@@ -8,7 +8,7 @@ struct HistoryDiagnosticSampleSheet: View {
     let resolvedAudioURL: URL?
 
     @StateObject private var playbackController = HistoryAudioPlaybackController(audioURL: nil)
-    @State private var includeTranscription = false
+    @State private var includeHistoryText = false
     @State private var includeAudio = false
     @State private var expectedTranscription = ""
     @State private var audioSource: HistoryDiagnosticAudioSource?
@@ -22,7 +22,7 @@ struct HistoryDiagnosticSampleSheet: View {
 
     private var request: HistoryDiagnosticSampleRequest {
         HistoryDiagnosticSampleRequest(
-            transcription: includeTranscription ? entry.text : nil,
+            historyText: includeHistoryText ? entry.text : nil,
             audio: audioSource,
             includeAudio: includeAudio,
             expectedTranscription: expectedTranscription.isEmpty ? nil : expectedTranscription,
@@ -34,13 +34,16 @@ struct HistoryDiagnosticSampleSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(AppLocalization.localizedString("Export diagnostic sample"))
                 .font(.title3.weight(.semibold))
-            Text(AppLocalization.localizedString("Choose content from this record only. Audio, transcription and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust."))
+            Text(AppLocalization.localizedString("Choose content from this record only. Audio, saved final text and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust."))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Toggle(AppLocalization.localizedString("Include transcription"), isOn: $includeTranscription)
+            Toggle(AppLocalization.localizedString("Include saved final text"), isOn: $includeHistoryText)
                 .disabled(isExporting)
+            Text(AppLocalization.localizedString("Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             ScrollView {
-                Text(entry.text.isEmpty ? AppLocalization.localizedString("This record has no transcription.") : entry.text)
+                Text(entry.text.isEmpty ? AppLocalization.localizedString("This record has no saved final text.") : entry.text)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -75,7 +78,7 @@ struct HistoryDiagnosticSampleSheet: View {
                 .font(.callout.weight(.medium))
             Text(request.fileNames.joined(separator: "\n"))
                 .font(.caption.monospaced())
-            Text(AppLocalization.localizedString("The manifest contains only a format version, numeric app version, selected filenames and audio byte count. It contains no settings, endpoints or diagnostic logs."))
+            Text(AppLocalization.localizedString("The manifest contains only a format version, numeric app version, selected filenames, audio byte count and final-text origin. It contains no settings, endpoints or diagnostic logs."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let statusMessage {
@@ -98,7 +101,7 @@ struct HistoryDiagnosticSampleSheet: View {
                 }
                 .disabled(isChoosingDestination)
                 Button(AppLocalization.localizedString("Choose export folder…"), action: chooseDestination)
-                    .disabled(isExporting || isChoosingDestination || remainingPartialURL != nil || (!includeTranscription && !includeAudio))
+                    .disabled(isExporting || isChoosingDestination || remainingPartialURL != nil || (!includeHistoryText && !includeAudio))
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -183,6 +186,8 @@ struct HistoryDiagnosticSampleSheet: View {
                         }
                     } else if error is CancellationError {
                         statusMessage = AppLocalization.localizedString("Export cancelled. No sample was saved.")
+                    } else if case HistoryDiagnosticSampleError.privatePermissionsUnavailable = error {
+                        statusMessage = AppLocalization.localizedString("This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved.")
                     } else if case HistoryDiagnosticSampleError.destinationConflict = error {
                         statusMessage = AppLocalization.localizedString("The destination already exists. No existing files were changed. Choose another folder and try again.")
                     } else {

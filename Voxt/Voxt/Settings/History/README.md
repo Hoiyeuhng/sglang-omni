@@ -13,20 +13,26 @@ Settings UI for transcription history, audio retention, correction presentation,
 ## Private diagnostic samples
 
 Use a history row's **Export diagnostic sample…** action to preview one record and
-choose its transcription, saved audio, or both. Neither is selected initially.
+choose its saved final text, saved audio, or both. Neither is selected initially.
 Optional expected transcription is included only when entered. Audio preview does
 not play automatically; unavailable audio never starts recording or changes the
 history audio preference.
 
 The export sheet lists the exact files. Its manifest allows only schema version,
-numeric application version, selected filenames and selected audio byte count.
+numeric application version, selected filenames, selected audio byte count and
+text origin. Selected history text is written to history-text.txt and identified
+as stored_final in schema version 2. It may already include enhancement,
+translation or rewriting; this export does not claim to recover raw ASR output.
 Custom model names, endpoints, configuration, other history and diagnostic logs
 are excluded. Nothing is uploaded.
 
 The worker holds a read descriptor for the selected regular archive, rejects
 traversal and symlink archive paths, and streams to a private staging directory in
-the chosen destination. Files use mode 0600 and directories 0700 where supported
-by the destination filesystem. Publication is atomic and refuses existing targets.
+the chosen destination. Before writing content, the worker clears inherited ACLs on newly created
+descriptors and verifies owner-only mode 0600 for files and 0700 for directories.
+The destination folder's permissions are unchanged. A destination that cannot
+enforce or verify these permissions, including one without ACL support, is
+rejected before sensitive content is written. Publication is atomic and refuses existing targets.
 Normal errors and cancellation remove staging files; a cleanup failure shows the
 remaining private folder. A crash or forced process termination may leave a hidden
 .voxt-sample-*.partial directory in that destination; it can be deleted manually.

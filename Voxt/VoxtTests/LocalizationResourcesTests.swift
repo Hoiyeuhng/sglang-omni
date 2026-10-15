@@ -8,7 +8,9 @@ final class LocalizationResourcesTests: XCTestCase {
     func testDiagnosticSampleConsentIsLocalizedInSupportedLanguages() {
         let keys = [
             "Export diagnostic sample…",
-            "Include transcription",
+            "Include saved final text",
+            "Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output.",
+            "This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved.",
             "Include saved audio",
             "Expected transcription (optional, included if entered)",
             "Saved audio is unavailable for this record. Exporting will not record audio or enable audio saving.",

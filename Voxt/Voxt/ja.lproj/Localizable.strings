@@ -2374,11 +2374,11 @@
 
 "Export diagnostic sample…" = "診断サンプルを書き出す…";
 
-"Choose content from this record only. Audio, transcription and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "この記録の内容だけを選択します。音声、文字起こし、期待する文字起こしには機密情報が含まれる場合があります。アップロードは行いません。書き出したフォルダは信頼できる人とのみ共有してください。";
+"Choose content from this record only. Audio, saved final text and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "この記録から内容を選択します。音声、保存済みの最終テキスト、期待する文字起こしには機密情報が含まれる場合があります。アップロードは行いません。書き出したフォルダは信頼できる相手にのみ共有してください。";
 
-"Include transcription" = "文字起こしを含める";
+"Include saved final text" = "保存済みの最終テキストを含める";
 
-"This record has no transcription." = "この記録に文字起こしはありません。";
+"This record has no saved final text." = "この記録に保存済みの最終テキストはありません。";
 
 "Include saved audio" = "保存済み音声を含める";
 
@@ -2394,7 +2394,7 @@
 
 "Files to export:" = "書き出すファイル：";
 
-"The manifest contains only a format version, numeric app version, selected filenames and audio byte count. It contains no settings, endpoints or diagnostic logs." = "マニフェストに含まれるのは形式バージョン、数字のアプリバージョン、選択したファイル名、音声のバイト数のみです。設定、接続先、診断ログは含まれません。";
+"The manifest contains only a format version, numeric app version, selected filenames, audio byte count and final-text origin. It contains no settings, endpoints or diagnostic logs." = "マニフェストに含まれるのは形式バージョン、数字のアプリバージョン、選択したファイル名、音声のバイト数、最終テキストの出所のみです。設定、接続先、診断ログは含まれません。";
 
 "Show partial export in Finder" = "未完了の書き出しをFinderに表示";
 
@@ -2413,3 +2413,7 @@
 "Exporting…" = "書き出し中…";
 
 "Partial diagnostic sample remains" = "未完了の診断サンプルが残っています";
+
+"Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output." = "保存済みの最終テキストは補正、翻訳、リライト後の内容の場合があります。元の音声認識結果としては扱いません。";
+
+"This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved." = "この保存先ではサンプルの非公開アクセス権を確保できません。別のローカルフォルダを選択してください。サンプルは保存されていません。";

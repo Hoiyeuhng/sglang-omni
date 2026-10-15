@@ -27,6 +27,7 @@ sources=(
     "$voxt_directory/Voxt/Core/History/HistoryDiagnosticSampleExport.swift"
     "$voxt_directory/Voxt/Core/History/HistoryAudioArchiveSupport.swift"
     "$voxt_directory/VoxtTests/TestSupport/HistoryDiagnosticSampleChecks.swift"
+    "$voxt_directory/VoxtTests/TestSupport/HistoryDiagnosticSamplePermissionChecks.swift"
     "$build_directory/SampleContractMain.swift"
 )
 # Include the shared audio-use guard when validating with the storage quota PR.

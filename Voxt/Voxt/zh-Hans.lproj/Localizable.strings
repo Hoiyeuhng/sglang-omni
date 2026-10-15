@@ -2380,11 +2380,11 @@
 
 "Export diagnostic sample…" = "导出诊断样本…";
 
-"Choose content from this record only. Audio, transcription and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "仅选择此条记录的内容。音频、转写和期望转写可能包含机密信息。不会上传任何内容。请仅与您信任的人分享导出的文件夹。";
+"Choose content from this record only. Audio, saved final text and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "仅选择此条记录的内容。音频、已保存的最终文本及期望转写可能包含机密信息。不会上传任何内容。请仅与信任的人分享导出的文件夹。";
 
-"Include transcription" = "包含转写文本";
+"Include saved final text" = "包含已保存的最终文本";
 
-"This record has no transcription." = "此条记录没有转写文本。";
+"This record has no saved final text." = "此记录没有已保存的最终文本。";
 
 "Include saved audio" = "包含已保存音频";
 
@@ -2400,7 +2400,7 @@
 
 "Files to export:" = "将导出的文件：";
 
-"The manifest contains only a format version, numeric app version, selected filenames and audio byte count. It contains no settings, endpoints or diagnostic logs." = "清单仅包含格式版本、数字形式的应用版本、选中文件名和音频字节数，不包含设置、服务地址或诊断日志。";
+"The manifest contains only a format version, numeric app version, selected filenames, audio byte count and final-text origin. It contains no settings, endpoints or diagnostic logs." = "清单仅包含格式版本、数字形式的应用版本、选中文件名、音频字节数及最终文本来源，不包含设置、服务地址或诊断日志。";
 
 "Show partial export in Finder" = "在访达中显示未完成导出";
 
@@ -2419,3 +2419,7 @@
 "Exporting…" = "正在导出…";
 
 "Partial diagnostic sample remains" = "仍有未完成的诊断样本";
+
+"Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output." = "已保存的最终文本可能经过增强、翻译或改写，不代表识别器的原始输出。";
+
+"This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved." = "此目标位置无法保证样本的私密访问权限。请选择其他本地文件夹。未保存任何样本。";

@@ -19,6 +19,9 @@ final class HistoryDiagnosticSampleExportTests: XCTestCase {
     func testTaskCancellationDuringBackgroundCopy() async throws { try await HistoryDiagnosticSampleChecks.taskCancellation() }
     func testRetainedAudioPreviewDoesNotAutoplay() throws { try HistoryDiagnosticSampleChecks.retainedAudioPreview() }
     func testResolvedArchiveRemainsAvailableAfterDirectorySwitch() throws { try HistoryDiagnosticSampleChecks.previousAudioLocation() }
+    func testInheritedACLDoesNotExposeStagingOrFinalSample() throws { try HistoryDiagnosticSampleChecks.inheritedACLIsolation() }
+    func testPrivatePermissionFailureRemovesPartialSample() throws { try HistoryDiagnosticSampleChecks.permissionFailureCleanup() }
+    func testFinalHistoryTextIsNotIdentifiedAsRawASR() throws { try HistoryDiagnosticSampleChecks.storedFinalTextOrigin() }
     func testPrivatePermissions() throws { try HistoryDiagnosticSampleChecks.privatePermissions() }
     func testSyntheticAudioProcessingToExport() throws { try HistoryDiagnosticSampleChecks.syntheticAudioRoundtrip() }
 }

@@ -16,6 +16,7 @@ nonisolated enum HistoryDiagnosticSampleChecks {
         ("cleanup-failure-disclosure", cleanupFailureDisclosure), ("source-path-boundaries", sourcePathBoundaries),
         ("source-unlinked", sourceUnlinked), ("source-mutated", sourceMutated),
         ("manifest-privacy", manifestPrivacy), ("private-permissions", privatePermissions),
+        ("inherited-acl-isolation", inheritedACLIsolation), ("permission-failure-cleanup", permissionFailureCleanup), ("stored-final-text-origin", storedFinalTextOrigin),
         ("synthetic-audio-roundtrip", syntheticAudioRoundtrip), ("retained-audio-preview", retainedAudioPreview), ("previous-audio-location", previousAudioLocation)
     ]
 
@@ -38,7 +39,7 @@ nonisolated enum HistoryDiagnosticSampleChecks {
     }
 
     static func request(text: String? = nil, audio: HistoryDiagnosticAudioSource? = nil, includeAudio: Bool = false, expected: String? = nil, version: String = "1.2.3") -> HistoryDiagnosticSampleRequest {
-        HistoryDiagnosticSampleRequest(transcription: text, audio: audio, includeAudio: includeAudio, expectedTranscription: expected, appVersion: version)
+        HistoryDiagnosticSampleRequest(historyText: text, audio: audio, includeAudio: includeAudio, expectedTranscription: expected, appVersion: version)
     }
 
     static func files(_ directory: URL) throws -> Set<String> {
@@ -62,8 +63,8 @@ nonisolated enum HistoryDiagnosticSampleChecks {
             let audio = try source(in: root)
             let output = try HistoryDiagnosticSampleExporter.export(request(text: "chosen text", audio: audio), to: root)
             let outputFiles = try files(output)
-            try require(outputFiles == ["manifest.json", "transcription.txt"], "Unselected audio escaped")
-            let text = try String(contentsOf: output.appendingPathComponent("transcription.txt"), encoding: .utf8)
+            try require(outputFiles == ["manifest.json", "history-text.txt"], "Unselected audio escaped")
+            let text = try String(contentsOf: output.appendingPathComponent("history-text.txt"), encoding: .utf8)
             try require(text == "chosen text", "Text changed")
         }
     }
@@ -77,6 +78,8 @@ nonisolated enum HistoryDiagnosticSampleChecks {
             try require(outputFiles == ["manifest.json", "recording.wav"], "Unselected text escaped")
             let copied = try Data(contentsOf: output.appendingPathComponent("recording.wav"))
             try require(copied == contents, "Copy changed bytes")
+            let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("manifest.json"))) as! [String: Any]
+            try require(manifest["textOrigin"] == nil, "Unselected text origin escaped")
         }
     }
 
@@ -145,8 +148,9 @@ nonisolated enum HistoryDiagnosticSampleChecks {
 
     static func cancelCleanup() throws {
         try withDirectory { root in
+            try installACL("everyone allow read,write,execute,file_inherit,directory_inherit", on: root)
             let audio = try source(in: root)
-            for cancellationPhase: HistoryDiagnosticSampleExporter.Checkpoint in [.stagingCreated, .copyingAudio, .beforePublish] {
+            for cancellationPhase: HistoryDiagnosticSampleExporter.Checkpoint in [.securingStaging, .stagingCreated, .copyingAudio, .beforePublish] {
                 var wasCancelled = false
                 do {
                     _ = try HistoryDiagnosticSampleExporter.export(request(text: "private", audio: audio, includeAudio: true), to: root) { phase in
@@ -238,7 +242,7 @@ nonisolated enum HistoryDiagnosticSampleChecks {
             let output = try HistoryDiagnosticSampleExporter.export(request(text: "explicitly selected", version: secrets), to: root)
             let contents = try Data(contentsOf: output.appendingPathComponent("manifest.json"))
             let manifest = try JSONSerialization.jsonObject(with: contents) as! [String: Any]
-            try require(Set(manifest.keys) == ["schemaVersion", "appVersion", "files"], "Manifest contains unapproved keys")
+            try require(Set(manifest.keys) == ["schemaVersion", "appVersion", "files", "textOrigin"], "Manifest contains unapproved keys")
             try require(manifest["appVersion"] as? String == "unknown", "Private custom version escaped")
             for file in try files(output) {
                 let text = try String(contentsOf: output.appendingPathComponent(file), encoding: .utf8)
@@ -247,14 +251,16 @@ nonisolated enum HistoryDiagnosticSampleChecks {
         }
     }
 
-    static func privatePermissions() throws {
+    static func storedFinalTextOrigin() throws {
         try withDirectory { root in
-            let output = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: root)
-            let directoryPermissions = try FileManager.default.attributesOfItem(atPath: output.path)[.posixPermissions] as! NSNumber
-            try require(directoryPermissions.intValue == 0o700, "Public sample directory")
-            for file in try files(output) {
-                let permissions = try FileManager.default.attributesOfItem(atPath: output.appendingPathComponent(file).path)[.posixPermissions] as! NSNumber
-                try require(permissions.intValue == 0o600, "Public sensitive file")
+            for finalText in ["Enhanced final history text", "已翻译的历史最终文本"] {
+                let output = try HistoryDiagnosticSampleExporter.export(request(text: finalText), to: root)
+                let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("manifest.json"))) as! [String: Any]
+                try require(manifest["schemaVersion"] as? Int == 2, "Wrong sample schema version")
+                try require(manifest["textOrigin"] as? String == "stored_final", "Final history text was not identified as stored final output")
+                let exportedText = try String(contentsOf: output.appendingPathComponent("history-text.txt"), encoding: .utf8)
+                try require(exportedText == finalText, "Final history text changed")
+                try require(!FileManager.default.fileExists(atPath: output.appendingPathComponent("transcription.txt").path), "Final output was named as raw transcription")
             }
         }
     }

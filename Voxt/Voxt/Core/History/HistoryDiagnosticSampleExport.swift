@@ -8,6 +8,7 @@ nonisolated enum HistoryDiagnosticSampleError: Error, Equatable {
     case destinationConflict
     case ioFailure
     case sourceChanged
+    case privatePermissionsUnavailable
     case cleanupFailed(URL)
 }
 
@@ -86,7 +87,7 @@ nonisolated final class HistoryDiagnosticAudioSource: @unchecked Sendable {
 }
 
 nonisolated struct HistoryDiagnosticSampleRequest: Sendable {
-    let transcription: String?
+    let historyText: String?
     let audio: HistoryDiagnosticAudioSource?
     let includeAudio: Bool
     let expectedTranscription: String?
@@ -94,7 +95,7 @@ nonisolated struct HistoryDiagnosticSampleRequest: Sendable {
 
     var fileNames: [String] {
         var names = ["manifest.json"]
-        if transcription != nil { names.append("transcription.txt") }
+        if historyText != nil { names.append("history-text.txt") }
         if includeAudio { names.append("recording.wav") }
         if let expectedTranscription, !expectedTranscription.isEmpty { names.append("expected-transcription.txt") }
         return names
@@ -103,17 +104,23 @@ nonisolated struct HistoryDiagnosticSampleRequest: Sendable {
 
 nonisolated enum HistoryDiagnosticSampleExporter {
     enum Checkpoint: Sendable {
+        case securingStaging
         case stagingCreated
         case copyingAudio
         case beforePublish
         case beforeCleanup
     }
 
+    private enum TextOrigin: String, Encodable {
+        case storedFinal = "stored_final"
+    }
+
     private struct Manifest: Encodable {
-        let schemaVersion = 1
+        let schemaVersion = 2
         let appVersion: String
         let files: [String]
         let audioBytes: Int64?
+        let textOrigin: TextOrigin?
     }
 
     static func export(
@@ -122,7 +129,7 @@ nonisolated enum HistoryDiagnosticSampleExporter {
         folderName: String = "voxt-diagnostic-sample-\(UUID().uuidString)",
         checkpoint: (Checkpoint) throws -> Void = { _ in }
     ) throws -> URL {
-        guard request.transcription != nil || request.includeAudio else {
+        guard request.historyText != nil || request.includeAudio else {
             throw HistoryDiagnosticSampleError.noContentSelected
         }
         guard !request.includeAudio || request.audio != nil else {
@@ -150,9 +157,11 @@ nonisolated enum HistoryDiagnosticSampleExporter {
         }
         defer { close(stagingDescriptor) }
         do {
+            try checkpoint(.securingStaging)
+            try enforcePrivatePermissions(stagingDescriptor, mode: 0o700)
             try checkpoint(.stagingCreated)
-            if let transcription = request.transcription {
-                try write(Data(transcription.utf8), named: "transcription.txt", directoryDescriptor: stagingDescriptor)
+            if let historyText = request.historyText {
+                try write(Data(historyText.utf8), named: "history-text.txt", directoryDescriptor: stagingDescriptor)
             }
             if let expected = request.expectedTranscription, !expected.isEmpty {
                 try write(Data(expected.utf8), named: "expected-transcription.txt", directoryDescriptor: stagingDescriptor)
@@ -161,6 +170,7 @@ nonisolated enum HistoryDiagnosticSampleExporter {
                 let descriptor = openat(stagingDescriptor, "recording.wav", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
                 guard descriptor >= 0 else { throw HistoryDiagnosticSampleError.ioFailure }
                 defer { close(descriptor) }
+                try enforcePrivatePermissions(descriptor, mode: 0o600)
                 try audio.copy(to: descriptor, checkpoint: checkpoint)
                 guard fsync(descriptor) == 0 else { throw HistoryDiagnosticSampleError.ioFailure }
             }
@@ -170,7 +180,8 @@ nonisolated enum HistoryDiagnosticSampleExporter {
             let manifest = Manifest(
                 appVersion: safeVersion,
                 files: request.fileNames,
-                audioBytes: request.includeAudio ? request.audio?.byteCount : nil
+                audioBytes: request.includeAudio ? request.audio?.byteCount : nil,
+                textOrigin: request.historyText == nil ? nil : .storedFinal
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -185,7 +196,7 @@ nonisolated enum HistoryDiagnosticSampleExporter {
         } catch {
             do {
                 try checkpoint(.beforeCleanup)
-                for name in ["transcription.txt", "expected-transcription.txt", "recording.wav", "manifest.json"] {
+                for name in ["history-text.txt", "expected-transcription.txt", "recording.wav", "manifest.json"] {
                     if unlinkat(stagingDescriptor, name, 0) != 0 && errno != ENOENT {
                         throw HistoryDiagnosticSampleError.cleanupFailed(stagingURL)
                     }
@@ -200,10 +211,40 @@ nonisolated enum HistoryDiagnosticSampleExporter {
         }
     }
 
+    private static func enforcePrivatePermissions(_ descriptor: Int32, mode: mode_t) throws {
+        guard let permissions = acl_init(0) else {
+            throw HistoryDiagnosticSampleError.privatePermissionsUnavailable
+        }
+        defer { acl_free(UnsafeMutableRawPointer(permissions)) }
+        guard acl_set_fd_np(descriptor, permissions, ACL_TYPE_EXTENDED) == 0,
+              fchmod(descriptor, mode) == 0 else {
+            throw HistoryDiagnosticSampleError.privatePermissionsUnavailable
+        }
+        if let effectivePermissions = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) {
+            defer { acl_free(UnsafeMutableRawPointer(effectivePermissions)) }
+            var entry: acl_entry_t?
+            guard acl_valid(effectivePermissions) == 0,
+                  acl_get_entry(effectivePermissions, ACL_FIRST_ENTRY.rawValue, &entry) == -1,
+                  errno == EINVAL else {
+                throw HistoryDiagnosticSampleError.privatePermissionsUnavailable
+            }
+        } else if errno != ENOENT {
+            throw HistoryDiagnosticSampleError.privatePermissionsUnavailable
+        }
+        // note (Codex): Darwin returns ENOENT for a valid descriptor with no extended ACL.
+        var attributes = stat()
+        guard fstat(descriptor, &attributes) == 0,
+              attributes.st_mode & 0o7777 == mode,
+              attributes.st_uid == geteuid() else {
+            throw HistoryDiagnosticSampleError.privatePermissionsUnavailable
+        }
+    }
+
     private static func write(_ contents: Data, named name: String, directoryDescriptor: Int32) throws {
         let descriptor = openat(directoryDescriptor, name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
         guard descriptor >= 0 else { throw HistoryDiagnosticSampleError.ioFailure }
         defer { close(descriptor) }
+        try enforcePrivatePermissions(descriptor, mode: 0o600)
         try contents.withUnsafeBytes { bytes in
             var written = 0
             while written < bytes.count {
