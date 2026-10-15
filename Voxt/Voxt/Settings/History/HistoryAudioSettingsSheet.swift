@@ -99,7 +99,13 @@ struct HistoryAudioSettingsSheet: View {
                 HStack {
                     Text("Audio storage limit")
                     Spacer()
-                    Picker("Audio storage limit", selection: $historyAudioStorageLimitMB) {
+                    Picker("Audio storage limit", selection: Binding(
+                        get: { historyAudioStorageLimitMB },
+                        set: { selectedLimit in
+                            historyAudioQuotaMigrationPending = false
+                            historyAudioStorageLimitMB = selectedLimit
+                        }
+                    )) {
                         ForEach(HistoryAudioQuotaPreference.choices, id: \.self) { limit in
                             Text(limit == 0 ? localizedHistoryAudioSettings("Unlimited") : "\(limit) MB").tag(limit)
                         }
