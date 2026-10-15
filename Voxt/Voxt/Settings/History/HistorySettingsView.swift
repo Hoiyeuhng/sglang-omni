@@ -14,6 +14,7 @@ struct HistorySettingsView: View {
     @AppStorage(AppPreferenceKey.historyRetentionPeriod) private var historyRetentionPeriodRaw = HistoryRetentionPeriod.ninetyDays.rawValue
     @AppStorage(AppPreferenceKey.historyRetentionCount) private var historyRetentionCountRaw = HistoryRetentionCount.unlimited.rawValue
     @AppStorage(AppPreferenceKey.historyAudioStorageEnabled) private var historyAudioStorageEnabled = false
+    @AppStorage("historyAudioStorageLimitMB") private var historyAudioStorageLimitMB = 100
 
     @ObservedObject var historyStore: TranscriptionHistoryStore
     @ObservedObject var noteStore: VoxtNoteStore
@@ -283,6 +284,7 @@ struct HistorySettingsView: View {
                 historyRetentionPeriodRaw: $historyRetentionPeriodRaw,
                 historyRetentionCountRaw: $historyRetentionCountRaw,
                 historyAudioStorageEnabled: $historyAudioStorageEnabled,
+                historyAudioStorageLimitMB: $historyAudioStorageLimitMB,
                 historyAudioStorageDisplayPath: $historyAudioStorageDisplayPath,
                 historyAudioStorageSelectionError: $historyAudioStorageSelectionError,
                 historyAudioExportResultMessage: $historyAudioExportResultMessage,
@@ -352,6 +354,10 @@ struct HistorySettingsView: View {
         .onChange(of: selectedNoteStatuses) { _, _ in
             noteVisibleLimit = notePageSize
             linearCompletedVisibleLimit = 20
+        }
+        .onChange(of: historyAudioStorageLimitMB) { _, _ in
+            historyStore.applyAudioStorageQuotaIfNeeded()
+            refreshHistoryAudioStorageStats()
         }
         .onChange(of: historyCleanupEnabled) { _, _ in
             applyRetentionPolicyAndReload()
