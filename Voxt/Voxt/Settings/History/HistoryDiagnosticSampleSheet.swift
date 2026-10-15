@@ -108,8 +108,11 @@ struct HistoryDiagnosticSampleSheet: View {
         .task {
             let relativePath = entry.audioRelativePath ?? entry.transcriptAudioRelativePath
             let rootURL = audioRootURL
-            let selectedAudioURL = resolvedAudioURL
-            let accessURL = selectedAudioURL ?? rootURL
+            guard let selectedAudioURL = resolvedAudioURL else {
+                isCheckingAudio = false
+                return
+            }
+            let accessURL = selectedAudioURL
             let didStartAccess = accessURL.startAccessingSecurityScopedResource()
             let preparedSource = await Task.detached(priority: .utility) {
                 defer {
