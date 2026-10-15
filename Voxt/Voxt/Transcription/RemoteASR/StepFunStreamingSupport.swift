@@ -124,7 +124,7 @@ extension RemoteASRTranscriber {
         }
     }
 
-    private func handleStepFunRealtimeMessage(_ text: String, context: StepFunStreamingContext) async {
+    func handleStepFunRealtimeMessage(_ text: String, context: StepFunStreamingContext) async {
         guard let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
               let dict = object as? [String: Any] else {
@@ -157,12 +157,12 @@ extension RemoteASRTranscriber {
             let value = (dict["text"] as? String) ?? (dict["delta"] as? String) ?? ""
             guard !value.isEmpty else { return }
             let merged = await context.responseState.appendDelta(value, itemID: dict["item_id"] as? String)
-            publishIntermediateTranscription(merged)
+            publishIntermediateTranscription(merged, isPartial: true, generationID: context.generationID)
         case "conversation.item.input_audio_transcription.completed":
             let value = (dict["transcript"] as? String) ?? (dict["text"] as? String) ?? ""
             guard !value.isEmpty else { return }
             let merged = await context.responseState.commit(value, itemID: dict["item_id"] as? String)
-            publishIntermediateTranscription(merged)
+            publishIntermediateTranscription(merged, isPartial: false, generationID: context.generationID)
         case "error":
             let message = RemoteASRTextSupport.extractStreamErrorMessage(fromLine: text)
                 ?? (dict["message"] as? String)

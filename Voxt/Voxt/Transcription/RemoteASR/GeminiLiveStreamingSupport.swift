@@ -183,10 +183,10 @@ extension RemoteASRTranscriber {
         let update = GeminiLivePayloadSupport.transcriptUpdate(from: object)
         if let final = update.final {
             let merged = await context.responseState.commit(final)
-            publishIntermediateTranscription(merged)
+            publishIntermediateTranscription(merged, isPartial: false, generationID: context.generationID)
         } else if let interim = update.interim {
             let merged = await context.responseState.setInterim(interim)
-            publishIntermediateTranscription(merged)
+            publishIntermediateTranscription(merged, isPartial: true, generationID: context.generationID)
         }
 
         // A turn ends on every pause, so only a terminal event after our own

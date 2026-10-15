@@ -5,6 +5,23 @@ import XCTest
 @testable import Voxt
 
 final class RemoteASRSupportTests: XCTestCase {
+    func testOnlyExplicitStreamDeltasArePartialDiagnostics() {
+        XCTAssertTrue(RemoteASRTextSupport.isPartialStreamPayload(fromLine:
+            #"{"type":"transcript.text.delta","delta":"partial"}"#))
+        XCTAssertTrue(RemoteASRTextSupport.isPartialStreamPayload(fromLine:
+            #"{"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}"#))
+        for finalPayload in [
+            #"{"type":"transcript.text.done","text":"final"}"#,
+            #"{"text":"final"}"#,
+            #"{"delta":"final","is_final":true}"#,
+            #"{"choices":[{"delta":{"content":"final"},"finish_reason":"stop"}]}"#,
+            "plain final response",
+            #"{"delta":""}"#
+        ] {
+            XCTAssertFalse(RemoteASRTextSupport.isPartialStreamPayload(fromLine: finalPayload))
+        }
+    }
+
     func testOpenAITranscriptionMultipartFieldsOmitStreamForFileTranscription() {
         let fields = RemoteASRTextSupport.openAITranscriptionMultipartFields(
             model: "gpt-4o-mini-transcribe",

@@ -77,4 +77,176 @@ final class RemoteASRCompletionTests: XCTestCase {
         transcriber.finish(with: "current", generationID: transcriber.recordingGenerationID)
         XCTAssertEqual(delivered, ["current"])
     }
+
+    func testStepFunProviderDistinguishesDeltaFromFinalWithDisplayDisabled() async throws {
+        let suiteName = "RemoteASR.StepFunDiagnostics.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let output = RemotePartialDiagnosticOutput()
+        let diagnostics = RecordingDiagnosticRecorder(defaults: defaults, sink: { output.append($0) })
+        diagnostics.setEnabled(true)
+        let transcriber = RemoteASRTranscriber()
+        transcriber.diagnosticRecorderOverride = diagnostics
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let socket = session.webSocketTask(with: URL(string: "wss://example.invalid/asr")!)
+        let finalContext = StepFunStreamingContext(session: session, ws: socket,
+            responseState: StepFunResponseState(), generationID: transcriber.recordingGenerationID)
+        transcriber.diagnosticSessionID = UUID()
+        defer { transcriber.resetIntermediateTranscriptionPublishing() }
+
+        await transcriber.handleStepFunRealtimeMessage(
+            #"{"type":"conversation.item.input_audio_transcription.completed","transcript":"final-only"}"#,
+            context: finalContext)
+        XCTAssertTrue(output.lines.isEmpty)
+        XCTAssertEqual(transcriber.pendingIntermediateTranscription, "final-only")
+        transcriber.resetIntermediateTranscriptionPublishing()
+        transcriber.recordingGenerationID = UUID()
+        transcriber.diagnosticSessionID = UUID()
+        transcriber.sessionAllowsRealtimeTextDisplay = false
+        let partialContext = StepFunStreamingContext(session: session, ws: socket,
+            responseState: StepFunResponseState(), generationID: transcriber.recordingGenerationID)
+        await transcriber.handleStepFunRealtimeMessage(
+            #"{"type":"conversation.item.input_audio_transcription.delta","delta":"synthetic private"}"#,
+            context: partialContext)
+        await transcriber.handleStepFunRealtimeMessage(
+            #"{"type":"conversation.item.input_audio_transcription.delta","delta":" response"}"#,
+            context: partialContext)
+        await transcriber.handleStepFunRealtimeMessage(
+            #"{"type":"conversation.item.input_audio_transcription.completed","transcript":"final"}"#,
+            context: partialContext)
+
+        XCTAssertEqual(output.lines.count, 1)
+        let line = try XCTUnwrap(output.lines.first)
+        let event = try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data(line.utf8))
+        XCTAssertEqual(event.kind, .asrFirstPartial)
+        XCTAssertEqual(event.sessionID, transcriber.diagnosticSessionID)
+        XCTAssertEqual(event.requestID, partialContext.generationID)
+        XCTAssertTrue(transcriber.transcribedText.isEmpty)
+        XCTAssertFalse(line.contains("private"))
+        XCTAssertEqual(socket.state, .suspended)
+
+        transcriber.recordingGenerationID = UUID()
+        transcriber.diagnosticSessionID = UUID()
+        await transcriber.handleStepFunRealtimeMessage(
+            #"{"type":"conversation.item.input_audio_transcription.delta","delta":"stale"}"#,
+            context: partialContext)
+        XCTAssertEqual(output.lines.count, 1)
+    }
+
+    func testRemotePartialDiagnosticsIgnoreDisplayPreferenceAndDeduplicate() throws {
+        let suiteName = "RemoteASR.PartialTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let output = RemotePartialDiagnosticOutput()
+        let diagnostics = RecordingDiagnosticRecorder(defaults: defaults, sink: { output.append($0) })
+        diagnostics.setEnabled(true)
+        let transcriber = RemoteASRTranscriber()
+        transcriber.diagnosticRecorderOverride = diagnostics
+        let sessionID = UUID()
+        transcriber.diagnosticSessionID = sessionID
+        transcriber.sessionAllowsRealtimeTextDisplay = false
+        let generationID = transcriber.recordingGenerationID
+        let sensitiveText = "synthetic transcript https://private.example/?token=secret /Users/test/private"
+
+        transcriber.publishIntermediateTranscription(sensitiveText, isPartial: true,
+            generationID: generationID)
+        transcriber.publishIntermediateTranscription("another partial", isPartial: true,
+            generationID: generationID)
+        transcriber.publishIntermediateTranscription("final result", isPartial: false,
+            generationID: generationID)
+
+        let events = try output.lines.map { try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data($0.utf8)) }
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events.first?.kind, .asrFirstPartial)
+        XCTAssertEqual(events.first?.sessionID, sessionID)
+        XCTAssertEqual(events.first?.requestID, generationID)
+        XCTAssertEqual(events.first?.backend, .remote)
+        XCTAssertEqual(events.first?.count, sensitiveText.count)
+        XCTAssertTrue(transcriber.transcribedText.isEmpty)
+        XCTAssertNil(transcriber.pendingIntermediateTranscription)
+        XCTAssertFalse(output.lines.joined().contains("private"))
+        XCTAssertFalse(output.lines.joined().contains("secret"))
+    }
+
+    func testFinalOnlyRemoteResponseDoesNotCreatePartialDiagnostic() {
+        let suiteName = "RemoteASR.FinalTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let output = RemotePartialDiagnosticOutput()
+        let diagnostics = RecordingDiagnosticRecorder(defaults: defaults, sink: { output.append($0) })
+        diagnostics.setEnabled(true)
+        let transcriber = RemoteASRTranscriber()
+        transcriber.diagnosticRecorderOverride = diagnostics
+        transcriber.diagnosticSessionID = UUID()
+        defer { transcriber.resetIntermediateTranscriptionPublishing() }
+
+        transcriber.publishIntermediateTranscription("final result", isPartial: false,
+            generationID: transcriber.recordingGenerationID)
+
+        XCTAssertTrue(output.lines.isEmpty)
+        XCTAssertEqual(transcriber.pendingIntermediateTranscription, "final result")
+    }
+
+    func testCancelledTaskCannotPublishRemotePartial() async {
+        let suiteName = "RemoteASR.CancelledPartialTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let output = RemotePartialDiagnosticOutput()
+        let diagnostics = RecordingDiagnosticRecorder(defaults: defaults, sink: { output.append($0) })
+        diagnostics.setEnabled(true)
+        let transcriber = RemoteASRTranscriber()
+        transcriber.diagnosticRecorderOverride = diagnostics
+        transcriber.diagnosticSessionID = UUID()
+        let task = Task { @MainActor in
+            transcriber.publishIntermediateTranscription("cancelled", isPartial: true,
+                generationID: transcriber.recordingGenerationID)
+        }
+        task.cancel()
+        await task.value
+
+        XCTAssertTrue(output.lines.isEmpty)
+        XCTAssertNil(transcriber.pendingIntermediateTranscription)
+        XCTAssertTrue(transcriber.transcribedText.isEmpty)
+    }
+
+    func testLateRemotePartialCannotBeAttributedToNewSession() throws {
+        let suiteName = "RemoteASR.StalePartialTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let output = RemotePartialDiagnosticOutput()
+        let diagnostics = RecordingDiagnosticRecorder(defaults: defaults, sink: { output.append($0) })
+        diagnostics.setEnabled(true)
+        let transcriber = RemoteASRTranscriber()
+        transcriber.diagnosticRecorderOverride = diagnostics
+        let oldGeneration = transcriber.recordingGenerationID
+        transcriber.recordingGenerationID = UUID()
+        transcriber.diagnosticSessionID = UUID()
+        transcriber.sessionAllowsRealtimeTextDisplay = false
+
+        transcriber.publishIntermediateTranscription("stale", isPartial: true,
+            generationID: oldGeneration)
+        XCTAssertTrue(output.lines.isEmpty)
+        transcriber.publishIntermediateTranscription("current", isPartial: true,
+            generationID: transcriber.recordingGenerationID)
+        let line = try XCTUnwrap(output.lines.first)
+        let event = try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data(line.utf8))
+        XCTAssertEqual(event.sessionID, transcriber.diagnosticSessionID)
+        XCTAssertEqual(event.requestID, transcriber.recordingGenerationID)
+    }
+}
+
+nonisolated private final class RemotePartialDiagnosticOutput: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+    var lines: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+    func append(_ line: String) {
+        lock.lock()
+        storage.append(line)
+        lock.unlock()
+    }
 }

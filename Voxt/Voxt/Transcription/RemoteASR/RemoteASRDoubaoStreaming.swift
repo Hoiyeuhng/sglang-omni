@@ -49,6 +49,7 @@ extension RemoteASRTranscriber {
         hintPayload: ResolvedASRHintPayload,
         configuration: RemoteProviderConfiguration
     ) async throws -> String {
+        let generationID = recordingGenerationID
         guard let wsURL = URL(string: endpoint) else {
             throw NSError(domain: "Voxt.RemoteASR", code: -5, userInfo: [NSLocalizedDescriptionKey: "Invalid Doubao endpoint URL."])
         }
@@ -93,7 +94,7 @@ extension RemoteASRTranscriber {
             configuration: configuration
         )
 
-        let responseState = DoubaoResponseState { [weak self, generationID = self.recordingGenerationID] error in
+        let responseState = DoubaoResponseState { [weak self] error in
             Task { @MainActor [weak self] in
                 self?.notifyRuntimeFailure(error, generationID: generationID)
             }
@@ -106,6 +107,9 @@ extension RemoteASRTranscriber {
                     if let parsed = try Self.parseDoubaoServerPacket(payloadData) {
                         if let text = parsed.text, !text.isEmpty {
                             _ = await responseState.replace(text: text, isFinal: parsed.isFinal)
+                            if !parsed.isFinal {
+                                self.recordDiagnosticPartial(text, generationID: generationID)
+                            }
                         } else if parsed.isFinal {
                             await responseState.markFinal()
                         }
@@ -412,7 +416,7 @@ extension RemoteASRTranscriber {
                             if let text = parsed.text, !text.isEmpty {
                                 let merged = await context.responseState.replace(text: text, isFinal: parsed.isFinal)
                                 await MainActor.run {
-                                    self.publishIntermediateTranscription(merged)
+                                    self.publishIntermediateTranscription(merged, isPartial: !parsed.isFinal, generationID: context.generationID)
                                 }
                             } else if parsed.isFinal {
                                 await context.responseState.markFinal()

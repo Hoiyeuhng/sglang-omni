@@ -31,3 +31,11 @@ swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratc
   "$project_directory/tools/RecordingDiagnosticVADTests.swift" \
   -o "$scratch_directory/vad-tests"
 "$scratch_directory/vad-tests"
+swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratch_directory/module-cache" \
+  "$project_directory/Voxt/Core/Logging/RecordingDiagnosticRecorder.swift" \
+  "$project_directory/Voxt/Core/Utilities/TrackedTaskStore.swift" \
+  "$project_directory/Voxt/Transcription/RemoteASR/RemoteASRPreviewController.swift" \
+  "$project_directory/Voxt/Transcription/RemoteASR/RemoteASRTextSupport.swift" \
+  "$project_directory/tools/RecordingDiagnosticRemoteASRTests.swift" \
+  -o "$scratch_directory/remote-asr-tests"
+"$scratch_directory/remote-asr-tests"

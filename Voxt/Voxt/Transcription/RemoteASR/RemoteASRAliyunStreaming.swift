@@ -231,7 +231,7 @@ extension RemoteASRTranscriber {
                     "Aliyun fun result-generated. chars=\(partialText.count), sentenceEnd=\(isSentenceEnd)"
                 )
                 let merged = await context.responseState.updateWithSentence(partialText, isSentenceEnd: isSentenceEnd)
-                publishIntermediateTranscription(merged)
+                publishIntermediateTranscription(merged, isPartial: !isSentenceEnd, generationID: context.generationID)
             }
             return
         }
@@ -455,7 +455,7 @@ extension RemoteASRTranscriber {
             if !partial.isEmpty {
                 VoxtLog.model("Aliyun qwen partial text received. chars=\(partial.count)")
                 let merged = await context.responseState.setPartial(partial)
-                publishIntermediateTranscription(merged)
+                publishIntermediateTranscription(merged, isPartial: true, generationID: context.generationID)
             }
             return
         }
@@ -465,7 +465,7 @@ extension RemoteASRTranscriber {
             if !final.isEmpty {
                 VoxtLog.model("Aliyun qwen transcript completed. chars=\(final.count)")
                 let merged = await context.responseState.commit(final)
-                publishIntermediateTranscription(merged)
+                publishIntermediateTranscription(merged, isPartial: false, generationID: context.generationID)
             }
             return
         }

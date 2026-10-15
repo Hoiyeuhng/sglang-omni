@@ -94,6 +94,21 @@ enum RemoteASRTextSupport {
         return normalizedTextFragment(trimmed)
     }
 
+    static func isPartialStreamPayload(fromLine line: String) -> Bool {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["is_final"] as? Bool != true,
+              object["final"] as? Bool != true else { return false }
+        if let type = object["type"] as? String, type != "transcript.text.delta" { return false }
+        if let delta = object["delta"], let text = extractText(in: delta), !text.isEmpty { return true }
+        guard let choices = object["choices"] as? [[String: Any]] else { return false }
+        return choices.contains { choice in
+            guard !(choice["finish_reason"] is String),
+                  let delta = choice["delta"], let text = extractText(in: delta) else { return false }
+            return !text.isEmpty
+        }
+    }
+
     static func extractStreamErrorMessage(fromLine line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }

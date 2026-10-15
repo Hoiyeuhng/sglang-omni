@@ -41,6 +41,7 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
     }
 
     var diagnosticSessionID: UUID?
+    var diagnosticRecorderOverride: RecordingDiagnosticRecorder?
     @Published var isRecording = false
     @Published var audioLevel: Float = 0.0
     @Published var transcribedText = ""
@@ -77,8 +78,8 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
     var preferredInputDeviceID: AudioDeviceID?
     private let streamingFinalWaitTimeout: TimeInterval = 20
     private var lastPresentedRuntimeErrorMessage = ""
-    private var pendingIntermediateTranscription: String?
-    private var intermediateTranscriptionPublishTask: Task<Void, Never>?
+    var pendingIntermediateTranscription: String?
+    var intermediateTranscriptionPublishTask: Task<Void, Never>?
     var recordingGenerationID = UUID()
     var doubaoCaptureStartupWatchdogTask: Task<Void, Never>?
     var didRetryDoubaoCaptureStartup = false
@@ -859,7 +860,9 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
             transcribe: { [weak self] in
                 await self?.runOpenAIPreviewPass(configuration: configuration)
             },
-            publish: { [weak self] in self?.publishIntermediateTranscription($0) }
+            publish: { [weak self] in
+                self?.publishIntermediateTranscription($0, isPartial: false, generationID: generationID)
+            }
         )
     }
 
@@ -950,34 +953,6 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
     func recordDiagnosticAudioSubmission(generationID: UUID) {
         guard isCurrentGeneration(generationID), let diagnosticSessionID else { return }
         RecordingDiagnostics.shared.record(.init(.asrReceivingAudio, sessionID: diagnosticSessionID, backend: .remote))
-    }
-
-    func publishIntermediateTranscription(_ text: String) {
-        guard sessionAllowsRealtimeTextDisplay else { return }
-        let visibleText = RecordingSessionSupport.textAfterSuppressingPromptEcho(text)
-        guard !visibleText.isEmpty else {
-            VoxtLog.asrWarning("Remote ASR intermediate transcription suppressed because it matched prompt guidance.")
-            return
-        }
-        RecordingDiagnostics.shared.record(.init(.asrFirstPartial, sessionID: diagnosticSessionID, count: visibleText.count))
-        pendingIntermediateTranscription = visibleText
-        guard intermediateTranscriptionPublishTask == nil else { return }
-        intermediateTranscriptionPublishTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(50))
-            guard !Task.isCancelled, let self else { return }
-            let pending = self.pendingIntermediateTranscription
-            self.pendingIntermediateTranscription = nil
-            self.intermediateTranscriptionPublishTask = nil
-            if let pending {
-                self.transcribedText = pending
-            }
-        }
-    }
-
-    private func resetIntermediateTranscriptionPublishing() {
-        intermediateTranscriptionPublishTask?.cancel()
-        intermediateTranscriptionPublishTask = nil
-        pendingIntermediateTranscription = nil
     }
 
     private nonisolated static func telemetrySeconds(_ value: TimeInterval?) -> String {
