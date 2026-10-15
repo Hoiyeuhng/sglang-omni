@@ -517,8 +517,8 @@ struct GeneralLoggingCard: View {
             )
 
             GeneralToggleRow(
-                title: Text("Enable recording diagnostics"),
-                description: Text("Logs session IDs and recording/VAD pipeline events without audio or transcript content."),
+                title: LocalizedStringKey("Enable recording diagnostics"),
+                description: LocalizedStringKey("Logs session IDs and recording/VAD pipeline events without audio or transcript content."),
                 isOn: $recordingDiagnosticsEnabled
             )
         }
