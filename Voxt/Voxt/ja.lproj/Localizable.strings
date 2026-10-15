@@ -2369,3 +2369,47 @@
 "Open Notes from the main window" = "メインウィンドウから「メモ」を開く";
 "Try Later" = "後で試す";
 "Less" = "折りたたむ";
+
+"Export diagnostic sample" = "診断サンプルを書き出す";
+
+"Export diagnostic sample…" = "診断サンプルを書き出す…";
+
+"Choose content from this record only. Audio, transcription and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "この記録の内容だけを選択します。音声、文字起こし、期待する文字起こしには機密情報が含まれる場合があります。アップロードは行いません。書き出したフォルダは信頼できる人とのみ共有してください。";
+
+"Include transcription" = "文字起こしを含める";
+
+"This record has no transcription." = "この記録に文字起こしはありません。";
+
+"Include saved audio" = "保存済み音声を含める";
+
+"Checking saved audio…" = "保存済み音声を確認中…";
+
+"Saved audio: %@. Only this record's audio will be exported." = "保存済み音声：%@。この記録の音声だけを書き出します。";
+
+"Saved audio is unavailable for this record. Exporting will not record audio or enable audio saving." = "この記録の保存済み音声は利用できません。書き出しによって録音や音声保存が有効になることはありません。";
+
+"Expected transcription (optional, included if entered)" = "期待する文字起こし（任意、入力すると書き出しに含まれます）";
+
+"Expected transcription" = "期待する文字起こし";
+
+"Files to export:" = "書き出すファイル：";
+
+"The manifest contains only a format version, numeric app version, selected filenames and audio byte count. It contains no settings, endpoints or diagnostic logs." = "マニフェストに含まれるのは形式バージョン、数字のアプリバージョン、選択したファイル名、音声のバイト数のみです。設定、接続先、診断ログは含まれません。";
+
+"Show partial export in Finder" = "未完了の書き出しをFinderに表示";
+
+"Choose export folder…" = "書き出し先フォルダを選択…";
+
+"Choose where to create the private diagnostic sample folder" = "プライベートな診断サンプルフォルダの作成先を選択";
+
+"Export failed and a partial private sample could not be removed. Delete the folder shown below when you no longer need it." = "書き出しに失敗し、不完全なプライベートサンプルを削除できませんでした。不要になったら、以下のフォルダを削除してください。";
+
+"Export cancelled. No sample was saved." = "書き出しをキャンセルしました。サンプルは保存されていません。";
+
+"The destination already exists. No existing files were changed. Choose another folder and try again." = "書き出し先は既に存在します。既存のファイルは変更していません。別のフォルダを選択して再試行してください。";
+
+"Could not export the sample. Check that the audio and destination are available and there is enough free space. No partial sample was saved." = "サンプルを書き出せませんでした。音声と書き出し先が利用可能で、空き容量が十分にあることを確認してください。不完全なサンプルは保存されていません。";
+
+"Exporting…" = "書き出し中…";
+
+"Partial diagnostic sample remains" = "未完了の診断サンプルが残っています";

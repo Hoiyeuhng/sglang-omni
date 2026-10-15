@@ -2375,3 +2375,47 @@
 "Open Notes from the main window" = "在主窗口中打开「笔记」";
 "Try Later" = "稍后体验";
 "Less" = "收起";
+
+"Export diagnostic sample" = "导出诊断样本";
+
+"Export diagnostic sample…" = "导出诊断样本…";
+
+"Choose content from this record only. Audio, transcription and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "仅选择此条记录的内容。音频、转写和期望转写可能包含机密信息。不会上传任何内容。请仅与您信任的人分享导出的文件夹。";
+
+"Include transcription" = "包含转写文本";
+
+"This record has no transcription." = "此条记录没有转写文本。";
+
+"Include saved audio" = "包含已保存音频";
+
+"Checking saved audio…" = "正在检查已保存音频…";
+
+"Saved audio: %@. Only this record's audio will be exported." = "已保存音频：%@。仅导出此条记录的音频。";
+
+"Saved audio is unavailable for this record. Exporting will not record audio or enable audio saving." = "此条记录没有可用的已保存音频。导出不会录音，也不会开启音频保存。";
+
+"Expected transcription (optional, included if entered)" = "期望转写（可选，填写后将包含在导出中）";
+
+"Expected transcription" = "期望转写";
+
+"Files to export:" = "将导出的文件：";
+
+"The manifest contains only a format version, numeric app version, selected filenames and audio byte count. It contains no settings, endpoints or diagnostic logs." = "清单仅包含格式版本、数字形式的应用版本、选中文件名和音频字节数，不包含设置、服务地址或诊断日志。";
+
+"Show partial export in Finder" = "在访达中显示未完成导出";
+
+"Choose export folder…" = "选择导出文件夹…";
+
+"Choose where to create the private diagnostic sample folder" = "选择私密诊断样本文件夹的创建位置";
+
+"Export failed and a partial private sample could not be removed. Delete the folder shown below when you no longer need it." = "导出失败，且未能删除不完整的私密样本。不再需要时，请删除下方所示文件夹。";
+
+"Export cancelled. No sample was saved." = "导出已取消，未保存样本。";
+
+"The destination already exists. No existing files were changed. Choose another folder and try again." = "目标已存在，未修改已有文件。请选择其他文件夹重试。";
+
+"Could not export the sample. Check that the audio and destination are available and there is enough free space. No partial sample was saved." = "无法导出样本。请确认音频和目标位置可用且磁盘空间充足。未保存不完整样本。";
+
+"Exporting…" = "正在导出…";
+
+"Partial diagnostic sample remains" = "仍有未完成的诊断样本";

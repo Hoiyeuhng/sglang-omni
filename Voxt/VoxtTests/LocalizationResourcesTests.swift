@@ -5,6 +5,25 @@ import XCTest
 @testable import Voxt
 
 final class LocalizationResourcesTests: XCTestCase {
+    func testDiagnosticSampleConsentIsLocalizedInSupportedLanguages() {
+        let keys = [
+            "Export diagnostic sample…",
+            "Include transcription",
+            "Include saved audio",
+            "Expected transcription (optional, included if entered)",
+            "Saved audio is unavailable for this record. Exporting will not record audio or enable audio saving.",
+            "Export failed and a partial private sample could not be removed. Delete the folder shown below when you no longer need it."
+        ]
+        for key in keys {
+            XCTAssertEqual(AppLocalization.localizedString(key, localeIdentifier: "en"), key)
+            for language in ["zh-Hans", "ja"] {
+                let translation = AppLocalization.localizedString(key, localeIdentifier: language)
+                XCTAssertFalse(translation.isEmpty)
+                XCTAssertNotEqual(translation, key)
+            }
+        }
+    }
+
     func testFeatureMenuTitleIsLocalizedInSupportedLanguages() {
         XCTAssertEqual(AppLocalization.localizedString("Feature", localeIdentifier: "en"), "Feature")
         XCTAssertEqual(AppLocalization.localizedString("Feature", localeIdentifier: "zh-Hans"), "功能")

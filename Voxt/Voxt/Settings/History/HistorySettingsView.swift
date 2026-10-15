@@ -32,7 +32,6 @@ struct HistorySettingsView: View {
     @State private var pendingBulkDeletionTarget: HistoryBulkDeletionTarget?
     @State private var selectedHistoryInfoEntry: TranscriptionHistoryEntry?
     @State private var pendingDebugSample: TranscriptionHistoryEntry?
-    @State private var debugSampleExportError: String?
     @State private var historySearchText = ""
     @State private var showHistorySearchDialog = false
     @State private var visibleHistoryEntries: [TranscriptionHistoryEntry] = []
@@ -297,29 +296,11 @@ struct HistorySettingsView: View {
                 onExportAllHistoryAudio: exportAllHistoryAudio
             )
         }
-        .confirmationDialog(
-            "Export private diagnostic sample?",
-            isPresented: Binding(
-                get: { pendingDebugSample != nil },
-                set: { if !$0 { pendingDebugSample = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Choose export folder…") {
-                if let entry = pendingDebugSample { exportDebugSample(entry) }
-                pendingDebugSample = nil
-            }
-            Button("Cancel", role: .cancel) { pendingDebugSample = nil }
-        } message: {
-            Text("Exports the complete transcription and, if available, its recorded audio. This may contain confidential information. The files stay local until you share them.")
-        }
-        .alert("Diagnostic sample export failed", isPresented: Binding(
-            get: { debugSampleExportError != nil },
-            set: { if !$0 { debugSampleExportError = nil } }
-        )) {
-            Button("OK") { debugSampleExportError = nil }
-        } message: {
-            Text(debugSampleExportError ?? "")
+        .sheet(item: $pendingDebugSample) { entry in
+            HistoryDiagnosticSampleSheet(
+                entry: entry,
+                audioRootURL: HistoryAudioStorageDirectoryManager.resolvedRootURL()
+            )
         }
         .sheet(item: $selectedHistoryInfoEntry) { entry in
             HistoryDetailSheetContent(
@@ -634,7 +615,7 @@ struct HistorySettingsView: View {
                     onDelete: { deleteHistoryEntry(entry) }
                 )
                 .contextMenu {
-                    Button("Export diagnostic sample…") { pendingDebugSample = entry }
+                    Button(localized("Export diagnostic sample…")) { pendingDebugSample = entry }
                 }
                 .padding(.vertical, historyRowVerticalInset)
             case .meetingEntry(let entry):
@@ -645,6 +626,11 @@ struct HistorySettingsView: View {
                     onShowInfo: { showHistoryDetail(for: entry) },
                     onDelete: { deleteHistoryEntry(id: entry.id) }
                 )
+                .contextMenu {
+                    Button(localized("Export diagnostic sample…")) {
+                        pendingDebugSample = historyStore.entry(id: entry.id)
+                    }
+                }
                 .padding(.vertical, historyRowVerticalInset)
             }
         }
@@ -901,37 +887,6 @@ struct HistorySettingsView: View {
                 "Failed to update history audio storage path: %@",
                 error.localizedDescription
             )
-        }
-    }
-
-    private func exportDebugSample(_ entry: TranscriptionHistoryEntry) {
-        let panel = NSOpenPanel()
-        panel.message = "Choose where to create the private Voxt diagnostic sample folder"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
-
-        let directory = destination.appendingPathComponent(
-            "voxt-debug-sample-\(entry.id.uuidString)", isDirectory: true
-        )
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-            try entry.text.write(
-                to: directory.appendingPathComponent("transcription.txt"),
-                atomically: true, encoding: .utf8
-            )
-            if let audioURL = historyStore.audioURL(for: entry),
-               FileManager.default.fileExists(atPath: audioURL.path) {
-                try FileManager.default.copyItem(
-                    at: audioURL,
-                    to: directory.appendingPathComponent("recording.wav")
-                )
-            }
-            NSWorkspace.shared.activateFileViewerSelecting([directory])
-        } catch {
-            debugSampleExportError = "Could not export the diagnostic sample. Check the destination and available storage."
         }
     }
 
