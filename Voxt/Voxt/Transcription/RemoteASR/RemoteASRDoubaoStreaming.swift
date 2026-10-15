@@ -295,6 +295,7 @@ extension RemoteASRTranscriber {
 
         audioEngine.prepare()
         try audioEngine.start()
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
         VoxtLog.asr(
             "Doubao audio capture engine started. sampleRate=\(Int(inputFormat.sampleRate)), channels=\(inputFormat.channelCount), routing=\(shouldUsePreferredInputDevice ? "preferred" : "system-default"), deviceID=\(shouldUsePreferredInputDevice ? (preferredInputDeviceID.map(String.init(describing:)) ?? "default") : "system-default")",
@@ -652,6 +653,7 @@ extension RemoteASRTranscriber {
 
     private func sendBufferedDoubaoAudioPacket(_ pcmData: Data, context: DoubaoStreamingContext) {
         guard !pcmData.isEmpty, !context.isClosed else { return }
+        recordDiagnosticAudioSubmission(generationID: context.generationID)
         context.audioPacketCount += 1
         let now = Date()
         if context.firstAudioPacketSentAt == nil {

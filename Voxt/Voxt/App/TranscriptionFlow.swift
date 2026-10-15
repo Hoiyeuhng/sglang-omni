@@ -187,7 +187,7 @@ extension AppDelegate {
         ) else {
             return text
         }
-        let enhanced = try await executeLLMExecutionPlan(plan)
+        let enhanced = try await executeLLMExecutionPlan(plan, diagnosticSessionID: sessionID)
         let guarded = TaskLLMStrategyResolver.applyTruncationGuard(
             outputText: enhanced,
             originalText: text,

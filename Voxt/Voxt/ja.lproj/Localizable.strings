@@ -2369,3 +2369,6 @@
 "Open Notes from the main window" = "メインウィンドウから「メモ」を開く";
 "Try Later" = "後で試す";
 "Less" = "折りたたむ";
+
+"Enable recording diagnostics" = "録音の技術診断を有効にする";
+"Logs session IDs and recording/VAD pipeline events without audio or transcript content." = "オフにするまで技術診断を記録します。古いログは自動的に削除され、音声やテキスト内容は含まれません。";

@@ -83,6 +83,10 @@ actor OmniASRRuntime {
     /// Enough of the server process's stderr to show why a start failed.
     static let diagnosticTailBytes = 2048
 
+    nonisolated let diagnosticRuntimeID = UUID()
+    private let diagnostics: RecordingDiagnosticRecorder
+    private var didReportProcessExit = false
+    private var startupFailure: RecordingDiagnosticEvent.Failure = .runtime
     nonisolated let kind: OmniASRModelKind
     nonisolated let modelDirectory: URL
     nonisolated let configuration: OmniBackendConfiguration
@@ -97,7 +101,8 @@ actor OmniASRRuntime {
     private var activeUses = 0
     private var drainWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init(kind: OmniASRModelKind, modelDirectory: URL, configuration: OmniBackendConfiguration) {
+    init(kind: OmniASRModelKind, modelDirectory: URL, configuration: OmniBackendConfiguration, diagnostics: RecordingDiagnosticRecorder = RecordingDiagnostics.shared) {
+        self.diagnostics = diagnostics
         self.kind = kind
         self.modelDirectory = modelDirectory
         self.configuration = configuration
@@ -141,6 +146,7 @@ actor OmniASRRuntime {
             return try await preparation.value
         }
         state = .starting
+        diagnostics.record(.init(.runtimeStarted, runtimeID: diagnosticRuntimeID, backend: .omni))
         let task = Task { try await self.launch() }
         preparation = task
         do {
@@ -148,11 +154,14 @@ actor OmniASRRuntime {
             if case .starting = state {
                 state = .ready(endpoint)
                 servingEndpoint = endpoint
+                diagnostics.record(.init(.runtimeReady, runtimeID: diagnosticRuntimeID, backend: .omni))
+                diagnostics.record(.init(.runtimeModelLoaded, runtimeID: diagnosticRuntimeID, backend: .omni))
             }
             guard case .ready = state else { throw OmniASRRuntimeError.retired }
             return endpoint
         } catch {
             if case .starting = state {
+                diagnostics.record(.init(.runtimeFailed, runtimeID: diagnosticRuntimeID, outcome: .failed, failure: startupFailure))
                 state = .failed(error.localizedDescription)
             }
             await stopServerProcess()
@@ -189,6 +198,7 @@ actor OmniASRRuntime {
         retirement = task
         await task.value
         state = .stopped
+        diagnostics.record(.init(.runtimeReleased, runtimeID: diagnosticRuntimeID))
         servingEndpoint = nil
         session.invalidateAndCancel()
     }
@@ -217,35 +227,73 @@ actor OmniASRRuntime {
         guard activeUses > 0, servingEndpoint == endpoint else {
             throw OmniASRRuntimeError.retired
         }
-        let boundary = "voxt-\(UUID().uuidString)"
-        var urlRequest = URLRequest(url: endpoint.baseURL.appendingPathComponent("v1/audio/transcriptions"))
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        let body = OmniMultipartBody.transcription(request, modelName: endpoint.modelName, boundary: boundary)
-        let (bytes, response) = try await session.streamingUpload(urlRequest, body: body)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status != 200 {
-            var detail = ""
+        let requestID = UUID()
+        let sessionID = RecordingDiagnosticContext.sessionID
+        diagnostics.record(.init(.requestStarted, sessionID: sessionID, requestID: requestID, runtimeID: diagnosticRuntimeID,
+            backend: .omni, sampleCount: request.samples.count))
+        defer { diagnostics.record(.init(.requestCleanup, sessionID: sessionID, requestID: requestID, runtimeID: diagnosticRuntimeID)) }
+        do {
+            let boundary = "voxt-\(UUID().uuidString)"
+            var urlRequest = URLRequest(url: endpoint.baseURL.appendingPathComponent("v1/audio/transcriptions"))
+            urlRequest.httpMethod = "POST"
+            urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            let body = OmniMultipartBody.transcription(request, modelName: endpoint.modelName, boundary: boundary)
+            let (bytes, response) = try await session.streamingUpload(urlRequest, body: body)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status != 200 {
+                var detail = ""
+                for try await line in bytes.lines {
+                    detail += line
+                    if detail.count > 2000 { break }
+                }
+                throw OmniTranscriptionError.httpStatus(status, detail)
+            }
+            var parser = OmniTranscriptionStreamParser()
+            var sawPartial = false
             for try await line in bytes.lines {
-                detail += line
-                if detail.count > 2000 { break }
+                try Task.checkCancellation()
+                if let delta = try parser.consume(line: line), !delta.isEmpty {
+                    if !sawPartial {
+                        sawPartial = true
+                        diagnostics.record(.init(.requestFirstPartial, sessionID: sessionID, requestID: requestID, runtimeID: diagnosticRuntimeID))
+                    }
+                    onDelta?(delta)
+                }
             }
-            throw OmniTranscriptionError.httpStatus(status, detail)
-        }
-        var parser = OmniTranscriptionStreamParser()
-        for try await line in bytes.lines {
-            try Task.checkCancellation()
-            if let delta = try parser.consume(line: line), !delta.isEmpty {
-                onDelta?(delta)
+            let result = try parser.finish()
+            diagnostics.record(.init(.requestCompleted, sessionID: sessionID, requestID: requestID, runtimeID: diagnosticRuntimeID,
+                outcome: result.text.isEmpty ? .empty : .success, count: result.text.count))
+            return result
+        } catch {
+            let httpStatusCode: Int?
+            if let transcriptionError = error as? OmniTranscriptionError, case .httpStatus(let code, _) = transcriptionError {
+                httpStatusCode = code
+            } else {
+                httpStatusCode = nil
             }
+            diagnostics.record(.init(.requestCompleted, sessionID: sessionID, requestID: requestID, runtimeID: diagnosticRuntimeID,
+                outcome: RecordingDiagnosticEvent.Failure.classify(error) == .cancelled ? .cancelled : .failed,
+                failure: .classify(error), httpStatusCode: httpStatusCode))
+            throw error
         }
-        return try parser.finish()
     }
 
     /// The server process has exited; requests must stop here instead of
     /// reaching whatever later binds the port.
-    private func serverProcessExited() {
-        guard case .ready = state else { return }
+    private func serverProcessExited(statusCode: Int) {
+        guard !didReportProcessExit else { return }
+        didReportProcessExit = true
+        let unexpected: Bool
+        if case .ready = state { unexpected = true } else { unexpected = false }
+        let intentional: Bool
+        switch state {
+        case .retiring, .stopped: intentional = true
+        default: intentional = false
+        }
+        let failed = !intentional || statusCode != 0
+        diagnostics.record(.init(.runtimeExited, runtimeID: diagnosticRuntimeID,
+            outcome: failed ? .failed : .success, failure: failed ? .runtime : .none, exitStatusCode: statusCode))
+        guard unexpected else { return }
         state = .failed("The local Omni server stopped unexpectedly.")
         servingEndpoint = nil
     }
@@ -279,8 +327,9 @@ actor OmniASRRuntime {
                 stderrTail.append(data)
             }
         }
-        process.terminationHandler = { [weak self] _ in
-            Task { await self?.serverProcessExited() }
+        process.terminationHandler = { [weak self] process in
+            let statusCode = Int(process.terminationStatus)
+            Task { await self?.serverProcessExited(statusCode: statusCode) }
         }
         // A retire that ran before this launch got the actor must win; nothing
         // suspends between this check and the spawn.
@@ -306,6 +355,7 @@ actor OmniASRRuntime {
         var iterator = Self.eventStream(events.fileHandleForReading).makeAsyncIterator()
         guard let first = try await iterator.next() else {
             if timedOut.expired {
+                startupFailure = .timeout
                 throw OmniASRRuntimeError.launchFailed(
                     "the server did not report ready within \(String(format: "%g", seconds)) s"
                 )
@@ -341,11 +391,19 @@ actor OmniASRRuntime {
             try? controlPipe.fileHandleForWriting.close()
         }
         controlPipe = nil
-        if await Self.waitForExit(process, within: Self.shutdownGrace) { return }
+        if await Self.waitForExit(process, within: Self.shutdownGrace) {
+            serverProcessExited(statusCode: Int(process.terminationStatus))
+            return
+        }
         process.terminate()
-        if await Self.waitForExit(process, within: Self.terminateGrace) { return }
+        if await Self.waitForExit(process, within: Self.terminateGrace) {
+            serverProcessExited(statusCode: Int(process.terminationStatus))
+            return
+        }
         kill(process.processIdentifier, SIGKILL)
-        _ = await Self.waitForExit(process, within: Self.terminateGrace)
+        if await Self.waitForExit(process, within: Self.terminateGrace) {
+            serverProcessExited(statusCode: Int(process.terminationStatus))
+        }
     }
 
     /// Voxt's environment without the dynamic loader settings a debugger or XCTest

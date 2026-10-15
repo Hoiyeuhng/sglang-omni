@@ -268,6 +268,7 @@ extension RemoteASRTranscriber {
                       !ctx.isClosed
                 else { return }
                 self.audioLevel = self.audioLevelFromPCM16(pcmData)
+                self.recordDiagnosticAudioSubmission(generationID: captureGeneration)
                 ctx.ws.send(.data(pcmData)) { error in
                     if let error {
                         Task { [responseState = ctx.responseState] in
@@ -280,6 +281,7 @@ extension RemoteASRTranscriber {
 
         audioEngine.prepare()
         try audioEngine.start()
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
         VoxtLog.model("Aliyun fun audio capture started. sampleRate=\(Int(streamingInputSampleRate))")
     }
@@ -500,6 +502,7 @@ extension RemoteASRTranscriber {
                       !ctx.isClosed
                 else { return }
                 self.audioLevel = self.audioLevelFromPCM16(pcmData)
+                self.recordDiagnosticAudioSubmission(generationID: captureGeneration)
                 self.sendAliyunQwenAudioAppend(pcmData, through: ctx.ws) { error in
                     if let error {
                         Task { [responseState = ctx.responseState] in
@@ -511,6 +514,7 @@ extension RemoteASRTranscriber {
         }
         audioEngine.prepare()
         try audioEngine.start()
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
         VoxtLog.model("Aliyun qwen audio capture started. kind=\(context.kind), sampleRate=\(Int(streamingInputSampleRate))")
     }

@@ -11,11 +11,19 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
     final class AudioSampleStore {
         private let lock = NSLock()
         var samples: [Float] = []
+        private var callbackCount = 0
 
         func append(_ newSamples: [Float]) {
             lock.lock()
             defer { lock.unlock() }
+            callbackCount += 1
             samples.append(contentsOf: newSamples)
+        }
+
+        func metrics() -> (callbacks: Int, samples: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (callbackCount, samples.count)
         }
 
         func snapshot() -> [Float] {
@@ -27,10 +35,12 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
         func clear() {
             lock.lock()
             defer { lock.unlock() }
+            callbackCount = 0
             samples.removeAll(keepingCapacity: false)
         }
     }
 
+    var diagnosticSessionID: UUID?
     @Published var isRecording = false
     @Published var audioLevel: Float = 0.0
     @Published var transcribedText = ""
@@ -283,6 +293,11 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
             stepFunStreamingContext != nil ||
             geminiLiveStreamingContext != nil
         guard isRecording || hasPendingRealtimeSession || recorder != nil else { return }
+        let metrics = hasPendingRealtimeSession ? sampleStore.metrics() : nil
+        RecordingDiagnostics.shared.record(.init(.captureSummary, sessionID: diagnosticSessionID, backend: .remote,
+            count: metrics?.callbacks, sampleCount: metrics?.samples,
+            droppedChunkCount: stepFunStreamingContext?.droppedChunkCount ?? geminiLiveStreamingContext?.droppedChunkCount,
+            droppedByteCount: stepFunStreamingContext?.droppedByteCount ?? geminiLiveStreamingContext?.droppedByteCount))
         stopRequested = true
         let generationID = recordingGenerationID
 
@@ -407,6 +422,7 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
                 return
             }
             do {
+                self.recordDiagnosticAudioSubmission(generationID: generationID)
                 let result = try await self.transcribeRecordedAudio(
                     fileURL: uploadPreparation.uploadFileURL,
                     provider: provider,
@@ -634,6 +650,7 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
         }
         self.recorder = recorder
         self.recordingFileURL = fileURL
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         self.isRecording = true
         startMeteringTimer()
     }
@@ -930,6 +947,11 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
         }
     }
 
+    func recordDiagnosticAudioSubmission(generationID: UUID) {
+        guard isCurrentGeneration(generationID), let diagnosticSessionID else { return }
+        RecordingDiagnostics.shared.record(.init(.asrReceivingAudio, sessionID: diagnosticSessionID, backend: .remote))
+    }
+
     func publishIntermediateTranscription(_ text: String) {
         guard sessionAllowsRealtimeTextDisplay else { return }
         let visibleText = RecordingSessionSupport.textAfterSuppressingPromptEcho(text)
@@ -937,6 +959,7 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
             VoxtLog.asrWarning("Remote ASR intermediate transcription suppressed because it matched prompt guidance.")
             return
         }
+        RecordingDiagnostics.shared.record(.init(.asrFirstPartial, sessionID: diagnosticSessionID, count: visibleText.count))
         pendingIntermediateTranscription = visibleText
         guard intermediateTranscriptionPublishTask == nil else { return }
         intermediateTranscriptionPublishTask = Task { @MainActor [weak self] in

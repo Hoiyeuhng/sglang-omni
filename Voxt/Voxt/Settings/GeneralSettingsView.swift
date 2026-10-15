@@ -30,7 +30,7 @@ struct GeneralSettingsView: View {
     @AppStorage(AppPreferenceKey.autoCheckForUpdates) private var autoCheckForUpdates = true
     @AppStorage(AppPreferenceKey.hotkeyDebugLoggingEnabled) private var hotkeyDebugLoggingEnabled = false
     @AppStorage(AppPreferenceKey.llmDebugLoggingEnabled) private var llmDebugLoggingEnabled = false
-    @AppStorage("recordingDiagnosticsEnabled") private var recordingDiagnosticsEnabled = false
+    @AppStorage(AppPreferenceKey.recordingDiagnosticsEnabled) private var recordingDiagnosticsEnabled = false
     @AppStorage(AppPreferenceKey.localVADMode) private var localVADModeRaw = LocalVADMode.defaultMode.rawValue
     @AppStorage(AppPreferenceKey.networkProxyMode) private var networkProxyModeRaw = VoxtNetworkSession.ProxyMode.system.rawValue
     @AppStorage(AppPreferenceKey.customProxyScheme) private var customProxySchemeRaw = VoxtNetworkSession.ProxyScheme.http.rawValue
@@ -181,6 +181,9 @@ struct GeneralSettingsView: View {
                     recordingDiagnosticsEnabled: $recordingDiagnosticsEnabled,
                     onViewLogs: { isLogsViewerPresented = true }
                 )
+                .onChange(of: recordingDiagnosticsEnabled) { _, enabled in
+                    RecordingDiagnostics.shared.setEnabled(enabled)
+                }
                 .settingsNavigationAnchor(.generalLogging)
 
                 Divider()

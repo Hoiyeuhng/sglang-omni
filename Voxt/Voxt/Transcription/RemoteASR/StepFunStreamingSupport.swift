@@ -215,6 +215,7 @@ extension RemoteASRTranscriber {
 
         audioEngine.prepare()
         try audioEngine.start()
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
         VoxtLog.asr(
             "StepFun realtime audio capture engine started. sampleRate=\(Int(inputFormat.sampleRate)), channels=\(inputFormat.channelCount)",
@@ -249,6 +250,8 @@ extension RemoteASRTranscriber {
             droppedChunks += 1
         }
 
+        context.droppedChunkCount += droppedChunks
+        context.droppedByteCount += droppedBytes
         if droppedChunks > 0 {
             VoxtLog.asrWarning(
                 "StepFun startup audio buffer exceeded limit; dropped oldest chunks. droppedChunks=\(droppedChunks), droppedBytes=\(droppedBytes)"
@@ -273,6 +276,7 @@ extension RemoteASRTranscriber {
     }
 
     private func sendStepFunAudioChunk(_ pcmData: Data, context: StepFunStreamingContext) {
+        recordDiagnosticAudioSubmission(generationID: context.generationID)
         let payload: [String: Any] = [
             "event_id": UUID().uuidString.lowercased(),
             "type": "input_audio_buffer.append",

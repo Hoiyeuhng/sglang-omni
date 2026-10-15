@@ -10,14 +10,17 @@ struct VoxtOSLogHandler: LogHandler {
     var metadataProvider: Logging.Logger.MetadataProvider?
     var logLevel: Logging.Logger.Level = .info
 
-    private let osLog: OSLog
+    private let sink: @Sendable (String, Logging.Logger.Level) -> Void
 
-    init(label: String, category: VoxtLogCategory) {
+    init(label: String, category: VoxtLogCategory, sink: (@Sendable (String, Logging.Logger.Level) -> Void)? = nil) {
         let bundleID = Bundle.main.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
-        osLog = OSLog(
+        let osLog = OSLog(
             subsystem: bundleID?.isEmpty == false ? bundleID! : "app.voxt.Voxt",
             category: category.rawValue
         )
+        self.sink = sink ?? { output, level in
+            os_log("%{public}@", log: osLog, type: Self.osLogType(for: level), output)
+        }
     }
 
     subscript(metadataKey metadataKey: String) -> Logging.Logger.Metadata.Value? {
@@ -26,36 +29,11 @@ struct VoxtOSLogHandler: LogHandler {
     }
 
     func log(event: LogEvent) {
-        let redactedMessage = VoxtLogRedactor.redact(event.message.description)
-        let mergedMetadata = VoxtLogRedactor.redactedMetadata(mergedMetadata(event.metadata))
-        let metadataSuffix = metadataText(mergedMetadata)
-        let output = metadataSuffix.isEmpty ? redactedMessage : "\(redactedMessage) \(metadataSuffix)"
-
-        os_log("%{public}@", log: osLog, type: osLogType(for: event.level), output)
+        guard let output = RecordingDiagnosticEvent.safeLine(event.message.description) else { return }
+        sink(output, event.level)
     }
 
-    private func mergedMetadata(_ explicitMetadata: Logging.Logger.Metadata?) -> Logging.Logger.Metadata? {
-        var merged = metadataProvider?.get() ?? [:]
-        for (key, value) in metadata where merged[key] == nil {
-            merged[key] = value
-        }
-        if let explicitMetadata {
-            for (key, value) in explicitMetadata {
-                merged[key] = value
-            }
-        }
-        return merged.isEmpty ? nil : merged
-    }
-
-    private func metadataText(_ metadata: Logging.Logger.Metadata?) -> String {
-        guard let metadata, !metadata.isEmpty else { return "" }
-        return metadata
-            .sorted { $0.key < $1.key }
-            .map { "\($0.key)=\($0.value)" }
-            .joined(separator: " ")
-    }
-
-    private func osLogType(for level: Logging.Logger.Level) -> OSLogType {
+    private nonisolated static func osLogType(for level: Logging.Logger.Level) -> OSLogType {
         switch level {
         case .trace, .debug:
             return .debug

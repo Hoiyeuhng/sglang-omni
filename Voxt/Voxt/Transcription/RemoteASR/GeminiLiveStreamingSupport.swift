@@ -237,6 +237,7 @@ extension RemoteASRTranscriber {
 
         audioEngine.prepare()
         try audioEngine.start()
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
         VoxtLog.asr(
             "Gemini live audio capture started. sampleRate=\(Int(inputFormat.sampleRate)), channels=\(inputFormat.channelCount)",
@@ -273,6 +274,8 @@ extension RemoteASRTranscriber {
             droppedChunks += 1
         }
 
+        context.droppedChunkCount += droppedChunks
+        context.droppedByteCount += droppedBytes
         if droppedChunks > 0 {
             VoxtLog.asrWarning(
                 "Gemini live startup audio buffer exceeded limit; dropped oldest chunks. droppedChunks=\(droppedChunks), droppedBytes=\(droppedBytes)"
@@ -297,6 +300,7 @@ extension RemoteASRTranscriber {
     }
 
     private func sendGeminiLiveAudioChunk(_ pcmData: Data, context: GeminiLiveStreamingContext) {
+        recordDiagnosticAudioSubmission(generationID: context.generationID)
         sendGeminiLiveJSON(GeminiLivePayloadSupport.audioPayload(pcmData), through: context.ws) { error in
             if let error {
                 Task { [responseState = context.responseState] in

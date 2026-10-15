@@ -5,10 +5,9 @@ import LlamaSwift
 nonisolated private final class GGUFLlamaBackendLifetime: @unchecked Sendable {
     static let shared = GGUFLlamaBackendLifetime()
 
-    private static let logCallback: ggml_log_callback = { level, text, _ in
+    private static let logCallback: ggml_log_callback = { level, _, _ in
         guard level == GGML_LOG_LEVEL_ERROR else { return }
-        guard let text else { return }
-        fputs(text, stderr)
+        RecordingDiagnostics.shared.record(.init(.runtimeFailed, backend: .gguf, outcome: .failed, failure: .runtime))
     }
 
     private let lock = NSLock()

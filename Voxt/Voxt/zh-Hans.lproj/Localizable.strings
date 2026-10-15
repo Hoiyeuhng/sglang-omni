@@ -2375,3 +2375,6 @@
 "Open Notes from the main window" = "在主窗口中打开「笔记」";
 "Try Later" = "稍后体验";
 "Less" = "收起";
+
+"Enable recording diagnostics" = "启用录音技术诊断";
+"Logs session IDs and recording/VAD pipeline events without audio or transcript content." = "持续记录技术诊断，直到手动关闭。旧日志自动轮转，不包含音频或文本内容。";

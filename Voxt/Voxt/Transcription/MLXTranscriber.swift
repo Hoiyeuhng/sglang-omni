@@ -112,6 +112,7 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
     private var lastCandidateText = ""
     private var internalTranscribedText = ""
     private var nextCorrectionAtSeconds: Double = 6.0
+    var diagnosticSessionID: UUID?
     private(set) var lastCaptureMetrics: TranscriptionCaptureMetrics?
     @Published private(set) var latestSenseVoiceMetadata: SenseVoiceTranscriptMetadata?
     private var senseVoiceVADModel: SileroVAD?
@@ -277,6 +278,7 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
             sampleCount: sampleCount,
             sampleRate: sampleRate
         )
+        RecordingDiagnostics.shared.record(.init(.captureSummary, sessionID: diagnosticSessionID, backend: .mlx, count: callbackCount, sampleCount: sampleCount))
         let capturedAudioSec = String(format: "%.2f", lastCaptureMetrics?.capturedAudioSeconds ?? 0)
         VoxtLog.asr(
             "MLX recording stop captured. callbacks=\(callbackCount), samples=\(sampleCount), sampleRate=\(Int(sampleRate)), capturedAudioSec=\(capturedAudioSec)",
@@ -1187,7 +1189,7 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
         switch mode {
         case .nativeQwenLive:
             let language = resolvedNativeQwenLiveLanguage()
-            session = try await OmniNativeStreamingSession.qwen(runtime: runtime, language: language)
+            session = try await OmniNativeStreamingSession.qwen(runtime: runtime, language: language, sessionID: diagnosticSessionID)
             guard revision == sessionRevision, isRecording, activeLiveMode == mode else {
                 session.cancel()
                 return false
@@ -1195,7 +1197,7 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
             releaseNativeLiveSession(cancelSession: true)
             nativeQwenLiveUsesAutomaticLanguageProtocol = language == nil
         case .nativeNemotronLive where runtime.kind == .nemotronASR:
-            session = try await makeOmniNemotronLiveSession(runtime: runtime)
+            session = try await makeOmniNemotronLiveSession(runtime: runtime, sessionID: diagnosticSessionID)
             guard revision == sessionRevision, isRecording, activeLiveMode == mode else {
                 session.cancel()
                 return false
@@ -1203,7 +1205,7 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
             releaseNativeLiveSession(cancelSession: true)
         case .nativeStreamingLive where runtime.kind == .mossTranscribeDiarize:
             let prompt = resolvedInferenceConfiguration(for: .intermediate).mossPrompt
-            session = try await OmniNativeStreamingSession.moss(runtime: runtime, prompt: prompt)
+            session = try await OmniNativeStreamingSession.moss(runtime: runtime, prompt: prompt, sessionID: diagnosticSessionID)
             guard revision == sessionRevision, isRecording, activeLiveMode == mode else {
                 session.cancel()
                 return false
@@ -1255,7 +1257,7 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
 
     /// The Omni counterpart of installNativeNemotronLiveSession's session: the
     /// same latency setting and the same language mapping.
-    private func makeOmniNemotronLiveSession(runtime: OmniASRRuntime) async throws -> OmniNativeStreamingSession {
+    private func makeOmniNemotronLiveSession(runtime: OmniASRRuntime, sessionID: UUID? = nil) async throws -> OmniNativeStreamingSession {
         let promptLanguages = try OmniASRRuntime.nemotronPromptLanguages(modelDirectory: runtime.modelDirectory)
         let language = MLXTranscriptionPlanning.nativeNemotronLanguage(
             requested: resolvedNativeNemotronLiveLanguage(),
@@ -1265,7 +1267,8 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
         return try await OmniNativeStreamingSession.nemotron(
             runtime: runtime,
             language: language,
-            chunkMilliseconds: resolvedLocalTuningSettings().nemotronStreamLatency.rawValue
+            chunkMilliseconds: resolvedLocalTuningSettings().nemotronStreamLatency.rawValue,
+            sessionID: sessionID
         )
     }
 
@@ -1737,6 +1740,7 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
         inferenceConfiguration: ResolvedInferenceConfiguration
     ) async throws -> MLXDetachedInferenceResult {
         try Task.checkCancellation()
+        RecordingDiagnostics.shared.record(.init(.asrReceivingAudio, sessionID: diagnosticSessionID, backend: .mlx, sampleCount: audioSamples.count))
         let model: any STTGenerationModel
         switch loadedModel {
         case .omni(let runtime):
@@ -1747,14 +1751,17 @@ class MLXTranscriber: ObservableObject, TranscriberProtocol {
                 audioSamples: audioSamples,
                 inferenceConfiguration: inferenceConfiguration
             )
+            let diagnosticSessionID = diagnosticSessionID
             let inferenceTask = Task.detached(priority: inferenceTaskPriority) {
-                try await Self.runOmniInferenceDetached(
-                    runtime: runtime,
-                    audioSamples: audioSamples,
-                    inferenceConfiguration: inferenceConfiguration,
-                    targetSampleRate: targetSampleRate,
-                    speechSegments: speechSegments
-                )
+                try await RecordingDiagnosticContext.$sessionID.withValue(diagnosticSessionID) {
+                    try await Self.runOmniInferenceDetached(
+                        runtime: runtime,
+                        audioSamples: audioSamples,
+                        inferenceConfiguration: inferenceConfiguration,
+                        targetSampleRate: targetSampleRate,
+                        speechSegments: speechSegments
+                    )
+                }
             }
             return try await withTaskCancellationHandler {
                 try await inferenceTask.value

@@ -12,11 +12,21 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
     private final class AudioSampleStore {
         private let lock = NSLock()
         private var samples: [Float] = []
+        private var callbackCount = 0
 
-        func append(_ newSamples: [Float]) {
+        @discardableResult
+        func append(_ newSamples: [Float]) -> Bool {
             lock.lock()
             defer { lock.unlock() }
+            callbackCount += 1
             samples.append(contentsOf: newSamples)
+            return callbackCount == 1
+        }
+
+        func metrics() -> (callbacks: Int, samples: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (callbackCount, samples.count)
         }
 
         func snapshot() -> [Float] {
@@ -28,10 +38,12 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
         func clear() {
             lock.lock()
             defer { lock.unlock() }
+            callbackCount = 0
             samples.removeAll(keepingCapacity: false)
         }
     }
 
+    var diagnosticSessionID: UUID?
     @Published var isRecording = false
     @Published var audioLevel: Float = 0.0
     @Published var transcribedText = ""
@@ -127,6 +139,8 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
         guard isRecording else { return }
 
         stopAudioCapture()
+        let metrics = sampleStore.metrics()
+        RecordingDiagnostics.shared.record(.init(.captureSummary, sessionID: diagnosticSessionID, backend: .dictation, count: metrics.callbacks, sampleCount: metrics.samples))
         isRecording = false
 
         finalizeTimeoutTask?.cancel()
@@ -242,12 +256,19 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
             )
         }
 
+        let diagnosticSessionID = diagnosticSessionID
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] buffer, _ in
             guard let self else { return }
             self.recognitionRequest?.append(buffer)
 
             if let samples = AudioLevelMeter.monoSamples(from: buffer), !samples.isEmpty {
-                self.sampleStore.append(samples)
+                let firstAudio = self.sampleStore.append(samples)
+                if firstAudio {
+                    Task { @MainActor in
+                        RecordingDiagnostics.shared.record(.init(.asrReceivingAudio, sessionID: diagnosticSessionID,
+                            backend: .dictation, sampleCount: samples.count))
+                    }
+                }
             }
 
             guard let channelData = buffer.floatChannelData?[0] else { return }
@@ -274,6 +295,9 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
 
             if let result {
                 let text = result.bestTranscription.formattedString
+                if !result.isFinal, !text.isEmpty {
+                    RecordingDiagnostics.shared.record(.init(.asrFirstPartial, sessionID: diagnosticSessionID, count: text.count))
+                }
                 Task { @MainActor in
                     let allowsPartial = self.sessionReportsPartialResultsOverride ?? true
                     if allowsPartial || result.isFinal {

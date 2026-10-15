@@ -157,6 +157,8 @@ extension AppDelegate {
         overlayWindow.show(state: overlayState, position: overlayPosition)
 
         let sessionID = activeRecordingSessionID
+        RecordingDiagnostics.shared.record(.init(.sessionStarted, sessionID: sessionID, backend: .from(recordingEngine)))
+        RecordingDiagnostics.shared.record(.init(.inputPreparing, sessionID: sessionID))
         Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
             guard let self else { return }
@@ -308,6 +310,7 @@ extension AppDelegate {
             return
         }
         let stoppingSessionID = activeRecordingSessionID
+        RecordingDiagnostics.shared.record(.init(.recordingStopped, sessionID: stoppingSessionID))
         OnboardingSessionEvent.processing(id: stoppingSessionID).post()
         VoxtLog.asr("Recording stop requested.")
 
@@ -328,6 +331,8 @@ extension AppDelegate {
         VoxtLog.asr("Recording cancelled by Escape key.")
 
         let cancelledSessionID = activeRecordingSessionID
+        recordVoiceActivityDiagnosticSummary(for: cancelledSessionID)
+        RecordingDiagnostics.shared.record(.init(.sessionCancelled, sessionID: cancelledSessionID, outcome: .cancelled))
         hotkeyManager.setCommonStopKeyEnabled(false)
         recordingLifecycle.cancel()
         invalidateActiveLLMRequest()

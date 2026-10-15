@@ -15,6 +15,7 @@ extension AppDelegate {
         let text = sanitizedFinalTranscriptionText(displayText)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        RecordingDiagnostics.shared.record(.init(.asrFirstPartial, sessionID: sessionID, count: text.count))
         recordLiveASRPartialTranscription(text, sessionID: sessionID)
     }
 
@@ -77,6 +78,7 @@ extension AppDelegate {
         )
         let text = sanitizedFinalTranscriptionText(displayText)
         if shouldSuppressFinalTranscriptionForLocalVAD(text) {
+            RecordingDiagnostics.shared.record(.init(.asrCompleted, sessionID: sessionID, outcome: .empty))
             VoxtLog.asr(
                 "Transcription result suppressed because local VAD observed no speech. chars=\(text.count)",
                 verbose: true
@@ -87,6 +89,7 @@ extension AppDelegate {
         }
         guard !text.isEmpty else {
             if let runtimeFailureMessage = consumeActiveRecordingRuntimeFailureMessage() {
+                RecordingDiagnostics.shared.record(.init(.asrCompleted, sessionID: sessionID, outcome: .failed, failure: .runtime))
                 if isCurrentTranscriptionNoteSessionActive {
                     _ = captureTrailingVoxtNoteIfNeeded(finalRawText: currentSessionRawTranscribedText())
                 }
@@ -98,6 +101,7 @@ extension AppDelegate {
                 finishSession(after: 2.4)
                 return
             }
+            RecordingDiagnostics.shared.record(.init(.asrCompleted, sessionID: sessionID, outcome: .empty))
             if isCurrentTranscriptionNoteSessionActive {
                 _ = captureTrailingVoxtNoteIfNeeded(finalRawText: currentSessionRawTranscribedText())
             } else {
@@ -108,6 +112,7 @@ extension AppDelegate {
             return
         }
 
+        RecordingDiagnostics.shared.record(.init(.asrCompleted, sessionID: sessionID, outcome: .success, count: text.count))
         updateActiveRecordingTranscriberTranscribedText(text)
         refreshVoxtNoteTranscriptDisplay()
 

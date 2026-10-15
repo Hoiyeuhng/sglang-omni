@@ -24,6 +24,7 @@ extension AppDelegate {
         guard !input.isEmpty else { return }
 
         pauseLLMTask?.cancel()
+        let sessionID = activeRecordingSessionID
         pauseLLMTask = Task { [weak self] in
             guard let self else { return }
             self.setEnhancingState(true)
@@ -33,7 +34,7 @@ extension AppDelegate {
             }
 
             do {
-                let enhanced = try await self.runPauseEnhancementPipeline(input: input)
+                let enhanced = try await self.runPauseEnhancementPipeline(input: input, sessionID: sessionID)
                 guard !Task.isCancelled else { return }
                 guard self.isSessionActive else { return }
 
@@ -55,12 +56,12 @@ extension AppDelegate {
         }
     }
 
-    private func runPauseEnhancementPipeline(input: String) async throws -> String {
+    private func runPauseEnhancementPipeline(input: String, sessionID: UUID) async throws -> String {
         let runner = SessionPipelineRunner(
             stages: [
                 PauseEnhanceStage(transform: { [weak self] value in
                     guard let self else { return value }
-                    return try await self.enhanceTextForCurrentMode(value)
+                    return try await self.enhanceTextForCurrentMode(value, sessionID: sessionID)
                 })
             ]
         )
