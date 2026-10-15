@@ -23,11 +23,19 @@ import Foundation
 }
 SWIFT
 
+sources=(
+    "$voxt_directory/Voxt/Core/History/HistoryDiagnosticSampleExport.swift"
+    "$voxt_directory/Voxt/Core/History/HistoryAudioArchiveSupport.swift"
+    "$voxt_directory/VoxtTests/TestSupport/HistoryDiagnosticSampleChecks.swift"
+    "$build_directory/SampleContractMain.swift"
+)
+# Include the shared audio-use guard when validating with the storage quota PR.
+if [[ -f "$voxt_directory/Voxt/Core/History/HistoryAudioQuota.swift" ]]; then
+    sources+=("$voxt_directory/Voxt/Core/History/HistoryAudioQuota.swift")
+fi
+
 swiftc -swift-version 5 -default-isolation MainActor -D VOXT_STANDALONE_TESTS \
     -module-cache-path "$build_directory/module-cache" \
-    "$voxt_directory/Voxt/Core/History/HistoryDiagnosticSampleExport.swift" \
-    "$voxt_directory/Voxt/Core/History/HistoryAudioArchiveSupport.swift" \
-    "$voxt_directory/VoxtTests/TestSupport/HistoryDiagnosticSampleChecks.swift" \
-    "$build_directory/SampleContractMain.swift" \
+    "${sources[@]}" \
     -o "$build_directory/sample-contracts"
 "$build_directory/sample-contracts"
