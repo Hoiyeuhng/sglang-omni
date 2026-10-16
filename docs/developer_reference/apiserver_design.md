@@ -70,6 +70,75 @@ It:
 
 Use it when you want the standard out-of-the-box server path.
 
+### Timeouts for shared duplex sessions
+
+The runtime has an admission timeout and an input-idle timeout.
+
+| Timeout | Runtime limit | Default | Function |
+| --- | --- | --- | --- |
+| Admission timeout | `session_update_timeout_s` | 60 seconds | The server waits for `session.update` before the session opens |
+| Input-idle timeout | `idle_input_timeout_s` | 60 seconds | The server closes an open session after a period without input |
+
+To use these options, set `--enable-realtime`.
+The pipeline must have `realtime_deployment_factory`.
+`MiniCPMODuplexPipelineConfig` has this factory.
+
+Use these server options to change the timeouts:
+
+| Server option | Python keyword argument | Example value |
+| --- | --- | --- |
+| `--realtime-admission-timeout-s` | `realtime_admission_timeout_s` | `20` seconds |
+| `--realtime-idle-input-timeout-s` | `realtime_idle_input_timeout_s` | `300` seconds |
+
+Set each timeout to a finite number greater than zero.
+If you do not set an option, the server uses the deployment limit.
+Give the Python keyword arguments to `launch_server` or `run_server`.
+Do not add these options to the pipeline YAML.
+
+The admission timeout period starts when the connection starts.
+An admission failure does not start a new period.
+The runtime waits for an admission operation and its cleanup before it can close the session for this timeout.
+Each operation has a time limit.
+After the end of this period, another `session.update` cannot start admission.
+
+The runtime starts a new input-idle timeout period after each of these events:
+
+- The runtime accepts audio input or an image.
+- An input clear or input end command completes.
+- The adapter completes an input unit.
+
+The runtime does not use the input-idle timeout while the adapter processes an input unit.
+The runtime does not use this timeout while a command holds the command lock.
+WebSocket pings and session configuration updates do not start a new input-idle timeout period.
+Images that the runtime rejects do not start a new input-idle timeout period.
+
+For shared realtime sessions, `CoordinatorAdapter` keeps a finite pipeline idle timeout as a second protection.
+It uses the maximum of these values:
+
+- The default pipeline idle timeout of 300 seconds.
+- The pipeline idle timeout in the configuration.
+- Two runtime input-idle periods, plus the runtime cleanup timeout and the pipeline operation timeout.
+
+The runtime can accept input before it has a full pipeline input unit.
+The pipeline idle timer operates while the pipeline waits for another input unit.
+Inputs that do not make a full unit can keep the runtime active until this pipeline timeout occurs.
+Image input and clear commands also do not give the pipeline an input unit.
+The pipeline timeout also gives a time limit if runtime cleanup fails.
+
+Other pipeline sessions keep their idle timeout.
+The default pipeline idle timeout is 300 seconds.
+The operation timeout limits and cleanup timeout limits do not change.
+
+### Release note: input-idle timeout
+
+This change adds a default input-idle timeout of 60 seconds to shared duplex sessions.
+Before this change, an open session stayed open after application input stopped.
+A client that sends audio only when its user speaks can now disconnect during a long period without input.
+WebSocket Pong frames do not prevent this closure.
+
+For long periods without audio input, increase `--realtime-idle-input-timeout-s`.
+For example, use `--realtime-idle-input-timeout-s 300` for a five-minute timeout period.
+
 ### WebSocket close codes for shared duplex sessions
 
 The server sends the last application events before it sends the WebSocket Close frame.
@@ -78,11 +147,11 @@ The Close frame gives the code and reason for session closure.
 | Close code | Reason for session closure |
 | --- | --- |
 | `1000` | `client_closed` or `disconnect` |
-| `1008` | `session_update_timeout` or `context_exhausted` |
+| `1008` | `session_update_timeout`, `idle_timeout`, or `context_exhausted` |
 | `1011` | An internal error, adapter failure, or cleanup failure |
 
 [RFC 6455 section 7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1) gives these codes.
-The server uses `1008` for the admission timeout and the context limit.
+The server uses `1008` for the admission timeout, the input-idle timeout, and the context limit.
 The RFC does not set the timeout periods or the JSON error codes.
 The application sets the JSON error codes.
 
