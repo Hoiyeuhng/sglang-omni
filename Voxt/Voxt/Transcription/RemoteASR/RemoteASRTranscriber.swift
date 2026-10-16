@@ -176,34 +176,31 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
         let resolvedModel = configuredModel.isEmpty
             ? provider.suggestedModel
             : configuredModel
-        let resolvedEndpoint = configuration.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let routeSummary: String
+        let diagnosticRoute: RecordingDiagnosticEvent.Route
         if provider == .aliyunBailianASR {
             if let kind = RemoteASREndpointSupport.aliyunQwenRealtimeSessionKind(for: resolvedModel) {
-                routeSummary = switch kind {
+                diagnosticRoute = switch kind {
                 case .qwenASR:
-                    "aliyun-qwen-realtime"
+                    .aliyunQwenRealtime
                 case .omniASR:
-                    "aliyun-omni-realtime"
+                    .aliyunOmniRealtime
                 }
             } else if RemoteASREndpointSupport.isAliyunFunRealtimeModel(resolvedModel) {
-                routeSummary = "aliyun-fun-realtime"
+                diagnosticRoute = .aliyunFunRealtime
             } else if RemoteASREndpointSupport.isAliyunFileTranscriptionModel(resolvedModel) {
-                routeSummary = "aliyun-file"
+                diagnosticRoute = .aliyunFile
             } else {
-                routeSummary = "aliyun-unknown"
+                diagnosticRoute = .aliyunUnsupported
             }
         } else if provider == .stepFunASR,
                   RemoteASRRealtimeSupport.isStepFunRealtimeModel(resolvedModel) {
-            routeSummary = "stepfun-realtime"
+            diagnosticRoute = .stepFunRealtime
         } else if provider == .googleGeminiASR {
-            routeSummary = "gemini-live"
+            diagnosticRoute = .geminiLive
         } else {
-            routeSummary = provider.rawValue
+            diagnosticRoute = .providerDefault
         }
-        VoxtLog.model(
-            "Remote ASR recording requested. provider=\(provider.rawValue), model=\(resolvedModel), endpoint=\(resolvedEndpoint.isEmpty ? "<default>" : resolvedEndpoint), route=\(routeSummary), realtimeDisplay=\(sessionAllowsRealtimeTextDisplay), pseudoRealtime=\(configuration.openAIChunkPseudoRealtimeEnabled), language=\(hintPayload.language ?? "auto"), languageHints=\(hintPayload.languageHints.count), promptChars=\(hintPayload.prompt?.count ?? 0)"
-        )
+        VoxtLog.model(.init(.modelConfigured, backend: .remote, route: diagnosticRoute))
 
         if provider == .doubaoASR {
             do {

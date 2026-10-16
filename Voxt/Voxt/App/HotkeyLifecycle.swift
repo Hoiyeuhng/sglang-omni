@@ -135,7 +135,7 @@ extension AppDelegate {
             return true
         }
         hotkeyManager.start()
-        VoxtLog.hotkey("Hotkey callbacks configured.")
+        VoxtLog.hotkey(.init(.hotkeyConfigured))
     }
 
     func setupLifecycleRecoveryObservers() {
@@ -211,13 +211,11 @@ extension AppDelegate {
     }
 
     func handleOverlayShortcutEvent(_ event: NSEvent, shouldConsume: Bool = false) -> NSEvent? {
-        let startedAt = Date()
+        let startedAt = DispatchTime.now().uptimeNanoseconds
         defer {
-            let elapsed = Date().timeIntervalSince(startedAt)
+            let elapsed = Double(DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000_000
             if elapsed >= 0.04 {
-                VoxtLog.hotkey(
-                    "Overlay shortcut handling was slow. elapsedMs=\(Int(elapsed * 1000)), keyCode=\(event.keyCode), modifiers=\(event.modifierFlags.intersection(.hotkeyRelevant).rawValue), consume=\(shouldConsume)"
-                )
+                VoxtLog.hotkey(.init(.hotkeyHandlingSlow, durationMilliseconds: UInt64(max(0, elapsed * 1_000))))
             }
         }
 
@@ -371,10 +369,7 @@ extension AppDelegate {
         pendingStartDelay: TimeInterval? = nil,
         pendingStartShouldStart: (() -> Bool)? = nil
     ) {
-        VoxtLog.hotkey(
-            "Trigger callback transcriptionDown. source=\(source), mode=\(triggerMode.rawValue), isSessionActive=\(isSessionActive), sessionOutput=\(sessionOutputMode == .translation ? "translation" : "transcription"), pendingStart=\(pendingTranscriptionStartTask != nil)",
-            verbose: true
-        )
+        VoxtLog.hotkey(.init(.hotkeyPressed, action: .transcription))
         guard !blockNonMeetingRecordingWhileMeetingIsActive(source: "\(source)TranscriptionDown") else { return }
         if allowsDoubleTapRewrite {
             let doubleTapRewriteAction = TranscriptionDoubleTapRewriteResolver.resolve(
@@ -390,7 +385,7 @@ extension AppDelegate {
                 break
             case .scheduleDelayedTranscriptionStart:
                 let delay = NSEvent.doubleClickInterval
-                VoxtLog.hotkey("Transcription tap entering double-tap rewrite wait window. delaySec=\(delay)")
+                VoxtLog.hotkey(.init(.hotkeyScheduled, action: .transcription))
                 pendingTranscriptionHotkeyStartBehavior = triggerBehavior
                 schedulePendingTranscriptionStart(
                     delay: delay,
@@ -398,7 +393,7 @@ extension AppDelegate {
                 )
                 return
             case .startRewrite:
-                VoxtLog.hotkey("Transcription second tap detected; starting rewrite instead of transcription.")
+                VoxtLog.hotkey(.init(.hotkeyDispatched, action: .rewrite))
                 cancelPendingTranscriptionStart()
                 beginRecording(outputMode: .rewrite)
                 return
@@ -447,10 +442,7 @@ extension AppDelegate {
         source: String
     ) {
         guard triggerMode == .longPress else { return }
-        VoxtLog.hotkey(
-            "Trigger callback transcriptionUp. source=\(source), isSessionActive=\(isSessionActive), sessionOutput=\(sessionOutputMode == .translation ? "translation" : "transcription"), pendingStart=\(pendingTranscriptionStartTask != nil)",
-            verbose: true
-        )
+        VoxtLog.hotkey(.init(.hotkeyReleased, action: .transcription))
         let actions = HotkeyActionResolver.resolveTranscriptionUp(
             state: HotkeyActionResolver.State(
                 triggerMode: triggerMode,
@@ -478,10 +470,7 @@ extension AppDelegate {
         VoxtLog.info(
             "Translation trigger invoked. source=\(source), mode=\(triggerMode.rawValue), isSessionActive=\(isSessionActive), pendingStart=\(pendingTranscriptionStartTask != nil)"
         )
-        VoxtLog.hotkey(
-            "Trigger callback translationDown. source=\(source), mode=\(triggerMode.rawValue), isSessionActive=\(isSessionActive), sessionOutput=\(sessionOutputMode == .translation ? "translation" : "transcription"), pendingStart=\(pendingTranscriptionStartTask != nil)",
-            verbose: true
-        )
+        VoxtLog.hotkey(.init(.hotkeyPressed, action: .translation))
         guard !blockNonMeetingRecordingWhileMeetingIsActive(source: "\(source)TranslationDown") else { return }
         let actions = HotkeyActionResolver.resolveTranslationDown(
             state: HotkeyActionResolver.State(
@@ -498,12 +487,12 @@ extension AppDelegate {
         }
         guard !isSessionActive else {
             VoxtLog.info("Translation hotkey ignored because a session is already active.")
-            VoxtLog.hotkey("Translation down ignored: session already active.")
+            VoxtLog.hotkey(.init(.hotkeyIgnored, action: .translation))
             return
         }
 
         if beginSelectedTextTranslationIfPossible() {
-            VoxtLog.hotkey("Translation down handled by selected-text translation flow.")
+            VoxtLog.hotkey(.init(.hotkeyDispatched, action: .translation))
             return
         }
 
@@ -523,10 +512,7 @@ extension AppDelegate {
         source: String
     ) {
         guard triggerMode == .longPress else { return }
-        VoxtLog.hotkey(
-            "Trigger callback translationUp. source=\(source), isSessionActive=\(isSessionActive), sessionOutput=\(sessionOutputMode == .translation ? "translation" : "transcription"), selectedTextFlow=\(isSelectedTextTranslationFlow)",
-            verbose: true
-        )
+        VoxtLog.hotkey(.init(.hotkeyReleased, action: .translation))
         let actions = HotkeyActionResolver.resolveTranslationUp(
             state: HotkeyActionResolver.State(
                 triggerMode: triggerMode,
@@ -554,23 +540,20 @@ extension AppDelegate {
         VoxtLog.info(
             "Rewrite trigger invoked. source=\(source), mode=\(triggerMode.rawValue), isSessionActive=\(isSessionActive), pendingStart=\(pendingTranscriptionStartTask != nil)"
         )
-        VoxtLog.hotkey(
-            "Trigger callback rewriteDown. source=\(source), mode=\(triggerMode.rawValue), isSessionActive=\(isSessionActive), sessionOutput=\(sessionOutputModeLabel), pendingStart=\(pendingTranscriptionStartTask != nil)",
-            verbose: true
-        )
+        VoxtLog.hotkey(.init(.hotkeyPressed, action: .rewrite))
         guard !blockNonMeetingRecordingWhileMeetingIsActive(source: "\(source)RewriteDown") else { return }
 
         cancelPendingTranscriptionStart()
         if isSessionActive {
             if sessionOutputMode == .transcription && shouldIgnoreTapStop() {
-                VoxtLog.hotkey("Rewrite down reinterpreting freshly started transcription session as rewrite.")
+                VoxtLog.hotkey(.init(.hotkeyDispatched, action: .rewrite))
                 cancelActiveRecordingSession()
                 beginRecording(outputMode: .rewrite)
                 return
             }
 
             VoxtLog.info("Rewrite hotkey ignored because a session is already active.")
-            VoxtLog.hotkey("Rewrite down ignored: session already active.")
+            VoxtLog.hotkey(.init(.hotkeyIgnored, action: .rewrite))
             return
         }
 
@@ -587,10 +570,7 @@ extension AppDelegate {
         source: String
     ) {
         guard triggerMode == .longPress else { return }
-        VoxtLog.hotkey(
-            "Trigger callback rewriteUp. source=\(source), isSessionActive=\(isSessionActive), sessionOutput=\(sessionOutputModeLabel)",
-            verbose: true
-        )
+        VoxtLog.hotkey(.init(.hotkeyReleased, action: .rewrite))
         guard isSessionActive, sessionOutputMode == .rewrite else { return }
         endRecording()
     }
@@ -641,7 +621,7 @@ extension AppDelegate {
         shouldStart: (() -> Bool)? = nil
     ) {
         guard !blockNonMeetingRecordingWhileMeetingIsActive(source: "pendingTranscriptionStart:\(reason)") else { return }
-        VoxtLog.hotkey("Scheduling pending transcription start. delaySec=\(delay), reason=\(reason)")
+        VoxtLog.hotkey(.init(.hotkeyScheduled, action: .transcription))
         pendingTranscriptionStartTask?.cancel()
         pendingTranscriptionStartTask = Task { [weak self] in
             guard let self else { return }
@@ -652,7 +632,7 @@ extension AppDelegate {
             }
             guard !Task.isCancelled else { return }
             guard !self.isSessionActive else {
-                VoxtLog.hotkey("Pending transcription start dropped: session already active.")
+                VoxtLog.hotkey(.init(.hotkeyIgnored, action: .transcription))
                 self.pendingTranscriptionStartTask = nil
                 return
             }
@@ -661,19 +641,19 @@ extension AppDelegate {
                 return
             }
             if let shouldStart, !shouldStart() {
-                VoxtLog.hotkey("Pending transcription start dropped: trigger is no longer active. reason=\(reason)")
+                VoxtLog.hotkey(.init(.hotkeyIgnored, action: .transcription))
                 self.pendingTranscriptionStartTask = nil
                 return
             }
             self.pendingTranscriptionStartTask = nil
-            VoxtLog.hotkey("Pending transcription start fired.")
+            VoxtLog.hotkey(.init(.hotkeyDispatched, action: .transcription))
             self.beginRecording(outputMode: .transcription)
         }
     }
 
     func cancelPendingTranscriptionStart() {
         if pendingTranscriptionStartTask != nil {
-            VoxtLog.hotkey("Canceled pending transcription start.")
+            VoxtLog.hotkey(.init(.hotkeyCancelled, action: .transcription))
         }
         pendingTranscriptionStartTask?.cancel()
         pendingTranscriptionStartTask = nil

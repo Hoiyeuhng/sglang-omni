@@ -69,7 +69,7 @@ actor GGUFTranslationRuntime {
         onPartialText: (@Sendable (String) -> Void)?
     ) throws -> String {
         try Task.checkCancellation()
-        let startedAt = CFAbsoluteTimeGetCurrent()
+        let startedAt = DispatchTime.now().uptimeNanoseconds
         acquireBackendIfNeeded()
         let model = try loadModelIfNeeded(at: modelURL)
         let vocab = llama_model_get_vocab(model)
@@ -97,9 +97,7 @@ actor GGUFTranslationRuntime {
             )
         }
 
-        VoxtLog.llmDebug(
-            "GGUF runtime start. model=\(modelURL.lastPathComponent), promptChars=\(formattedPrompt.count), promptTokens=\(promptTokens.count), maxTokens=\(maxTokens), nCtx=\(contextSize), nBatch=\(batchSize), trainedCtx=\(modelContextLimit)"
-        )
+        VoxtLog.model(.init(.modelRequestStarted, backend: .gguf))
 
         var contextParams = llama_context_default_params()
         contextParams.n_ctx = UInt32(contextSize)
@@ -134,7 +132,7 @@ actor GGUFTranslationRuntime {
             batch.logits[Int(batch.n_tokens) - 1] = 1
         }
 
-        let prefillStartedAt = CFAbsoluteTimeGetCurrent()
+        let prefillStartedAt = DispatchTime.now().uptimeNanoseconds
         guard llama_decode(context, batch) == 0 else {
             throw NSError(
                 domain: "Voxt.GGUFTranslation",
@@ -156,22 +154,22 @@ actor GGUFTranslationRuntime {
         let contextLimit = Int(llama_n_ctx(context))
         var generatedTokenCount = 0
         var firstTokenLatencyMs: Int?
-        var stopReason = "tokenLimit"
+        var stopReason = RecordingDiagnosticEvent.FinishReason.tokenLimit
 
         let generationLimit = max(0, min(maxTokens, contextSize - promptTokens.count - 1))
         if generationLimit == 0 {
-            stopReason = "noGenerationBudget"
+            stopReason = .noGenerationBudget
         }
         for _ in 0..<generationLimit {
             try Task.checkCancellation()
             if Int(tokenPosition) >= contextLimit - 1 {
-                stopReason = "contextLimit"
+                stopReason = .contextLimit
                 break
             }
 
             let nextToken = llama_sampler_sample(sampler, context, -1)
             if nextToken == eosToken || nextToken == eotToken {
-                stopReason = nextToken == eosToken ? "eos" : "eot"
+                stopReason = nextToken == eosToken ? .eos : .eot
                 break
             }
             llama_sampler_accept(sampler, nextToken)
@@ -215,15 +213,15 @@ actor GGUFTranslationRuntime {
             }
         }
         if outputAccumulator.finalizedWithReplacementCharacters {
-            VoxtLog.llmDebug(
-                "GGUF runtime output contained invalid UTF-8 bytes after token accumulation. model=\(modelURL.lastPathComponent), outputTokens=\(generatedTokenCount)"
-            )
+            VoxtLog.model(.init(.outputEncodingIssue, backend: .gguf, tokenCount: generatedTokenCount))
         }
 
         let totalElapsedMs = millisecondsSince(startedAt)
-        VoxtLog.llmDebug(
-            "GGUF runtime finished. model=\(modelURL.lastPathComponent), outputChars=\(generated.count), outputTokens=\(generatedTokenCount), prefillMs=\(prefillElapsedMs), firstTokenMs=\(firstTokenLatencyMs.map(String.init) ?? "n/a"), totalMs=\(totalElapsedMs), stop=\(stopReason)"
-        )
+        VoxtLog.model(.init(.modelRequestCompleted, backend: .gguf, outcome: generated.isEmpty ? .empty : .success,
+            characterCount: generated.count, tokenCount: generatedTokenCount,
+            durationMilliseconds: UInt64(max(0, totalElapsedMs)),
+            prefillMilliseconds: UInt64(max(0, prefillElapsedMs)),
+            firstTokenMilliseconds: firstTokenLatencyMs.map { UInt64(max(0, $0)) }, finishReason: stopReason))
         return generated
     }
 
@@ -233,8 +231,8 @@ actor GGUFTranslationRuntime {
         hasBackendLease = true
     }
 
-    private func millisecondsSince(_ start: CFAbsoluteTime) -> Int {
-        max(Int(((CFAbsoluteTimeGetCurrent() - start) * 1000).rounded()), 0)
+    private func millisecondsSince(_ start: UInt64) -> Int {
+        Int((DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
     }
 
     private func resolvedModelContextLimit(_ model: OpaquePointer) -> Int {

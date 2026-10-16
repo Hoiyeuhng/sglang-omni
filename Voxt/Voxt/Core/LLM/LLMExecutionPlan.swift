@@ -13,6 +13,15 @@ enum LLMExecutionProvider: Equatable {
     case customLLM(repo: String)
     case localGGUF(modelID: GGUFTranslationModelID)
     case remote(provider: RemoteLLMProvider, configuration: RemoteProviderConfiguration)
+
+    var diagnosticBackend: RecordingDiagnosticEvent.Backend {
+        switch self {
+        case .appleIntelligence: return .appleIntelligence
+        case .customLLM: return .mlx
+        case .localGGUF: return .gguf
+        case .remote: return .remote
+        }
+    }
 }
 
 enum LLMContextBlockKind: String, Equatable {

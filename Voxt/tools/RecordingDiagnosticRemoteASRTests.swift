@@ -13,6 +13,7 @@ struct RecordingDiagnosticRemoteASRTests {
         let transcriber = RemoteASRTranscriber()
         transcriber.diagnosticRecorderOverride = recorder
         transcriber.diagnosticSessionID = UUID()
+        recorder.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         transcriber.sessionAllowsRealtimeTextDisplay = false
         let generationID = transcriber.recordingGenerationID
         var assertions = 0
@@ -29,24 +30,25 @@ struct RecordingDiagnosticRemoteASRTests {
         check(first[0].sessionID == transcriber.diagnosticSessionID && first[0].requestID == generationID,
               "the partial must retain its session and request generation")
         check(first[0].backend == .remote, "the backend must be remote")
-        check(!output.lines.joined().contains("private") && !output.lines.joined().contains("secret"),
+        check(!output.callbackLines.joined().contains("private") && !output.callbackLines.joined().contains("secret"),
               "transcript, URL and credentials must not enter diagnostics")
         check(transcriber.transcribedText.isEmpty && transcriber.pendingIntermediateTranscription == nil,
               "disabled realtime display must remain disabled")
 
         transcriber.diagnosticSessionID = UUID()
+        recorder.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         transcriber.recordingGenerationID = UUID()
         transcriber.sessionAllowsRealtimeTextDisplay = true
         transcriber.publishIntermediateTranscription("final-only result", isPartial: false,
             generationID: transcriber.recordingGenerationID)
-        check(output.lines.count == 1, "a final-only response must not be recorded as partial")
+        check(output.callbackLines.count == 1, "a final-only response must not be recorded as partial")
         await transcriber.intermediateTranscriptionPublishTask?.value
         check(transcriber.transcribedText == "final-only result", "final responses must retain UI publishing behavior")
         transcriber.publishIntermediateTranscription("stale partial", isPartial: true, generationID: generationID)
-        check(output.lines.count == 1 && transcriber.pendingIntermediateTranscription == nil,
+        check(output.callbackLines.count == 1 && transcriber.pendingIntermediateTranscription == nil,
               "a late request cannot write into a newer session")
         transcriber.publishIntermediateTranscription(" \n ", isPartial: true, generationID: transcriber.recordingGenerationID)
-        check(output.lines.count == 1, "empty interim responses must not count as first partial")
+        check(output.callbackLines.count == 1, "empty interim responses must not count as first partial")
         transcriber.publishIntermediateTranscription("current partial", isPartial: true,
             generationID: transcriber.recordingGenerationID)
         let current = try output.events().last!
@@ -54,29 +56,32 @@ struct RecordingDiagnosticRemoteASRTests {
               "a new session must retain independent first-partial state")
         transcriber.resetIntermediateTranscriptionPublishing()
         recorder.record(.init(.sessionCancelled, sessionID: transcriber.diagnosticSessionID))
-        let countAfterCancellation = output.lines.count
+        let countAfterCancellation = output.callbackLines.count
         transcriber.publishIntermediateTranscription("late cancelled partial", isPartial: true,
             generationID: transcriber.recordingGenerationID)
-        check(output.lines.count == countAfterCancellation, "ended sessions must not be revived by partials")
+        check(output.callbackLines.count == countAfterCancellation, "ended sessions must not be revived by partials")
         transcriber.resetIntermediateTranscriptionPublishing()
         transcriber.diagnosticSessionID = UUID()
+        recorder.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         let cancelledTask = Task { @MainActor in
             transcriber.publishIntermediateTranscription("cancelled task", isPartial: true,
                 generationID: transcriber.recordingGenerationID)
         }
         cancelledTask.cancel()
         await cancelledTask.value
-        check(output.lines.count == countAfterCancellation && transcriber.pendingIntermediateTranscription == nil,
+        check(output.callbackLines.count == countAfterCancellation && transcriber.pendingIntermediateTranscription == nil,
               "cancelled tasks must not publish or record a partial")
         transcriber.diagnosticSessionID = UUID()
+        recorder.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         transcriber.recordDiagnosticPartial("file socket interim", generationID: transcriber.recordingGenerationID)
-        check(output.lines.count == countAfterCancellation + 1, "file socket partials must not require UI publishing")
+        check(output.callbackLines.count == countAfterCancellation + 1, "file socket partials must not require UI publishing")
         check(transcriber.pendingIntermediateTranscription == nil, "diagnostic-only file responses must not change UI publishing")
-        let countBeforeDisable = output.lines.count
+        let countBeforeDisable = output.callbackLines.count
         recorder.setEnabled(false)
         transcriber.diagnosticSessionID = UUID()
+        recorder.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         transcriber.publishIntermediateTranscription("disabled", isPartial: true, generationID: transcriber.recordingGenerationID)
-        check(output.lines.count == countBeforeDisable, "disabled diagnostics must not emit partials")
+        check(output.callbackLines.count == countBeforeDisable, "disabled diagnostics must not emit partials")
         transcriber.resetIntermediateTranscriptionPublishing()
 
         for payload in [
@@ -144,8 +149,13 @@ nonisolated final class RemoteDiagnosticOutput: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [String] = []
     var lines: [String] { lock.lock(); defer { lock.unlock() }; return storage }
+    var callbackLines: [String] {
+        lines.filter { line in
+            (try? JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data(line.utf8)))?.kind != .sessionStarted
+        }
+    }
     func append(_ line: String) { lock.lock(); storage.append(line); lock.unlock() }
     func events() throws -> [RecordingDiagnosticEvent] {
-        try lines.map { try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data($0.utf8)) }
+        try callbackLines.map { try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data($0.utf8)) }
     }
 }

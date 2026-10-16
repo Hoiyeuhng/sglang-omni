@@ -83,3 +83,7 @@ nonisolated enum AppPreferenceKey {
 nonisolated enum AppLocalization { static func localizedString(_ value: String) -> String { value } }
 nonisolated enum VoxtLog { static func asrWarning(_ value: @autoclosure () -> String) {} }
 extension Notification.Name { nonisolated static let voxtFeatureSettingsDidChange = Self("test.featureSettingsChanged") }
+
+nonisolated enum VoxtLogger {
+    static func recordDiagnosticLine(_ line: String) { fatalError("Tests must inject the diagnostic sink") }
+}

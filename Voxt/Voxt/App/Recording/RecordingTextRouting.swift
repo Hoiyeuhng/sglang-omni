@@ -118,9 +118,8 @@ extension AppDelegate {
 
         VoxtLog.asr("Transcription result received. characters=\(text.count), output=\(sessionOutputMode == .translation ? "translation" : "transcription")")
         VoxtLog.asr("Transcription result output mode resolved as \(RecordingSessionSupport.outputLabel(for: sessionOutputMode)).", verbose: true)
-        VoxtLog.model(
-            "Session text model routing: \(RecordingSessionSupport.textModelRoutingDescription(outputMode: sessionOutputMode, transcriptionSettings: transcriptionFeatureSettings, translationSettings: translationFeatureSettings, rewriteSettings: rewriteFeatureSettings))"
-        )
+        VoxtLog.model(.init(.modelRoutingChanged, sessionID: sessionID,
+            action: sessionOutputMode == .translation ? .translation : (sessionOutputMode == .rewrite ? .rewrite : .transcription)))
 
         if sessionOutputMode == .translation {
             processTranslatedTranscription(text, sessionID: sessionID)

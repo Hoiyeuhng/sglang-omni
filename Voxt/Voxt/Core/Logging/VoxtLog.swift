@@ -14,6 +14,33 @@ enum VoxtLog {
 
     nonisolated(unsafe) static var verboseEnabled = false
 
+    nonisolated static func technical(
+        _ event: @autoclosure () -> RecordingDiagnosticEvent,
+        category: VoxtLogCategory,
+        level: Logger.Level? = nil
+    ) {
+        VoxtLogger(category: category).record(event(), level: level)
+    }
+
+    nonisolated static func hotkey(
+        _ event: @autoclosure () -> RecordingDiagnosticEvent,
+        defaults: UserDefaults = .standard,
+        logger: VoxtLogger? = nil
+    ) {
+        guard defaults.bool(forKey: AppPreferenceKey.hotkeyDebugLoggingEnabled) else { return }
+        (logger ?? hotkeyLogger).record(event())
+    }
+
+    nonisolated static func model(
+        _ event: @autoclosure () -> RecordingDiagnosticEvent,
+        defaults: UserDefaults = .standard,
+        logger: VoxtLogger? = nil
+    ) {
+        guard defaults.bool(forKey: AppPreferenceKey.llmDebugLoggingEnabled) else { return }
+        (logger ?? modelLogger).record(event())
+    }
+
+    // Note (Voxt): legacy strings are not persisted; use typed events for technical detail.
     nonisolated static func info(_ message: @autoclosure () -> String, verbose: Bool = false) {
         appLogger.info(message(), verbose: verbose)
     }
@@ -40,19 +67,6 @@ enum VoxtLog {
 
     nonisolated static func historyWarning(_ message: @autoclosure () -> String) {
         historyLogger.warning(message())
-    }
-
-    nonisolated static func hotkey(_ message: @autoclosure () -> String, verbose: Bool = false) {
-        guard isHotkeyDebugLoggingEnabled,
-              !verbose || verboseEnabled
-        else {
-            return
-        }
-        hotkeyLogger.info(message())
-    }
-
-    nonisolated static var isHotkeyDebugLoggingEnabled: Bool {
-        UserDefaults.standard.bool(forKey: AppPreferenceKey.hotkeyDebugLoggingEnabled)
     }
 
     nonisolated static func input(_ message: @autoclosure () -> String, verbose: Bool = false) {
@@ -85,27 +99,12 @@ enum VoxtLog {
         _ = message
     }
 
-    nonisolated static func llmDebug(_ message: @autoclosure () -> String) {
-        guard UserDefaults.standard.bool(forKey: AppPreferenceKey.llmDebugLoggingEnabled) else { return }
-        llmLogger.info(message())
-    }
-
     nonisolated static func llmInfo(_ message: @autoclosure () -> String, verbose: Bool = false) {
         llmLogger.info(message(), verbose: verbose)
     }
 
     nonisolated static func llmWarning(_ message: @autoclosure () -> String) {
         llmLogger.warning(message())
-    }
-
-    nonisolated static func model(_ message: @autoclosure () -> String) {
-        guard UserDefaults.standard.bool(forKey: AppPreferenceKey.llmDebugLoggingEnabled) else { return }
-        modelLogger.info(message(), privacy: .preview(limit: 4_000))
-    }
-
-    nonisolated static func vad(_ message: @autoclosure () -> String) {
-        guard UserDefaults.standard.bool(forKey: AppPreferenceKey.llmDebugLoggingEnabled) else { return }
-        modelLogger.info(message(), privacy: .preview(limit: 4_000))
     }
 
     nonisolated static func modelInfo(_ message: @autoclosure () -> String, verbose: Bool = false) {

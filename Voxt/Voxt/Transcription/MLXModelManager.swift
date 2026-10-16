@@ -527,13 +527,13 @@ class MLXModelManager: ObservableObject {
                 SystemNotificationSupport.postModelDownloadSucceeded(
                     modelName: displayTitle(for: canonicalRepo)
                 )
-                VoxtLog.modelInfo("Download complete. repo=\(canonicalRepo)")
+                VoxtLog.technical(.init(.modelDownloadCompleted, backend: .mlx, outcome: .success), category: .model)
             } catch is CancellationError {
                 guard revision == storageRevision else { return }
                 switch downloadStopActionsByRepo[canonicalRepo] {
                 case .pause:
                     setPausedStatusMessage(nil, for: canonicalRepo)
-                    VoxtLog.modelInfo("Download paused. repo=\(canonicalRepo)")
+                    VoxtLog.technical(.init(.modelDownloadPaused, backend: .mlx), category: .model)
                 case .cancel, .none:
                     setPausedStatusMessage(nil, for: canonicalRepo)
                     await cleanupPartialDownload(for: canonicalRepo)
@@ -541,7 +541,7 @@ class MLXModelManager: ObservableObject {
                     await clearHubCache(for: canonicalRepo)
                     guard revision == storageRevision else { return }
                     markCancelledDownloadUnavailable(for: canonicalRepo)
-                    VoxtLog.modelInfo("Download cancelled. repo=\(canonicalRepo)")
+                    VoxtLog.technical(.init(.modelDownloadCancelled, backend: .mlx, outcome: .cancelled), category: .model)
                 }
             } catch {
                 guard revision == storageRevision else { return }
@@ -557,7 +557,7 @@ class MLXModelManager: ObservableObject {
                     modelName: displayTitle(for: canonicalRepo),
                     message: message
                 )
-                VoxtLog.modelError("Download error. repo=\(canonicalRepo), error=\(error.localizedDescription)")
+                VoxtLog.technical(.init(.modelDownloadFailed, backend: .mlx, outcome: .failed, failure: .classify(error)), category: .model)
             }
         }
         downloadTasksByRepo[canonicalRepo] = task
@@ -604,20 +604,20 @@ class MLXModelManager: ObservableObject {
                 // The server died or was killed: start a new one rather than fail
                 // every request until the idle unload drops this runtime.
                 if loadedModel?.omniRuntime === runtime {
-                    VoxtLog.modelWarning("Omni ASR server is no longer serving; starting a new one. repo=\(modelRepo)")
+                    VoxtLog.technical(.init(.modelLoadFailed, backend: .mlx, outcome: .failed, failure: .runtime), category: .model)
                     loadedModel = nil
                     loadedRepo = nil
                 }
             } else {
-                VoxtLog.modelInfo("MLX Audio model reuse existing instance. repo=\(modelRepo)", verbose: true)
+                VoxtLog.technical(.init(.modelReused, backend: .mlx), category: .model)
                 return model
             }
         }
 
         let repo = modelRepo
         let revision = storageRevision
-        let startedAt = Date()
-        VoxtLog.modelInfo("MLX Audio model load started. repo=\(repo)", verbose: true)
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        VoxtLog.technical(.init(.modelLoadStarted, backend: .mlx), category: .model)
         setState(.loading, for: repo)
         let manager = self
         do {
@@ -632,8 +632,8 @@ class MLXModelManager: ObservableObject {
             loadedRepo = repo
             setState(.ready, for: repo)
             let model = try readyModel(for: repo)
-            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            VoxtLog.modelInfo("MLX Audio model load completed. repo=\(repo), elapsedMs=\(elapsedMs)")
+            let elapsedMs = Int((DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000)
+            VoxtLog.technical(.init(.modelLoadCompleted, backend: .mlx, outcome: .success, durationMilliseconds: UInt64(max(0, elapsedMs))), category: .model)
             return model
         } catch {
             if !modelLoadCoordinator.hasPendingLoad, !modelLoadCoordinator.hasOutstandingLoad {
@@ -642,20 +642,17 @@ class MLXModelManager: ObservableObject {
                 omniLedger.releaseUnadopted()
             }
             guard revision == storageRevision else { throw CancellationError() }
-            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            let elapsedMs = Int((DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000)
             if error is CancellationError || Task.isCancelled {
                 if repo == modelRepo, !modelLoadCoordinator.hasPendingLoad {
                     checkExistingModel()
                 }
-                VoxtLog.modelInfo(
-                    "MLX Audio model load cancelled. repo=\(repo), elapsedMs=\(elapsedMs)",
-                    verbose: true
-                )
+                VoxtLog.technical(.init(.modelLoadCancelled, backend: .mlx, outcome: .cancelled, durationMilliseconds: UInt64(max(0, elapsedMs))), category: .model)
             } else {
                 if repo == modelRepo {
                     setState(.error("Model load failed: \(error.localizedDescription)"), for: repo)
                 }
-                VoxtLog.modelError("MLX Audio model load failed. repo=\(repo), elapsedMs=\(elapsedMs), error=\(error.localizedDescription)")
+                VoxtLog.technical(.init(.modelLoadFailed, backend: .mlx, outcome: .failed, failure: .classify(error), durationMilliseconds: UInt64(max(0, elapsedMs))), category: .model)
             }
             throw error
         }
@@ -715,7 +712,7 @@ class MLXModelManager: ObservableObject {
         loadedRepo = nil
         await omniLedger.retireAll()
         Memory.clearCache()
-        VoxtLog.modelInfo("MLX Audio model released for application termination.", verbose: true)
+        VoxtLog.technical(.init(.modelReleased, backend: .mlx), category: .model)
     }
 
     private func waitForActiveUsesToFinish() async {
@@ -740,7 +737,7 @@ class MLXModelManager: ObservableObject {
         // Servers these loads are starting are stopped now, so a following
         // load never waits behind, or overlaps, a model nobody will use.
         omniLedger.releaseUnadopted()
-        VoxtLog.modelInfo("MLX Audio pending model load invalidated. reason=\(reason)", verbose: true)
+        VoxtLog.technical(.init(.modelLoadCancelled, backend: .mlx, outcome: .cancelled), category: .model)
         return tasks
     }
 
@@ -859,7 +856,7 @@ class MLXModelManager: ObservableObject {
                 omniLedger.release(runtime)
                 throw error
             }
-            VoxtLog.modelInfo("Omni ASR server ready. repo=\(repo), kind=\(kind.rawValue)")
+            VoxtLog.technical(.init(.modelLoadCompleted, backend: .mlx, outcome: .success), category: .model)
             return .omni(runtime)
         }
         let modelDir = try await writableLoadDirectoryIfNeeded(
@@ -1056,7 +1053,7 @@ class MLXModelManager: ObservableObject {
                 for: repo
             )
         }
-        VoxtLog.modelWarning("Download auto-paused after network issue. repo=\(repo), error=\(error.localizedDescription)")
+        VoxtLog.technical(.init(.modelDownloadPaused, backend: .mlx, failure: .classify(error)), category: .model, level: .warning)
         return true
     }
 
@@ -1143,9 +1140,7 @@ class MLXModelManager: ObservableObject {
             } catch {
                 try Task.checkCancellation()
                 lastError = error
-                VoxtLog.modelWarning(
-                    "MLX Audio download source failed. repo=\(repo), source=\(candidate.displayName), error=\(error.localizedDescription)"
-                )
+                VoxtLog.technical(.init(.modelDownloadFailed, backend: .mlx, outcome: .failed, failure: .classify(error)), category: .model)
                 await clearHubCache(for: repo)
             }
         }
@@ -1231,7 +1226,7 @@ class MLXModelManager: ObservableObject {
                 totalFiles: totalFiles,
                 for: repo
             )
-            VoxtLog.modelInfo("Download start: \(entry.path) (size=\(entry.size ?? -1))", verbose: true)
+            VoxtLog.technical(.init(.modelDownloadStarted, backend: .mlx), category: .model)
 
             let sampler = Task { [weak self] in
                 let startTime = Date()
@@ -1282,7 +1277,7 @@ class MLXModelManager: ObservableObject {
                     totalFiles: totalFiles,
                     for: repo
                 )
-                VoxtLog.modelInfo("Download resume reused existing file: \(entry.path)", verbose: true)
+                VoxtLog.technical(.init(.modelDownloadResumed, backend: .mlx), category: .model)
                 continue
             }
 
@@ -1294,7 +1289,7 @@ class MLXModelManager: ObservableObject {
                 baseURL: baseURL,
                 bearerToken: bearerToken
             )
-            VoxtLog.modelInfo("Download done: \(entry.path)", verbose: true)
+            VoxtLog.technical(.init(.modelDownloadCompleted, backend: .mlx, outcome: .success), category: .model)
             let delta = max(expectedEntryBytes, max(progress.completedUnitCount, 0))
             completedBytes += max(delta, 0)
             let finishedFiles = completedFiles + 1
@@ -1506,9 +1501,7 @@ class MLXModelManager: ObservableObject {
         idleUnloadTask = nil
         Memory.clearCache()
         checkExistingModel()
-        VoxtLog.modelInfo(
-            "MLX Audio model released. repo=\(expectedRepo ?? "unknown"), reason=\(reason)"
-        )
+        VoxtLog.technical(.init(.modelReleased, backend: .mlx), category: .model)
     }
 
     private func clearHubCache(for repo: String) async {

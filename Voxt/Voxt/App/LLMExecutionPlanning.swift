@@ -237,7 +237,7 @@ extension AppDelegate {
         diagnosticSessionID: UUID? = RecordingDiagnosticContext.sessionID
     ) async throws -> String {
         let diagnosticRequestID = UUID()
-        RecordingDiagnostics.shared.record(.init(.enhancementStarted, sessionID: diagnosticSessionID, requestID: diagnosticRequestID))
+        RecordingDiagnostics.shared.record(.init(.enhancementStarted, sessionID: diagnosticSessionID, requestID: diagnosticRequestID, backend: plan.provider.diagnosticBackend))
         do {
             let compiledRequest = LLMExecutionPlanCompiler.compile(plan)
             let executionStartedAt = Date()

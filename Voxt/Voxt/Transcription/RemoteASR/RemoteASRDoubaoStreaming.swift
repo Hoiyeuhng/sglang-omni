@@ -196,9 +196,7 @@ extension RemoteASRTranscriber {
         let requestID = UUID().uuidString.lowercased()
         request.setValue(requestID, forHTTPHeaderField: "X-Api-Request-Id")
         request.setValue(requestID, forHTTPHeaderField: "X-Api-Connect-Id")
-        VoxtLog.model(
-            "Doubao stream connect. endpoint=\(endpoint), resource=\(resourceID)"
-        )
+        VoxtLog.model(.init(.modelRequestStarted, backend: .remote))
 
         let managedSocket = VoxtNetworkSession.makeWebSocketTask(with: request)
         let ws = managedSocket.task

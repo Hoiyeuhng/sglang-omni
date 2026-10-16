@@ -9,6 +9,29 @@ nonisolated struct RecordingDiagnosticEvent: Codable, Sendable {
         case runtimeStarted, runtimeReady, runtimeModelLoaded, runtimeFailed, runtimeExited, runtimeReleased
         case requestStarted, requestFirstPartial, requestCompleted, requestCleanup
         case enhancementStarted, enhancementCompleted, insertionAttempted, insertionCompleted
+        case applicationStarted, applicationStopping, applicationStopped, legacyDiagnostic
+        case hotkeyConfigured, hotkeyMonitorStarted, hotkeyMonitorStopped, hotkeyMonitorFailed
+        case hotkeyStateReset, hotkeyPressed, hotkeyReleased, hotkeyIgnored, hotkeyFallback
+        case hotkeyScheduled, hotkeyCancelled, hotkeyDispatched, hotkeyBindingCaptured
+        case hotkeyModifierChanged, hotkeyKeyObserved, voiceStopDetected, voiceStopCleared
+        case modelLoadStarted, modelLoadCompleted, modelLoadFailed, modelLoadCancelled, modelReused, modelReleased
+        case modelDownloadStarted, modelDownloadCompleted, modelDownloadPaused, modelDownloadCancelled, modelDownloadFailed
+        case modelDownloadRetry, modelDownloadResumed, modelRoutingChanged
+        case modelRequestStarted, modelRequestCompleted, modelRequestFailed, modelConfigured
+        case modelInputReady, contextReadCompleted, contextReadFailed
+        case modelRequestMetrics, modelStreamStopped, modelResultReceived, modelConfigurationChanged
+        case modelAudioBufferFlushed, modelStopDeferred
+        case outputEncodingIssue, hotkeyHandlingSlow
+        case historyWriteFailed, noteWriteFailed, credentialReadFailed, credentialWriteFailed, credentialDeleteFailed
+        case credentialMigrationFailed
+    }
+
+    enum Action: String, Codable, Sendable { case transcription, translation, rewrite, note, meeting, paste, stop }
+    enum Severity: String, Codable, Sendable { case info, warning, error }
+    enum FinishReason: String, Codable, Sendable { case tokenLimit, noGenerationBudget, contextLimit, eos, eot }
+    enum Route: String, Codable, Sendable {
+        case aliyunQwenRealtime, aliyunOmniRealtime, aliyunFunRealtime, aliyunFile, aliyunUnsupported
+        case stepFunRealtime, geminiLive, providerDefault
     }
 
     enum Outcome: String, Codable, Sendable {
@@ -16,7 +39,7 @@ nonisolated struct RecordingDiagnosticEvent: Codable, Sendable {
     }
 
     enum Backend: String, Codable, Sendable {
-        case unspecified, mlx, dictation, remote, energy, silero, omni, gguf, off
+        case unspecified, appleIntelligence, mlx, dictation, remote, energy, silero, omni, gguf, off
     }
 
     enum Failure: String, Codable, Sendable {
@@ -43,6 +66,19 @@ nonisolated struct RecordingDiagnosticEvent: Codable, Sendable {
     var backend: Backend
     var outcome: Outcome
     var failure: Failure
+    var category: VoxtLogCategory?
+    var action: Action?
+    var severity: Severity?
+    var byteCount: UInt64?
+    var errorCode: Int?
+    var characterCount: Int?
+    var tokenCount: Int?
+    var durationMilliseconds: UInt64?
+    var prefillMilliseconds: UInt64?
+    var firstTokenMilliseconds: UInt64?
+    var finishReason: FinishReason?
+    var route: Route?
+    var thinkingEnabled: Bool?
     var httpStatusCode: Int?
     var exitStatusCode: Int?
     var count: Int?
@@ -59,7 +95,11 @@ nonisolated struct RecordingDiagnosticEvent: Codable, Sendable {
         backend: Backend = .unspecified, outcome: Outcome = .none, failure: Failure = .none,
         httpStatusCode: Int? = nil, exitStatusCode: Int? = nil,
         count: Int? = nil, sampleCount: Int? = nil, droppedChunkCount: Int? = nil, droppedByteCount: Int? = nil,
-        fallbackFrameCount: Int? = nil, speechFrameCount: Int? = nil
+        fallbackFrameCount: Int? = nil, speechFrameCount: Int? = nil,
+        action: Action? = nil, byteCount: UInt64? = nil, errorCode: Int? = nil,
+        characterCount: Int? = nil, tokenCount: Int? = nil, durationMilliseconds: UInt64? = nil,
+        prefillMilliseconds: UInt64? = nil, firstTokenMilliseconds: UInt64? = nil, finishReason: FinishReason? = nil,
+        route: Route? = nil, thinkingEnabled: Bool? = nil
     ) {
         self.kind = kind
         self.sessionID = sessionID
@@ -68,6 +108,17 @@ nonisolated struct RecordingDiagnosticEvent: Codable, Sendable {
         self.backend = backend
         self.outcome = outcome
         self.failure = failure
+        self.action = action
+        self.byteCount = byteCount
+        self.errorCode = errorCode
+        self.characterCount = characterCount.map { max(0, $0) }
+        self.tokenCount = tokenCount.map { max(0, $0) }
+        self.durationMilliseconds = durationMilliseconds
+        self.prefillMilliseconds = prefillMilliseconds
+        self.firstTokenMilliseconds = firstTokenMilliseconds
+        self.finishReason = finishReason
+        self.route = route
+        self.thinkingEnabled = thinkingEnabled
         self.httpStatusCode = httpStatusCode
         self.exitStatusCode = exitStatusCode
         self.count = count.map { max(0, $0) }
@@ -103,6 +154,7 @@ nonisolated final class RecordingDiagnosticRecorder: @unchecked Sendable {
     private var completedASR = Set<UUID>()
     private var receivedAudio = Set<UUID>()
     private var sessionOutcomes: [UUID: RecordingDiagnosticEvent.Outcome] = [:]
+    private var sessionFailures: [UUID: RecordingDiagnosticEvent.Failure] = [:]
     private var operationStarts: [UUID: UInt64] = [:]
     private var ended = Set<UUID>()
     private var writeFailures = 0
@@ -132,6 +184,7 @@ nonisolated final class RecordingDiagnosticRecorder: @unchecked Sendable {
             completedASR.removeAll()
             receivedAudio.removeAll()
             sessionOutcomes.removeAll()
+            sessionFailures.removeAll()
             operationStarts.removeAll()
             ended.removeAll()
         }
@@ -144,6 +197,13 @@ nonisolated final class RecordingDiagnosticRecorder: @unchecked Sendable {
         var event = makeEvent()
         let now = monotonicMilliseconds()
         if let sessionID = event.sessionID {
+            switch event.kind {
+            case .sessionStarted, .requestStarted, .requestFirstPartial, .requestCompleted, .requestCleanup,
+                 .runtimeStarted, .runtimeReady, .runtimeModelLoaded, .runtimeFailed, .runtimeExited, .runtimeReleased:
+                break
+            default:
+                guard starts[sessionID] != nil else { return }
+            }
             if event.kind == .sessionStarted {
                 if starts.count >= 256, let oldest = starts.min(by: { $0.value < $1.value })?.key {
                     starts.removeValue(forKey: oldest)
@@ -151,23 +211,37 @@ nonisolated final class RecordingDiagnosticRecorder: @unchecked Sendable {
                     completedASR.remove(oldest)
                     receivedAudio.remove(oldest)
                     sessionOutcomes.removeValue(forKey: oldest)
+                    sessionFailures.removeValue(forKey: oldest)
+                    ended.remove(oldest)
                 }
                 starts[sessionID] = now
                 firstPartials.remove(sessionID)
                 completedASR.remove(sessionID)
                 receivedAudio.remove(sessionID)
                 sessionOutcomes.removeValue(forKey: sessionID)
+                sessionFailures.removeValue(forKey: sessionID)
                 ended.remove(sessionID)
             }
-            if ended.contains(sessionID), [.asrFirstPartial, .asrReceivingAudio, .asrCompleted, .inputReady, .asrInitializing].contains(event.kind) { return }
+            let hasActiveSession = starts[sessionID] != nil && !ended.contains(sessionID)
+            if [.asrFirstPartial, .asrReceivingAudio, .asrCompleted, .inputReady, .asrInitializing,
+                .enhancementStarted, .enhancementCompleted, .insertionAttempted, .insertionCompleted,
+                .sessionFailed, .sessionCancelled, .sessionFinished].contains(event.kind), !hasActiveSession { return }
             if event.kind == .asrFirstPartial, !firstPartials.insert(sessionID).inserted { return }
             if event.kind == .asrReceivingAudio, !receivedAudio.insert(sessionID).inserted { return }
             if event.kind == .asrCompleted {
                 guard completedASR.insert(sessionID).inserted else { return }
-                sessionOutcomes[sessionID] = event.outcome
+                if sessionOutcomes[sessionID] != .failed && sessionOutcomes[sessionID] != .cancelled {
+                    sessionOutcomes[sessionID] = event.outcome
+                }
+            }
+            if hasActiveSession, [.asrCompleted, .enhancementCompleted, .insertionCompleted].contains(event.kind),
+               event.outcome == .failed || event.outcome == .cancelled || event.outcome == .notPosted || event.failure != .none {
+                sessionOutcomes[sessionID] = event.outcome == .cancelled ? .cancelled : .failed
+                sessionFailures[sessionID] = event.failure
             }
             if event.kind == .sessionFinished, let outcome = sessionOutcomes[sessionID] {
                 event.outcome = outcome
+                event.failure = sessionFailures[sessionID] ?? .none
             }
             if [.sessionFailed, .sessionCancelled, .sessionFinished].contains(event.kind),
                !ended.insert(sessionID).inserted { return }
@@ -178,9 +252,9 @@ nonisolated final class RecordingDiagnosticRecorder: @unchecked Sendable {
                 completedASR.remove(sessionID)
                 receivedAudio.remove(sessionID)
                 sessionOutcomes.removeValue(forKey: sessionID)
+                sessionFailures.removeValue(forKey: sessionID)
+                ended.remove(sessionID)
             }
-            // Note (Voxt): retain only recent terminal IDs to bound long-running diagnostic memory.
-            if ended.count > 256 { ended = [sessionID] }
         }
         if let operationID = event.requestID ?? event.runtimeID {
             if [.requestStarted, .runtimeStarted, .enhancementStarted, .insertionAttempted].contains(event.kind) {

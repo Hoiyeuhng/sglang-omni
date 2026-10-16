@@ -41,10 +41,32 @@ struct RecordingDiagnosticContractTests {
         recorder.record(.init(.asrFirstPartial, sessionID: second))
         recorder.record(.init(.asrCompleted, sessionID: second))
         recorder.record(.init(.inputReady, sessionID: second))
+        recorder.record(.init(.captureSummary, sessionID: second, count: 9))
+        recorder.record(.init(.enhancementCompleted, sessionID: second, outcome: .success))
+        recorder.record(.init(.sessionCleanup, sessionID: second))
         check(output.lines.count == terminalCount, "late callbacks after cancellation and cleanup must not revive a session")
+        let enhancementSession = UUID()
+        recorder.record(.init(.sessionStarted, sessionID: enhancementSession))
+        recorder.record(.init(.asrCompleted, sessionID: enhancementSession, outcome: .success))
+        recorder.record(.init(.enhancementCompleted, sessionID: enhancementSession, outcome: .failed, failure: .transport))
+        recorder.record(.init(.sessionFinished, sessionID: enhancementSession, outcome: .success))
+        let enhancementTerminal = try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data(output.lines.last!.utf8))
+        check(enhancementTerminal.outcome == .failed && enhancementTerminal.failure == .transport,
+              "session completion must preserve an enhancement failure after successful ASR")
+        recorder.record(.init(.sessionCleanup, sessionID: enhancementSession))
+        for _ in 0..<300 {
+            let completedSession = UUID()
+            recorder.record(.init(.sessionStarted, sessionID: completedSession))
+            recorder.record(.init(.sessionFinished, sessionID: completedSession))
+            recorder.record(.init(.sessionCleanup, sessionID: completedSession))
+        }
+        let beforeOldCallback = output.lines.count
+        recorder.record(.init(.asrFirstPartial, sessionID: second))
+        recorder.record(.init(.inputReady, sessionID: second))
+        check(output.lines.count == beforeOldCallback, "completed sessions must remain closed beyond 256 recordings")
         let events = try output.lines.map { try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data($0.utf8)) }
         check(events.filter { $0.kind == .asrFirstPartial }.count == 1, "first partial must be recorded once")
-        check(events.filter { $0.kind == .sessionFinished }.count == 1, "session finish must be recorded once")
+        check(events.filter { $0.kind == .sessionFinished && $0.sessionID == first }.count == 1, "session finish must be recorded once")
         check(events.first { $0.kind == .asrFirstPartial }?.elapsedMilliseconds == 960_000, "elapsed time must use injected monotonic clock")
         check(events.first { $0.kind == .vadFallback }?.sessionID == second, "concurrent sessions must remain separate")
         check(recorder.isEnabled, "diagnostics must stay enabled beyond fifteen minutes")

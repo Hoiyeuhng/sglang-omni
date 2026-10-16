@@ -142,10 +142,7 @@ extension AppDelegate {
             strict: false,
             glossarySelectionPolicy: provisionalStrategy.glossarySelectionPolicy
         )
-        let translationModel = translationModelLogDescriptor(for: modelProvider)
-        VoxtLog.llmDebug(
-            "Translation request. promptChars=\(promptResolution.content.count), inputChars=\(text.count), provider=\(modelProvider.rawValue), selectedProvider=\(translationModelProvider.rawValue), translationModel=\(translationModel), delivery=\(String(describing: promptResolution.delivery)), promptProfile=\(promptResolution.promptProfile)"
-        )
+        VoxtLog.model(.init(.modelRequestStarted, backend: modelProvider == .customLLM ? .mlx : (modelProvider == .localGGUF ? .gguf : .remote), action: .translation, characterCount: text.count))
 
         if modelProvider == .customLLM {
             let translationRepo = translationCustomLLMRepo
@@ -257,9 +254,7 @@ extension AppDelegate {
                 glossarySelectionPolicy: nil
             )
         let rewriteRepo = rewriteCustomLLMRepo
-        VoxtLog.llmDebug(
-            "Rewrite request. promptChars=\(promptResolution.content.count), dictatedChars=\(dictatedPrompt.count), sourceChars=\(sourceText.count), provider=\(modelProvider.rawValue), rewriteRepo=\(rewriteRepo), structuredAnswerOutput=\(structuredAnswerOutput), directAnswerMode=\(directAnswerMode), forceNonEmptyAnswer=\(forceNonEmptyAnswer), delivery=\(String(describing: promptResolution.delivery))"
-        )
+        VoxtLog.model(.init(.modelRequestStarted, backend: modelProvider == .customLLM ? .mlx : .remote, action: .rewrite, characterCount: dictatedPrompt.count))
         if shouldUseProviderManagedConversation, let remoteContext {
             VoxtLog.translation(
                 "Rewrite continue using Responses API. provider=\(remoteContext.provider.rawValue), endpoint=\(remoteContext.configuration.endpoint)"
@@ -385,10 +380,7 @@ extension AppDelegate {
             strict: true,
             glossarySelectionPolicy: provisionalStrategy.glossarySelectionPolicy
         )
-        let translationModel = translationModelLogDescriptor(for: modelProvider)
-        VoxtLog.llmDebug(
-            "Strict translation retry. promptChars=\(promptResolution.content.count), inputChars=\(text.count), provider=\(modelProvider.rawValue), selectedProvider=\(translationModelProvider.rawValue), translationModel=\(translationModel), delivery=\(String(describing: promptResolution.delivery)), promptProfile=\(promptResolution.promptProfile)"
-        )
+        VoxtLog.model(.init(.modelRequestStarted, backend: modelProvider == .customLLM ? .mlx : (modelProvider == .localGGUF ? .gguf : .remote), action: .translation, characterCount: text.count))
 
         if modelProvider == .customLLM {
             let translationRepo = translationCustomLLMRepo

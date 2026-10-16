@@ -306,7 +306,7 @@ extension AppDelegate {
     func endRecording() {
         guard isSessionActive else { return }
         guard recordingStoppedAt == nil else {
-            VoxtLog.hotkey("Recording stop ignored: session is already stopping.")
+            VoxtLog.hotkey(.init(.hotkeyIgnored, action: .stop))
             return
         }
         let stoppingSessionID = activeRecordingSessionID

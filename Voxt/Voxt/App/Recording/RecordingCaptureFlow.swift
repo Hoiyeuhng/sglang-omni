@@ -577,7 +577,7 @@ extension AppDelegate {
     private func triggerVoiceEndCommandStop() {
         voiceEndCommandState.didAutoStop = true
         voiceEndCommandState.lastDetectedCommand = false
-        VoxtLog.hotkey("Voice end command triggered stop after trailing silence.")
+        VoxtLog.hotkey(.init(.voiceStopDetected, action: .stop))
         endRecording()
     }
 
@@ -603,9 +603,8 @@ extension AppDelegate {
         )
         RecordingDiagnostics.shared.record(.init(.vadStarted, sessionID: activeRecordingSessionID,
             backend: .from(recordingVoiceActivityDebugStats.backend)))
-        VoxtLog.vad(
-            "Recording VAD debug start. mode=\(mode.rawValue), backend=\(recordingVoiceActivityDebugStats.backend.rawValue), useCase=\(useCase.rawValue)"
-        )
+        VoxtLog.model(.init(.modelConfigured, sessionID: activeRecordingSessionID,
+            backend: .from(recordingVoiceActivityDebugStats.backend)))
     }
 
     func flushPendingRecordingVoiceActivityFramesBeforeStop() async {

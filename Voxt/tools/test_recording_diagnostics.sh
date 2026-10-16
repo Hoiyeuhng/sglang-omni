@@ -5,6 +5,7 @@ scratch_directory="$(mktemp -d "${TMPDIR:-/tmp}/voxt-diagnostics-tests.XXXXXX")"
 trap 'rm -rf "$scratch_directory"' EXIT
 swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratch_directory/module-cache" \
   "$project_directory/Voxt/Core/Logging/RecordingDiagnosticRecorder.swift" \
+  "$project_directory/Voxt/Core/Logging/VoxtLogCategory.swift" \
   "$project_directory/Voxt/Core/Logging/VoxtLogFileStore.swift" \
   "$project_directory/Voxt/Core/Logging/VoxtLogExportStore.swift" \
   "$project_directory/Voxt/Core/Utilities/MainActorSync.swift" \
@@ -13,6 +14,7 @@ swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratc
 "$scratch_directory/diagnostics-tests"
 swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratch_directory/module-cache" \
   "$project_directory/Voxt/Core/Logging/RecordingDiagnosticRecorder.swift" \
+  "$project_directory/Voxt/Core/Logging/VoxtLogCategory.swift" \
   "$project_directory/Voxt/Core/Logging/RecordingDiagnostics.swift" \
   "$project_directory/Voxt/Core/Logging/VoxtLogFileStore.swift" \
   "$project_directory/Voxt/Core/Logging/VoxtRuntimeEnvironment.swift" \
@@ -23,6 +25,7 @@ swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratc
 "$scratch_directory/runtime-tests" "$project_directory/VoxtTests/Fixtures/Audio/qwen-official/qwen_audio_short_en.flac"
 swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratch_directory/module-cache" \
   "$project_directory/Voxt/Core/Logging/RecordingDiagnosticRecorder.swift" \
+  "$project_directory/Voxt/Core/Logging/VoxtLogCategory.swift" \
   "$project_directory/Voxt/Core/Logging/RecordingDiagnostics.swift" \
   "$project_directory/Voxt/Core/Logging/VoxtLogFileStore.swift" \
   "$project_directory/Voxt/Core/Logging/VoxtRuntimeEnvironment.swift" \
@@ -33,6 +36,7 @@ swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratc
 "$scratch_directory/vad-tests"
 swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratch_directory/module-cache" \
   "$project_directory/Voxt/Core/Logging/RecordingDiagnosticRecorder.swift" \
+  "$project_directory/Voxt/Core/Logging/VoxtLogCategory.swift" \
   "$project_directory/Voxt/Core/Utilities/TrackedTaskStore.swift" \
   "$project_directory/Voxt/Transcription/RemoteASR/RemoteASRPreviewController.swift" \
   "$project_directory/Voxt/Transcription/RemoteASR/RemoteASRTextSupport.swift" \

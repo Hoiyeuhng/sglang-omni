@@ -17,5 +17,9 @@ swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratc
   "$project_directory/Voxt/Core/Logging/VoxtLogCategory.swift" \
   "$project_directory/Voxt/Core/Logging/VoxtFileLogHandler.swift" \
   "$project_directory/Voxt/Core/Logging/VoxtOSLogHandler.swift" \
+  "$project_directory/Voxt/Core/Logging/VoxtMultiplexLogHandler.swift" \
+  "$project_directory/Voxt/Core/Logging/VoxtLogger.swift" \
+  "$project_directory/Voxt/Core/Logging/VoxtLogPrivacy.swift" \
+  "$project_directory/Voxt/Core/Logging/LoggingBootstrap.swift" \
   "$project_directory/tools/RecordingDiagnosticHandlerTests.swift" -o "$scratch_directory/handler-tests"
 "$scratch_directory/handler-tests"

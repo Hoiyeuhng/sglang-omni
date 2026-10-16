@@ -6,9 +6,7 @@ extension RemoteASRTranscriber {
         isRecording = false
         stopAliyunAudioCapture()
         guard !context.isClosed else { return }
-        VoxtLog.model(
-            "Aliyun fun stop requested. taskID=\(context.taskID), didStartAudioStream=\(context.didStartAudioStream), stopRequested=\(stopRequested)"
-        )
+        VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
 
         sendAliyunFunControl(action: "finish-task", through: context.ws, taskID: context.taskID) { error in
             Task { [responseState = context.responseState] in
@@ -22,9 +20,7 @@ extension RemoteASRTranscriber {
     }
 
     func stopAliyunQwenStreaming(_ context: AliyunQwenStreamingContext) {
-        VoxtLog.model(
-            "Aliyun qwen stop requested. kind=\(context.kind), didStartAudioStream=\(context.didStartAudioStream), stopRequested=\(stopRequested)"
-        )
+        VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isCurrentGeneration(context.generationID),
@@ -48,7 +44,7 @@ extension RemoteASRTranscriber {
     }
 
     private func sendAliyunQwenFinishEvent(_ context: AliyunQwenStreamingContext) {
-        VoxtLog.model("Aliyun qwen sending session.finish. kind=\(context.kind)")
+        VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
         let sendFinish: () -> Void = { [weak self] in
             guard let self else { return }
             self.sendAliyunQwenEvent(
@@ -125,9 +121,7 @@ extension RemoteASRTranscriber {
         )
         aliyunStreamingContext = context
         receiveAliyunFunMessages(context)
-        VoxtLog.model(
-            "Aliyun fun streaming socket ready. taskID=\(taskID), model=\(model), endpoint=\(endpoint), language=\(hintPayload.language ?? "auto"), languageHints=\(hintPayload.languageHints.joined(separator: ","))"
-        )
+        VoxtLog.model(.init(.modelRequestStarted, backend: .remote))
 
         sendAliyunFunControl(
             action: "run-task",
@@ -194,14 +188,11 @@ extension RemoteASRTranscriber {
         }
         let event = AliyunRemoteASRConfiguration.realtimeSocketEvent(from: object)
         let payload = object["payload"] as? [String: Any] ?? [:]
-        VoxtLog.model(
-            "Aliyun fun socket event received. event=\(event), didStartAudioStream=\(context.didStartAudioStream), stopRequested=\(stopRequested)"
-        )
 
         if event == "task-failed" || event == "error" {
             let errorText = AliyunRemoteASRConfiguration.realtimeSocketErrorMessage(from: object)
                 ?? "Aliyun fun ASR task failed."
-            VoxtLog.model("Aliyun fun error event. event=\(event), detail=\(errorText)")
+            VoxtLog.model(.init(.modelRequestFailed, backend: .remote, outcome: .failed, failure: .runtime))
             throw NSError(domain: "Voxt.RemoteASR", code: -42, userInfo: [NSLocalizedDescriptionKey: errorText])
         }
 
@@ -213,7 +204,7 @@ extension RemoteASRTranscriber {
             do {
                 try startAliyunAudioCapture(context: context)
                 context.didStartAudioStream = true
-                VoxtLog.model("Aliyun fun task-started acknowledged. audio capture started.")
+                VoxtLog.model(.init(.modelInputReady, backend: .remote))
             } catch {
                 throw error
             }
@@ -227,9 +218,6 @@ extension RemoteASRTranscriber {
             let partialText = (sentence["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let isSentenceEnd = sentence["sentence_end"] as? Bool ?? false
             if !partialText.isEmpty {
-                VoxtLog.model(
-                    "Aliyun fun result-generated. chars=\(partialText.count), sentenceEnd=\(isSentenceEnd)"
-                )
                 let merged = await context.responseState.updateWithSentence(partialText, isSentenceEnd: isSentenceEnd)
                 publishIntermediateTranscription(merged, isPartial: !isSentenceEnd, generationID: context.generationID)
             }
@@ -238,7 +226,7 @@ extension RemoteASRTranscriber {
 
         if event == "task-finished" {
             context.isClosed = true
-            VoxtLog.model("Aliyun fun task-finished received.")
+            VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
             await context.responseState.markTaskFinished()
             return
         }
@@ -283,7 +271,7 @@ extension RemoteASRTranscriber {
         try audioEngine.start()
         RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
-        VoxtLog.model("Aliyun fun audio capture started. sampleRate=\(Int(streamingInputSampleRate))")
+        VoxtLog.model(.init(.modelInputReady, backend: .remote))
     }
 
     func stopAliyunAudioCapture() {
@@ -360,9 +348,7 @@ extension RemoteASRTranscriber {
         )
         aliyunQwenStreamingContext = context
         receiveAliyunQwenMessages(context)
-        VoxtLog.model(
-            "Aliyun qwen realtime socket ready. kind=\(kind), model=\(model), endpoint=\(endpoint), language=\(hintPayload.language ?? "auto"), languageHints=\(hintPayload.languageHints.joined(separator: ","))"
-        )
+        VoxtLog.model(.init(.modelRequestStarted, backend: .remote))
         sendAliyunQwenSessionUpdate(through: ws, hintPayload: hintPayload, kind: kind) { error in
             Task { [responseState] in
                 if let error {
@@ -414,9 +400,6 @@ extension RemoteASRTranscriber {
             return
         }
         let type = (object["type"] as? String ?? "").lowercased()
-        VoxtLog.model(
-            "Aliyun qwen socket event received. type=\(type), kind=\(context.kind), didStartAudioStream=\(context.didStartAudioStream), stopRequested=\(stopRequested)"
-        )
         if type == "error" {
             let detail = (object["message"] as? String) ?? "Aliyun Qwen realtime ASR task failed."
             if await shouldIgnoreTrailingAliyunQwenGenericError(
@@ -424,11 +407,11 @@ extension RemoteASRTranscriber {
                 context: context
             ) {
                 context.isClosed = true
-                VoxtLog.model("Aliyun qwen trailing generic error ignored after stop. detail=\(detail)")
+                VoxtLog.model(.init(.modelResultReceived, backend: .remote))
                 await context.responseState.markSessionFinished()
                 return
             }
-            VoxtLog.model("Aliyun qwen error event. detail=\(detail)")
+            VoxtLog.model(.init(.modelRequestFailed, backend: .remote, outcome: .failed, failure: .runtime))
             VoxtLog.asr("Aliyun qwen realtime error packet received. detail=\(detail)", verbose: true)
             throw NSError(domain: "Voxt.RemoteASR", code: -46, userInfo: [NSLocalizedDescriptionKey: detail])
         }
@@ -440,7 +423,7 @@ extension RemoteASRTranscriber {
             }
             try startAliyunQwenAudioCapture(context: context)
             context.didStartAudioStream = true
-            VoxtLog.model("Aliyun qwen session.updated acknowledged. audio capture started. kind=\(context.kind)")
+            VoxtLog.model(.init(.modelInputReady, backend: .remote))
             return
         }
 
@@ -453,7 +436,6 @@ extension RemoteASRTranscriber {
         if type == "conversation.item.input_audio_transcription.text" {
             let partial = (object["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !partial.isEmpty {
-                VoxtLog.model("Aliyun qwen partial text received. chars=\(partial.count)")
                 let merged = await context.responseState.setPartial(partial)
                 publishIntermediateTranscription(merged, isPartial: true, generationID: context.generationID)
             }
@@ -463,7 +445,7 @@ extension RemoteASRTranscriber {
         if type == "conversation.item.input_audio_transcription.completed" {
             let final = (object["transcript"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !final.isEmpty {
-                VoxtLog.model("Aliyun qwen transcript completed. chars=\(final.count)")
+                VoxtLog.model(.init(.modelRequestCompleted, backend: .remote, outcome: .success, characterCount: final.count))
                 let merged = await context.responseState.commit(final)
                 publishIntermediateTranscription(merged, isPartial: false, generationID: context.generationID)
             }
@@ -472,7 +454,7 @@ extension RemoteASRTranscriber {
 
         if type == "session.finished" {
             context.isClosed = true
-            VoxtLog.model("Aliyun qwen session.finished received. kind=\(context.kind)")
+            VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
             await context.responseState.markSessionFinished()
             return
         }
@@ -516,7 +498,7 @@ extension RemoteASRTranscriber {
         try audioEngine.start()
         RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
-        VoxtLog.model("Aliyun qwen audio capture started. kind=\(context.kind), sampleRate=\(Int(streamingInputSampleRate))")
+        VoxtLog.model(.init(.modelInputReady, backend: .remote))
     }
 
     private func shouldIgnoreTrailingAliyunQwenGenericError(

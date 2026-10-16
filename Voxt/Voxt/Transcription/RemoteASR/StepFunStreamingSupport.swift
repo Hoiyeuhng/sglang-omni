@@ -27,7 +27,7 @@ extension RemoteASRTranscriber {
         var request = URLRequest(url: wsURL)
         request.timeoutInterval = 45
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        VoxtLog.model("StepFun realtime stream connect. endpoint=\(endpoint), model=\(model)")
+        VoxtLog.model(.init(.modelRequestStarted, backend: .remote))
 
         let managedSocket = VoxtNetworkSession.makeWebSocketTask(with: request)
         let ws = managedSocket.task
@@ -47,7 +47,7 @@ extension RemoteASRTranscriber {
         receiveStepFunMessages(context)
         try startStepFunAudioCapture(context: context)
         context.didStartAudioStream = true
-        VoxtLog.model("StepFun realtime audio capture started while waiting for session.updated.")
+        VoxtLog.model(.init(.modelInputReady, backend: .remote))
 
         let payload = StepFunPayloadSupport.sessionUpdatePayload(
             model: model,
@@ -64,7 +64,7 @@ extension RemoteASRTranscriber {
     }
 
     func stopStepFunStreaming(_ context: StepFunStreamingContext) {
-        VoxtLog.model("StepFun realtime stop requested. stopRequested=\(stopRequested)")
+        VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isCurrentGeneration(context.generationID),
@@ -86,9 +86,7 @@ extension RemoteASRTranscriber {
                 self.sendStepFunCommit(context)
             } else {
                 context.shouldCommitAfterSessionUpdate = true
-                VoxtLog.model(
-                    "StepFun realtime stop deferred until session.updated. bufferedBytes=\(context.pendingAudioByteCount)"
-                )
+                VoxtLog.model(.init(.modelConfigurationChanged, backend: .remote))
             }
         }
     }
@@ -146,9 +144,7 @@ extension RemoteASRTranscriber {
                 }
             }
             flushPendingStepFunAudio(context)
-            VoxtLog.model(
-                "StepFun session.updated acknowledged. didStartAudioStream=\(context.didStartAudioStream), pendingCommit=\(context.shouldCommitAfterSessionUpdate)"
-            )
+            VoxtLog.model(.init(.modelInputReady, backend: .remote))
             if context.shouldCommitAfterSessionUpdate {
                 context.shouldCommitAfterSessionUpdate = false
                 sendStepFunCommit(context)
@@ -267,9 +263,7 @@ extension RemoteASRTranscriber {
         context.pendingAudioByteCount = 0
 
         guard !chunks.isEmpty else { return }
-        VoxtLog.model(
-            "StepFun realtime flushing buffered startup audio. chunks=\(chunks.count), bytes=\(byteCount)"
-        )
+        VoxtLog.model(.init(.modelAudioBufferFlushed, backend: .remote, byteCount: UInt64(max(0, byteCount))))
         for chunk in chunks {
             sendStepFunAudioChunk(chunk, context: context)
         }

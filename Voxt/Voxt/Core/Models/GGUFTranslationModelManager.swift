@@ -640,9 +640,7 @@ final class GGUFTranslationModelManager: ObservableObject {
         guard !instructions.isEmpty || !prompt.isEmpty else { return request.fallbackText }
 
         let maxTokens = resolvedOutputTokenBudget(for: request)
-        VoxtLog.llmDebug(
-            "GGUF compiled request start. task=\(request.taskLabel), model=\(modelID.rawValue), instructionsChars=\(instructions.count), promptChars=\(prompt.count), inputChars=\(request.inputCharacterCount), outputBudget=\(maxTokens)"
-        )
+        VoxtLog.model(.init(.modelRequestStarted, backend: .gguf))
         let generated = try await runtime.generate(
             instructions: instructions,
             prompt: prompt,
@@ -651,9 +649,7 @@ final class GGUFTranslationModelManager: ObservableObject {
             onPartialText: onPartialText
         )
         let trimmed = generated.trimmingCharacters(in: .whitespacesAndNewlines)
-        VoxtLog.llmDebug(
-            "GGUF compiled request finished. task=\(request.taskLabel), model=\(modelID.rawValue), outputChars=\(trimmed.count), usedFallback=\(trimmed.isEmpty)"
-        )
+        VoxtLog.model(.init(.modelRequestCompleted, backend: .gguf, outcome: trimmed.isEmpty ? .empty : .success, characterCount: trimmed.count))
         return trimmed.isEmpty ? request.fallbackText : trimmed
     }
 

@@ -124,3 +124,7 @@ nonisolated final class RuntimeTestOutput: @unchecked Sendable {
     func append(_ line: String) { lock.lock(); lines.append(line); lock.unlock() }
     func snapshot() -> [String] { lock.lock(); defer { lock.unlock() }; return lines }
 }
+
+nonisolated enum VoxtLogger {
+    static func recordDiagnosticLine(_ line: String) { fatalError("Tests must inject the diagnostic sink") }
+}

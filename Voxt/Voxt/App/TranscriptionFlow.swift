@@ -174,9 +174,7 @@ extension AppDelegate {
                 VoxtLog.asrWarning("Enhancement provider remoteLLM unavailable: no configured model.")
                 return text
             }
-            VoxtLog.llmDebug(
-                "Remote LLM enhancement request. provider=\(context.provider.rawValue), model=\(context.configuration.model)"
-            )
+            VoxtLog.model(.init(.modelConfigurationChanged))
         }
 
         guard let plan = buildEnhancementExecutionPlan(

@@ -34,9 +34,30 @@ struct RecordingDiagnosticHandlerTests {
         fileStore.flush()
         precondition(!fileStore.latestLines(limit: 100).joined().contains("private"))
         precondition(!output.snapshot().joined().contains("private"))
-        print("PASS 6 real swift-log handler privacy assertions")
+        let logger = Logger(label: "Voxt.app") { label in
+            VoxtMultiplexLogHandler(label: label, category: .app, fileStore: fileStore,
+                osLogSink: { line, _ in output.append(line) })
+        }
+        let app = VoxtLogger(category: .app, logger: logger)
+        app.record(.init(.applicationStarted))
+        var evaluatedLegacyContent = false
+        app.warning({ evaluatedLegacyContent = true; return secret }(), metadata: ["credential": "private"])
+        app.info({ evaluatedLegacyContent = true; return secret }())
+        VoxtLogger.recordDiagnosticLine(try RecordingDiagnosticEvent(.sessionStarted, sessionID: UUID()).encodedLine(), logger: logger)
+        fileStore.flush()
+        let persisted = fileStore.latestLines(limit: 100)
+        precondition(persisted == output.snapshot())
+        precondition(!evaluatedLegacyContent)
+        let events = try persisted.map { try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data($0.utf8)) }
+        precondition(events.contains { $0.kind == .applicationStarted && $0.category == .app })
+        precondition(events.contains { $0.kind == .legacyDiagnostic && $0.severity == .warning && $0.category == .app })
+        precondition(events.last?.kind == .sessionStarted)
+        precondition(!persisted.joined().contains("private"))
+        print("PASS 12 real swift-log handler, legacy-warning and multiplex routing assertions")
     }
 }
+
+nonisolated enum VoxtLog { static let verboseEnabled = false }
 
 nonisolated final class HandlerTestOutput: @unchecked Sendable {
     private let lock = NSLock()

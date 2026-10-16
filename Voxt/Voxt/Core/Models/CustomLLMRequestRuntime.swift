@@ -73,20 +73,6 @@ enum CustomLLMRequestRuntime {
     }
 
 
-    static func startLogMessage(
-        for request: CustomLLMRequestPlan,
-        params: GenerateParameters,
-        behavior: CustomLLMModelBehavior
-    ) -> String {
-        var suffix = ""
-        if let mode = request.logMode {
-            suffix = ", mode=\(mode)"
-        }
-        let maxTokens = params.maxTokens.map(String.init) ?? "0"
-        let prefillStepSize = params.prefill.stepSize.map(String.init) ?? "0"
-        return "Custom LLM \(request.kind.logLabel) started. repo=\(request.repo), inputChars=\(request.inputCharacterCount), maxTokens=\(maxTokens), temperature=\(params.temperature), topP=\(params.topP), prefillStep=\(prefillStepSize)\(suffix), family=\(behavior.family.logLabel), thinkingDisabled=\(behavior.disablesThinking)"
-    }
-
     static func contentLogMessage(for request: CustomLLMRequestPlan) -> String {
         var lines = ["Custom LLM \(request.kind.logLabel) content. repo=\(request.repo)"]
         for section in request.contentLogSections {
@@ -127,10 +113,8 @@ enum CustomLLMRequestRuntime {
             history: history,
             additionalContext: additionalContext
         )
-        if additionalContext?["enable_thinking"] as? Bool == false {
-            VoxtLog.llmDebug("Custom LLM thinking disabled for repo=\(repo) using chat-template additionalContext.")
-        } else if additionalContext?["enable_thinking"] as? Bool == true {
-            VoxtLog.llmDebug("Custom LLM thinking enabled for repo=\(repo) using chat-template additionalContext.")
+        if let thinkingEnabled = additionalContext?["enable_thinking"] as? Bool {
+            VoxtLog.model(.init(.modelConfigured, backend: .mlx, thinkingEnabled: thinkingEnabled))
         }
         return session
     }

@@ -93,16 +93,18 @@ final class RemoteASRCompletionTests: XCTestCase {
         let finalContext = StepFunStreamingContext(session: session, ws: socket,
             responseState: StepFunResponseState(), generationID: transcriber.recordingGenerationID)
         transcriber.diagnosticSessionID = UUID()
+        diagnostics.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         defer { transcriber.resetIntermediateTranscriptionPublishing() }
 
         await transcriber.handleStepFunRealtimeMessage(
             #"{"type":"conversation.item.input_audio_transcription.completed","transcript":"final-only"}"#,
             context: finalContext)
-        XCTAssertTrue(output.lines.isEmpty)
+        XCTAssertTrue(output.callbackLines.isEmpty)
         XCTAssertEqual(transcriber.pendingIntermediateTranscription, "final-only")
         transcriber.resetIntermediateTranscriptionPublishing()
         transcriber.recordingGenerationID = UUID()
         transcriber.diagnosticSessionID = UUID()
+        diagnostics.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         transcriber.sessionAllowsRealtimeTextDisplay = false
         let partialContext = StepFunStreamingContext(session: session, ws: socket,
             responseState: StepFunResponseState(), generationID: transcriber.recordingGenerationID)
@@ -116,8 +118,8 @@ final class RemoteASRCompletionTests: XCTestCase {
             #"{"type":"conversation.item.input_audio_transcription.completed","transcript":"final"}"#,
             context: partialContext)
 
-        XCTAssertEqual(output.lines.count, 1)
-        let line = try XCTUnwrap(output.lines.first)
+        XCTAssertEqual(output.callbackLines.count, 1)
+        let line = try XCTUnwrap(output.callbackLines.first)
         let event = try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data(line.utf8))
         XCTAssertEqual(event.kind, .asrFirstPartial)
         XCTAssertEqual(event.sessionID, transcriber.diagnosticSessionID)
@@ -128,10 +130,11 @@ final class RemoteASRCompletionTests: XCTestCase {
 
         transcriber.recordingGenerationID = UUID()
         transcriber.diagnosticSessionID = UUID()
+        diagnostics.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         await transcriber.handleStepFunRealtimeMessage(
             #"{"type":"conversation.item.input_audio_transcription.delta","delta":"stale"}"#,
             context: partialContext)
-        XCTAssertEqual(output.lines.count, 1)
+        XCTAssertEqual(output.callbackLines.count, 1)
     }
 
     func testRemotePartialDiagnosticsIgnoreDisplayPreferenceAndDeduplicate() throws {
@@ -145,6 +148,7 @@ final class RemoteASRCompletionTests: XCTestCase {
         transcriber.diagnosticRecorderOverride = diagnostics
         let sessionID = UUID()
         transcriber.diagnosticSessionID = sessionID
+        diagnostics.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         transcriber.sessionAllowsRealtimeTextDisplay = false
         let generationID = transcriber.recordingGenerationID
         let sensitiveText = "synthetic transcript https://private.example/?token=secret /Users/test/private"
@@ -156,7 +160,7 @@ final class RemoteASRCompletionTests: XCTestCase {
         transcriber.publishIntermediateTranscription("final result", isPartial: false,
             generationID: generationID)
 
-        let events = try output.lines.map { try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data($0.utf8)) }
+        let events = try output.callbackLines.map { try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data($0.utf8)) }
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events.first?.kind, .asrFirstPartial)
         XCTAssertEqual(events.first?.sessionID, sessionID)
@@ -165,8 +169,8 @@ final class RemoteASRCompletionTests: XCTestCase {
         XCTAssertEqual(events.first?.count, sensitiveText.count)
         XCTAssertTrue(transcriber.transcribedText.isEmpty)
         XCTAssertNil(transcriber.pendingIntermediateTranscription)
-        XCTAssertFalse(output.lines.joined().contains("private"))
-        XCTAssertFalse(output.lines.joined().contains("secret"))
+        XCTAssertFalse(output.callbackLines.joined().contains("private"))
+        XCTAssertFalse(output.callbackLines.joined().contains("secret"))
     }
 
     func testFinalOnlyRemoteResponseDoesNotCreatePartialDiagnostic() {
@@ -179,12 +183,13 @@ final class RemoteASRCompletionTests: XCTestCase {
         let transcriber = RemoteASRTranscriber()
         transcriber.diagnosticRecorderOverride = diagnostics
         transcriber.diagnosticSessionID = UUID()
+        diagnostics.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         defer { transcriber.resetIntermediateTranscriptionPublishing() }
 
         transcriber.publishIntermediateTranscription("final result", isPartial: false,
             generationID: transcriber.recordingGenerationID)
 
-        XCTAssertTrue(output.lines.isEmpty)
+        XCTAssertTrue(output.callbackLines.isEmpty)
         XCTAssertEqual(transcriber.pendingIntermediateTranscription, "final result")
     }
 
@@ -198,6 +203,7 @@ final class RemoteASRCompletionTests: XCTestCase {
         let transcriber = RemoteASRTranscriber()
         transcriber.diagnosticRecorderOverride = diagnostics
         transcriber.diagnosticSessionID = UUID()
+        diagnostics.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         let task = Task { @MainActor in
             transcriber.publishIntermediateTranscription("cancelled", isPartial: true,
                 generationID: transcriber.recordingGenerationID)
@@ -205,7 +211,7 @@ final class RemoteASRCompletionTests: XCTestCase {
         task.cancel()
         await task.value
 
-        XCTAssertTrue(output.lines.isEmpty)
+        XCTAssertTrue(output.callbackLines.isEmpty)
         XCTAssertNil(transcriber.pendingIntermediateTranscription)
         XCTAssertTrue(transcriber.transcribedText.isEmpty)
     }
@@ -222,14 +228,15 @@ final class RemoteASRCompletionTests: XCTestCase {
         let oldGeneration = transcriber.recordingGenerationID
         transcriber.recordingGenerationID = UUID()
         transcriber.diagnosticSessionID = UUID()
+        diagnostics.record(.init(.sessionStarted, sessionID: transcriber.diagnosticSessionID))
         transcriber.sessionAllowsRealtimeTextDisplay = false
 
         transcriber.publishIntermediateTranscription("stale", isPartial: true,
             generationID: oldGeneration)
-        XCTAssertTrue(output.lines.isEmpty)
+        XCTAssertTrue(output.callbackLines.isEmpty)
         transcriber.publishIntermediateTranscription("current", isPartial: true,
             generationID: transcriber.recordingGenerationID)
-        let line = try XCTUnwrap(output.lines.first)
+        let line = try XCTUnwrap(output.callbackLines.first)
         let event = try JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data(line.utf8))
         XCTAssertEqual(event.sessionID, transcriber.diagnosticSessionID)
         XCTAssertEqual(event.requestID, transcriber.recordingGenerationID)
@@ -243,6 +250,11 @@ nonisolated private final class RemotePartialDiagnosticOutput: @unchecked Sendab
         lock.lock()
         defer { lock.unlock() }
         return storage
+    }
+    var callbackLines: [String] {
+        lines.filter { line in
+            (try? JSONDecoder().decode(RecordingDiagnosticEvent.self, from: Data(line.utf8)))?.kind != .sessionStarted
+        }
     }
     func append(_ line: String) {
         lock.lock()

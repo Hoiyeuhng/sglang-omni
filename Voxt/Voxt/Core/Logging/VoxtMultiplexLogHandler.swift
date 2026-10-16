@@ -31,9 +31,13 @@ struct VoxtMultiplexLogHandler: LogHandler {
     private var fileHandler: VoxtFileLogHandler
     private var osLogHandler: VoxtOSLogHandler
 
-    init(label: String, category: VoxtLogCategory) {
-        fileHandler = VoxtFileLogHandler(label: label, category: category)
-        osLogHandler = VoxtOSLogHandler(label: label, category: category)
+    init(
+        label: String, category: VoxtLogCategory,
+        fileStore: VoxtLogFileStore = .shared,
+        osLogSink: (@Sendable (String, Logger.Level) -> Void)? = nil
+    ) {
+        fileHandler = VoxtFileLogHandler(label: label, category: category, fileStore: fileStore)
+        osLogHandler = VoxtOSLogHandler(label: label, category: category, sink: osLogSink)
         logLevel = .info
     }
 

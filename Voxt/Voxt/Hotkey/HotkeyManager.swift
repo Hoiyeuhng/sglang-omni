@@ -172,7 +172,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
             }
             let configuration = runtimeConfiguration()
             VoxtLog.info("Starting hotkey manager.")
-            VoxtLog.hotkey(configuration.debugBindingsDescription)
+            VoxtLog.hotkey(.init(.hotkeyConfigured, count: routedBindings(configuration: configuration).count))
             guard preflightAndPromptPermissionsIfNeeded() else {
                 scheduleRetry()
                 return
@@ -194,7 +194,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
                 }
                 return self.handleEvent(type: type, event: event, generation: generation)
             }) else {
-                VoxtLog.error("Failed to create or attach event tap. \(permissionStatusText())")
+                VoxtLog.technical(.init(.hotkeyMonitorFailed, outcome: .failed, failure: .permission), category: .hotkey)
                 scheduleRetry()
                 return
             }
@@ -203,7 +203,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
             retryTask?.cancel()
             retryTask = nil
             retryID = nil
-            VoxtLog.hotkey("Hotkey event tap started successfully. location=\(installation.location.debugName), runLoop=dedicated")
+            VoxtLog.hotkey(.init(.hotkeyMonitorStarted))
         }
     }
 
@@ -217,7 +217,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
             let retired = eventTap
             eventTap = nil
             clearTransientState()
-            VoxtLog.hotkey("Hotkey manager stopped.")
+            VoxtLog.hotkey(.init(.hotkeyMonitorStopped))
             return retired
         }
         // Never wait on the callback thread while holding the routing lock.
@@ -226,7 +226,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
 
     func resetTransientState(reason: String) {
         withStateLock {
-            VoxtLog.hotkey("Hotkey transient state reset. reason=\(reason)", verbose: true)
+            VoxtLog.hotkey(.init(.hotkeyStateReset))
             clearTransientState()
         }
     }
@@ -237,7 +237,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
             cancelPendingTapFallback()
             pendingDoubleTapBindingID = nil
             pendingDoubleTapAt = nil
-            VoxtLog.hotkey("Hotkey pending double tap canceled. reason=\(reason)")
+            VoxtLog.hotkey(.init(.hotkeyCancelled))
         }
     }
 
@@ -260,7 +260,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
                 reason = "unknown"
             }
 
-            VoxtLog.hotkey("Hotkey transient state reset. reason=\(reason)", verbose: true)
+            VoxtLog.hotkey(.init(.hotkeyStateReset))
             clearTransientState()
 
             guard let tap = eventTap else {
@@ -292,7 +292,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
                 didPromptAccessibility = true
                 _ = AccessibilityPermissionManager.request(prompt: true)
             }
-            VoxtLog.hotkey("Hotkey preflight blocked. \(permissionStatusText())")
+            VoxtLog.hotkey(.init(.hotkeyIgnored, outcome: .failed, failure: .permission))
             return false
         }
 
@@ -1291,9 +1291,7 @@ nonisolated final class HotkeyManager: @unchecked Sendable {
                 self.pendingTapFallbackDoubleBindingID = nil
                 self.pendingDoubleTapBindingID = nil
                 self.pendingDoubleTapAt = nil
-                VoxtLog.hotkey(
-                    "Hotkey double-tap window expired; emitting matching tap fallback."
-                )
+                VoxtLog.hotkey(.init(.hotkeyFallback))
                 self.emitTapFallback(fallback)
             }
         }

@@ -78,7 +78,7 @@ enum VoxtSecureStorage {
         case errSecItemNotFound:
             return migrateLegacyValue(for: account)
         default:
-            VoxtLog.securityWarning("Data Protection Keychain read failed. account=\(account), status=\(status)")
+            VoxtLog.technical(.init(.credentialReadFailed, outcome: .failed, failure: .storage, errorCode: Int(status)), category: .security, level: .warning)
             return nil
         }
     }
@@ -195,9 +195,7 @@ enum VoxtSecureStorage {
         case errSecItemNotFound:
             break
         default:
-            VoxtLog.securityWarning(
-                "Data Protection Keychain presence check failed. account=\(account), status=\(protectedStatus)"
-            )
+            VoxtLog.technical(.init(.credentialReadFailed, outcome: .failed, failure: .storage, errorCode: Int(protectedStatus)), category: .security, level: .warning)
             return false
         }
 
@@ -210,7 +208,7 @@ enum VoxtSecureStorage {
         case errSecItemNotFound, errSecInteractionNotAllowed, errSecAuthFailed:
             return false
         default:
-            VoxtLog.securityWarning("Legacy Keychain presence check failed. account=\(account), status=\(legacyStatus)")
+            VoxtLog.technical(.init(.credentialReadFailed, outcome: .failed, failure: .storage, errorCode: Int(legacyStatus)), category: .security, level: .warning)
             return false
         }
     }
@@ -259,9 +257,7 @@ enum VoxtSecureStorage {
         case errSecItemNotFound:
             break
         default:
-            VoxtLog.securityWarning(
-                "Data Protection Keychain migration lookup failed. account=\(account), status=\(protectedStatus)"
-            )
+            VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage, errorCode: Int(protectedStatus)), category: .security, level: .warning)
             return .unavailable
         }
 
@@ -281,22 +277,20 @@ enum VoxtSecureStorage {
                 return .missing
             }
             guard set(value, for: account), protectedData(for: account) == legacyData else {
-                VoxtLog.securityWarning("Legacy Keychain migration could not be committed. account=\(account)")
+                VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage), category: .security, level: .warning)
                 return .unavailable
             }
             if !deleteLegacyValue(for: account, interactionAllowed: false) {
-                VoxtLog.securityWarning("Legacy Keychain migration cleanup failed. account=\(account)")
+                VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage), category: .security, level: .warning)
             }
             return .value(value)
         case errSecItemNotFound:
             return .missing
         case errSecInteractionNotAllowed, errSecAuthFailed:
-            VoxtLog.securityWarning(
-                "Legacy Keychain migration is temporarily unavailable. account=\(account), status=\(legacyStatus)"
-            )
+            VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage, errorCode: Int(legacyStatus)), category: .security, level: .warning)
             return .unavailable
         default:
-            VoxtLog.securityWarning("Legacy Keychain migration lookup failed. account=\(account), status=\(legacyStatus)")
+            VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage, errorCode: Int(legacyStatus)), category: .security, level: .warning)
             return .unavailable
         }
     }
@@ -321,9 +315,7 @@ enum VoxtSecureStorage {
             ]
             let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
             guard updateStatus == errSecSuccess else {
-                VoxtLog.securityWarning(
-                    "Data Protection Keychain update failed. account=\(account), status=\(updateStatus)"
-                )
+                VoxtLog.technical(.init(.credentialWriteFailed, outcome: .failed, failure: .storage, errorCode: Int(updateStatus)), category: .security, level: .warning)
                 return false
             }
         case errSecItemNotFound:
@@ -332,13 +324,11 @@ enum VoxtSecureStorage {
             item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             let addStatus = SecItemAdd(item as CFDictionary, nil)
             guard addStatus == errSecSuccess else {
-                VoxtLog.securityWarning("Data Protection Keychain add failed. account=\(account), status=\(addStatus)")
+                VoxtLog.technical(.init(.credentialWriteFailed, outcome: .failed, failure: .storage, errorCode: Int(addStatus)), category: .security, level: .warning)
                 return false
             }
         default:
-            VoxtLog.securityWarning(
-                "Data Protection Keychain lookup before write failed. account=\(account), status=\(status)"
-            )
+            VoxtLog.technical(.init(.credentialReadFailed, outcome: .failed, failure: .storage, errorCode: Int(status)), category: .security, level: .warning)
             return false
         }
 
@@ -443,34 +433,32 @@ enum VoxtSecureStorage {
             guard let legacyData = item as? Data,
                   let value = String(data: legacyData, encoding: .utf8)
             else {
-                VoxtLog.securityWarning("Legacy Keychain value is not valid UTF-8. account=\(account)")
+                VoxtLog.technical(.init(.credentialReadFailed, outcome: .failed, failure: .storage), category: .security, level: .warning)
                 return nil
             }
             guard set(value, for: account) else {
-                VoxtLog.securityWarning("Legacy Keychain migration write failed. account=\(account)")
+                VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage), category: .security, level: .warning)
                 cache(value, for: account)
                 return value
             }
             guard protectedData(for: account) == legacyData else {
                 removeCachedValue(for: account)
-                VoxtLog.securityWarning("Legacy Keychain migration verification failed. account=\(account)")
+                VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage), category: .security, level: .warning)
                 cache(value, for: account)
                 return value
             }
 
             if !deleteLegacyValue(for: account, interactionAllowed: false) {
-                VoxtLog.securityWarning("Legacy Keychain migration cleanup failed. account=\(account)")
+                VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage), category: .security, level: .warning)
             }
             return value
         case errSecItemNotFound:
             return nil
         case errSecInteractionNotAllowed, errSecAuthFailed:
-            VoxtLog.securityWarning(
-                "Legacy Keychain migration requires user interaction; migration deferred. account=\(account), status=\(status)"
-            )
+            VoxtLog.technical(.init(.credentialMigrationFailed, outcome: .failed, failure: .storage, errorCode: Int(status)), category: .security, level: .warning)
             return nil
         default:
-            VoxtLog.securityWarning("Legacy Keychain read failed. account=\(account), status=\(status)")
+            VoxtLog.technical(.init(.credentialReadFailed, outcome: .failed, failure: .storage, errorCode: Int(status)), category: .security, level: .warning)
             return nil
         }
     }
@@ -490,7 +478,7 @@ enum VoxtSecureStorage {
     nonisolated private static func deleteProtectedValue(for account: String) -> Bool {
         let status = SecItemDelete(protectedQuery(for: account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
-            VoxtLog.securityWarning("Data Protection Keychain delete failed. account=\(account), status=\(status)")
+            VoxtLog.technical(.init(.credentialDeleteFailed, outcome: .failed, failure: .storage, errorCode: Int(status)), category: .security, level: .warning)
             return false
         }
         return true
@@ -501,7 +489,7 @@ enum VoxtSecureStorage {
             legacyQuery(for: account, interactionAllowed: interactionAllowed) as CFDictionary
         )
         guard status == errSecSuccess || status == errSecItemNotFound else {
-            VoxtLog.securityWarning("Legacy Keychain delete failed. account=\(account), status=\(status)")
+            VoxtLog.technical(.init(.credentialDeleteFailed, outcome: .failed, failure: .storage, errorCode: Int(status)), category: .security, level: .warning)
             return false
         }
         return true

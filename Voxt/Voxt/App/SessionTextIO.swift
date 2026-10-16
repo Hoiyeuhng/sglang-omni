@@ -63,10 +63,8 @@ extension AppDelegate {
         )
         cacheLatestInjectableOutputText(context.outputText)
         logUnicodeReplacementCharactersIfNeeded(
-            stage: "commit",
             inputText: text,
-            outputText: context.outputText,
-            outputMode: sessionOutputMode
+            outputText: context.outputText
         )
 
         VoxtLog.input(
@@ -88,10 +86,8 @@ extension AppDelegate {
     }
 
     private func logUnicodeReplacementCharactersIfNeeded(
-        stage: String,
         inputText: String,
-        outputText: String,
-        outputMode: SessionOutputMode
+        outputText: String
     ) {
         let marker = Character("\u{FFFD}")
         let inputCount = inputText.reduce(into: 0) { count, character in
@@ -102,9 +98,7 @@ extension AppDelegate {
         }
         guard inputCount > 0 || outputCount > 0 else { return }
 
-        VoxtLog.llmDebug(
-            "Unicode replacement characters detected before delivery. stage=\(stage), outputMode=\(RecordingSessionSupport.outputLabel(for: outputMode)), inputReplacementChars=\(inputCount), outputReplacementChars=\(outputCount), inputChars=\(inputText.count), outputChars=\(outputText.count)"
-        )
+        VoxtLog.model(.init(.outputEncodingIssue, count: inputCount, characterCount: outputCount))
     }
 
     private func beginOverlayOutputDelivery() {

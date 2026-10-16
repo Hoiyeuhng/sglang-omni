@@ -822,7 +822,7 @@ final class VoxtNoteStore: ObservableObject {
             context.rollback()
             migrationErrorMessage = error.localizedDescription
             lastErrorMessage = error.localizedDescription
-            VoxtLog.historyWarning("Legacy Voxt note migration failed. error=\(error.localizedDescription)")
+            VoxtLog.technical(.init(.noteWriteFailed, outcome: .failed, failure: .classify(error)), category: .persistence)
         }
     }
 
@@ -856,7 +856,7 @@ final class VoxtNoteStore: ObservableObject {
         availability = .unavailable(message: message)
         detachStorage(clearPublishedItems: true)
         lastErrorMessage = message
-        VoxtLog.historyWarning("Voxt note storage unavailable. error=\(message)")
+        VoxtLog.technical(.init(.noteWriteFailed, outcome: .failed, failure: .storage), category: .persistence)
     }
 
     private func archivePersistentStoreFamily(at storeURL: URL) throws -> URL? {
