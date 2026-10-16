@@ -51,7 +51,12 @@ extension AppDelegate {
         operation: @escaping @MainActor () async -> Void
     ) {
         guard !isApplicationTerminating, isCurrentLLMRequest(requestID) else { return }
-        llmRequests.run(requestID, operation: operation)
+        let diagnosticSessionID = isSessionActive ? activeRecordingSessionID : nil
+        llmRequests.run(requestID) {
+            await RecordingDiagnosticContext.$sessionID.withValue(diagnosticSessionID) {
+                await operation()
+            }
+        }
     }
 
     @discardableResult

@@ -38,3 +38,49 @@ final class RemoteASRPreviewController {
 
     func waitForIdle() async { await tasks.waitForAll() }
 }
+
+@MainActor
+extension RemoteASRTranscriber {
+    func publishIntermediateTranscription(
+        _ text: String,
+        isPartial: Bool,
+        generationID: UUID
+    ) {
+        guard isCurrentGeneration(generationID), !Task.isCancelled else { return }
+        if isPartial {
+            recordDiagnosticPartial(text, generationID: generationID)
+        }
+        guard sessionAllowsRealtimeTextDisplay else { return }
+        let visibleText = RecordingSessionSupport.textAfterSuppressingPromptEcho(text)
+        guard !visibleText.isEmpty else {
+            VoxtLog.asrWarning("Remote ASR intermediate transcription suppressed because it matched prompt guidance.")
+            return
+        }
+        pendingIntermediateTranscription = visibleText
+        guard intermediateTranscriptionPublishTask == nil else { return }
+        intermediateTranscriptionPublishTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled, let self, self.isCurrentGeneration(generationID) else { return }
+            let pending = self.pendingIntermediateTranscription
+            self.pendingIntermediateTranscription = nil
+            self.intermediateTranscriptionPublishTask = nil
+            if let pending {
+                self.transcribedText = pending
+            }
+        }
+    }
+
+    func recordDiagnosticPartial(_ text: String, generationID: UUID) {
+        guard isCurrentGeneration(generationID), !Task.isCancelled, let diagnosticSessionID else { return }
+        let recorder = diagnosticRecorderOverride ?? RecordingDiagnostics.shared
+        guard recorder.isEnabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        recorder.record(.init(.asrFirstPartial, sessionID: diagnosticSessionID,
+                              requestID: generationID, backend: .remote, count: text.count))
+    }
+
+    func resetIntermediateTranscriptionPublishing() {
+        intermediateTranscriptionPublishTask?.cancel()
+        intermediateTranscriptionPublishTask = nil
+        pendingIntermediateTranscription = nil
+    }
+}

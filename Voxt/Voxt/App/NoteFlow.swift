@@ -52,7 +52,7 @@ extension AppDelegate {
         }
 
         if ignoresSelectedText {
-            VoxtLog.hotkey("Note hotkey bypassing selected-text flow for Obsidian.")
+            VoxtLog.hotkey(.init(.hotkeyDispatched, action: .note))
         }
 
         let action = NoteHotkeyActionResolver.resolve(
@@ -80,18 +80,18 @@ extension AppDelegate {
                 return
             }
             showFloatingToast(AppLocalization.localizedString("Note created."))
-            VoxtLog.hotkey("Note hotkey captured selected text. characters=\(selectedText.count)")
+            VoxtLog.hotkey(.init(.hotkeyDispatched, action: .note))
         case .stopRecordingAsNote:
             transcriptionCaptureSessionMode = .noteSession
             configureTranscriptionCapturePipelineForCurrentSession()
-            VoxtLog.hotkey("Note hotkey ending active transcription as a note.")
+            VoxtLog.hotkey(.init(.hotkeyDispatched, action: .note))
             endRecording()
         case .startNoteRecording:
             noteWindowManager.hide()
-            VoxtLog.hotkey("Note hotkey starting note transcription from visible panel.")
+            VoxtLog.hotkey(.init(.hotkeyDispatched, action: .note))
             beginRecording(outputMode: .transcription, transcriptionCaptureMode: .noteSession)
         case .revealPanel:
-            VoxtLog.hotkey("Note hotkey revealing note panel.")
+            VoxtLog.hotkey(.init(.hotkeyDispatched, action: .note))
             noteWindowManager.show()
         case .ignore:
             break

@@ -11,11 +11,19 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
     final class AudioSampleStore {
         private let lock = NSLock()
         var samples: [Float] = []
+        private var callbackCount = 0
 
         func append(_ newSamples: [Float]) {
             lock.lock()
             defer { lock.unlock() }
+            callbackCount += 1
             samples.append(contentsOf: newSamples)
+        }
+
+        func metrics() -> (callbacks: Int, samples: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (callbackCount, samples.count)
         }
 
         func snapshot() -> [Float] {
@@ -27,10 +35,13 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
         func clear() {
             lock.lock()
             defer { lock.unlock() }
+            callbackCount = 0
             samples.removeAll(keepingCapacity: false)
         }
     }
 
+    var diagnosticSessionID: UUID?
+    var diagnosticRecorderOverride: RecordingDiagnosticRecorder?
     @Published var isRecording = false
     @Published var audioLevel: Float = 0.0
     @Published var transcribedText = ""
@@ -67,8 +78,8 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
     var preferredInputDeviceID: AudioDeviceID?
     private let streamingFinalWaitTimeout: TimeInterval = 20
     private var lastPresentedRuntimeErrorMessage = ""
-    private var pendingIntermediateTranscription: String?
-    private var intermediateTranscriptionPublishTask: Task<Void, Never>?
+    var pendingIntermediateTranscription: String?
+    var intermediateTranscriptionPublishTask: Task<Void, Never>?
     var recordingGenerationID = UUID()
     var doubaoCaptureStartupWatchdogTask: Task<Void, Never>?
     var didRetryDoubaoCaptureStartup = false
@@ -165,34 +176,31 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
         let resolvedModel = configuredModel.isEmpty
             ? provider.suggestedModel
             : configuredModel
-        let resolvedEndpoint = configuration.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let routeSummary: String
+        let diagnosticRoute: RecordingDiagnosticEvent.Route
         if provider == .aliyunBailianASR {
             if let kind = RemoteASREndpointSupport.aliyunQwenRealtimeSessionKind(for: resolvedModel) {
-                routeSummary = switch kind {
+                diagnosticRoute = switch kind {
                 case .qwenASR:
-                    "aliyun-qwen-realtime"
+                    .aliyunQwenRealtime
                 case .omniASR:
-                    "aliyun-omni-realtime"
+                    .aliyunOmniRealtime
                 }
             } else if RemoteASREndpointSupport.isAliyunFunRealtimeModel(resolvedModel) {
-                routeSummary = "aliyun-fun-realtime"
+                diagnosticRoute = .aliyunFunRealtime
             } else if RemoteASREndpointSupport.isAliyunFileTranscriptionModel(resolvedModel) {
-                routeSummary = "aliyun-file"
+                diagnosticRoute = .aliyunFile
             } else {
-                routeSummary = "aliyun-unknown"
+                diagnosticRoute = .aliyunUnsupported
             }
         } else if provider == .stepFunASR,
                   RemoteASRRealtimeSupport.isStepFunRealtimeModel(resolvedModel) {
-            routeSummary = "stepfun-realtime"
+            diagnosticRoute = .stepFunRealtime
         } else if provider == .googleGeminiASR {
-            routeSummary = "gemini-live"
+            diagnosticRoute = .geminiLive
         } else {
-            routeSummary = provider.rawValue
+            diagnosticRoute = .providerDefault
         }
-        VoxtLog.model(
-            "Remote ASR recording requested. provider=\(provider.rawValue), model=\(resolvedModel), endpoint=\(resolvedEndpoint.isEmpty ? "<default>" : resolvedEndpoint), route=\(routeSummary), realtimeDisplay=\(sessionAllowsRealtimeTextDisplay), pseudoRealtime=\(configuration.openAIChunkPseudoRealtimeEnabled), language=\(hintPayload.language ?? "auto"), languageHints=\(hintPayload.languageHints.count), promptChars=\(hintPayload.prompt?.count ?? 0)"
-        )
+        VoxtLog.model(.init(.modelConfigured, backend: .remote, route: diagnosticRoute))
 
         if provider == .doubaoASR {
             do {
@@ -283,6 +291,11 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
             stepFunStreamingContext != nil ||
             geminiLiveStreamingContext != nil
         guard isRecording || hasPendingRealtimeSession || recorder != nil else { return }
+        let metrics = hasPendingRealtimeSession ? sampleStore.metrics() : nil
+        RecordingDiagnostics.shared.record(.init(.captureSummary, sessionID: diagnosticSessionID, backend: .remote,
+            count: metrics?.callbacks, sampleCount: metrics?.samples,
+            droppedChunkCount: stepFunStreamingContext?.droppedChunkCount ?? geminiLiveStreamingContext?.droppedChunkCount,
+            droppedByteCount: stepFunStreamingContext?.droppedByteCount ?? geminiLiveStreamingContext?.droppedByteCount))
         stopRequested = true
         let generationID = recordingGenerationID
 
@@ -407,6 +420,7 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
                 return
             }
             do {
+                self.recordDiagnosticAudioSubmission(generationID: generationID)
                 let result = try await self.transcribeRecordedAudio(
                     fileURL: uploadPreparation.uploadFileURL,
                     provider: provider,
@@ -634,6 +648,7 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
         }
         self.recorder = recorder
         self.recordingFileURL = fileURL
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         self.isRecording = true
         startMeteringTimer()
     }
@@ -842,7 +857,9 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
             transcribe: { [weak self] in
                 await self?.runOpenAIPreviewPass(configuration: configuration)
             },
-            publish: { [weak self] in self?.publishIntermediateTranscription($0) }
+            publish: { [weak self] in
+                self?.publishIntermediateTranscription($0, isPartial: false, generationID: generationID)
+            }
         )
     }
 
@@ -930,31 +947,9 @@ class RemoteASRTranscriber: NSObject, ObservableObject, TranscriberProtocol {
         }
     }
 
-    func publishIntermediateTranscription(_ text: String) {
-        guard sessionAllowsRealtimeTextDisplay else { return }
-        let visibleText = RecordingSessionSupport.textAfterSuppressingPromptEcho(text)
-        guard !visibleText.isEmpty else {
-            VoxtLog.asrWarning("Remote ASR intermediate transcription suppressed because it matched prompt guidance.")
-            return
-        }
-        pendingIntermediateTranscription = visibleText
-        guard intermediateTranscriptionPublishTask == nil else { return }
-        intermediateTranscriptionPublishTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(50))
-            guard !Task.isCancelled, let self else { return }
-            let pending = self.pendingIntermediateTranscription
-            self.pendingIntermediateTranscription = nil
-            self.intermediateTranscriptionPublishTask = nil
-            if let pending {
-                self.transcribedText = pending
-            }
-        }
-    }
-
-    private func resetIntermediateTranscriptionPublishing() {
-        intermediateTranscriptionPublishTask?.cancel()
-        intermediateTranscriptionPublishTask = nil
-        pendingIntermediateTranscription = nil
+    func recordDiagnosticAudioSubmission(generationID: UUID) {
+        guard isCurrentGeneration(generationID), let diagnosticSessionID else { return }
+        RecordingDiagnostics.shared.record(.init(.asrReceivingAudio, sessionID: diagnosticSessionID, backend: .remote))
     }
 
     private nonisolated static func telemetrySeconds(_ value: TimeInterval?) -> String {

@@ -85,8 +85,10 @@ extension AppDelegate {
                 self.interactionSoundPlayer.playEnd()
             }
         }
+        RecordingDiagnostics.shared.record(.init(.sessionFinished, sessionID: sessionID, outcome: .success))
         resetEndedSessionState()
         releaseResidualRecordingResources(reason: "session-end-pipeline", preservePendingHistoryAudio: true)
+        RecordingDiagnostics.shared.record(.init(.sessionCleanup, sessionID: sessionID))
         scheduleDeepIdleMemoryReclamation()
         VoxtLog.asr(
             "Session end pipeline completed. sessionID=\(sessionID.uuidString), overlayVisible=\(overlayWindow.isVisible)",

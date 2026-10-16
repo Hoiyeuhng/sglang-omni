@@ -12,11 +12,21 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
     private final class AudioSampleStore {
         private let lock = NSLock()
         private var samples: [Float] = []
+        private var callbackCount = 0
 
-        func append(_ newSamples: [Float]) {
+        @discardableResult
+        func append(_ newSamples: [Float]) -> Bool {
             lock.lock()
             defer { lock.unlock() }
+            callbackCount += 1
             samples.append(contentsOf: newSamples)
+            return callbackCount == 1
+        }
+
+        func metrics() -> (callbacks: Int, samples: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (callbackCount, samples.count)
         }
 
         func snapshot() -> [Float] {
@@ -28,10 +38,14 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
         func clear() {
             lock.lock()
             defer { lock.unlock() }
+            callbackCount = 0
             samples.removeAll(keepingCapacity: false)
         }
     }
 
+    var diagnosticSessionID: UUID?
+    private let diagnostics: RecordingDiagnosticRecorder
+    private(set) var recognitionGenerationID = UUID()
     @Published var isRecording = false
     @Published var audioLevel: Float = 0.0
     @Published var transcribedText = ""
@@ -41,7 +55,8 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
     private var speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
-    private let audioEngine = AVAudioEngine()
+    private lazy var audioEngine = AVAudioEngine()
+    private var didPrepareCapture = false
     private let sampleStore = AudioSampleStore()
     private var preferredInputDeviceID: AudioDeviceID?
     private var inputSampleRate: Double = 16000
@@ -49,13 +64,15 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
 
     private var finalizeTimeoutTask: Task<Void, Never>?
     private var hasDeliveredFinalResult = false
+    private var latestRecognizedText = ""
     var sessionReportsPartialResultsOverride: Bool?
 
     var onTranscriptionFinished: ((String) -> Void)?
     private(set) var lastStartFailureMessage: String?
 
-    init() {
-        refreshSpeechRecognizer(localeIdentifier: nil)
+    init(diagnostics: RecordingDiagnosticRecorder = RecordingDiagnostics.shared, initializeRecognizer: Bool = true) {
+        self.diagnostics = diagnostics
+        if initializeRecognizer { refreshSpeechRecognizer(localeIdentifier: nil) }
     }
 
     func setPreferredInputDevice(_ deviceID: AudioDeviceID?) {
@@ -111,6 +128,7 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
         transcribedText = ""
         audioLevel = 0
         hasDeliveredFinalResult = false
+        latestRecognizedText = ""
 
         do {
             try startSpeechRecognition(recognizer: recognizer, settings: settings)
@@ -119,6 +137,7 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
         } catch {
             lastStartFailureMessage = AppLocalization.localizedString("Direct Dictation failed to start recording.")
             VoxtLog.asrError("Speech transcriber start recording failed: \(error)")
+            stopAudioCapture()
             cleanupSessionState()
         }
     }
@@ -127,11 +146,13 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
         guard isRecording else { return }
 
         stopAudioCapture()
+        let metrics = sampleStore.metrics()
+        diagnostics.record(.init(.captureSummary, sessionID: diagnosticSessionID, backend: .dictation, count: metrics.callbacks, sampleCount: metrics.samples))
         isRecording = false
 
         finalizeTimeoutTask?.cancel()
         finalizeTimeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(900))
+            do { try await Task.sleep(for: .milliseconds(900)) } catch { return }
             await MainActor.run {
                 self?.forceFinalizeIfNeeded()
             }
@@ -139,6 +160,11 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
     }
 
     func shutdownForApplicationTermination() {
+        if !hasDeliveredFinalResult, didPrepareCapture {
+            diagnostics.record(.init(.asrCompleted, sessionID: diagnosticSessionID, backend: .dictation,
+                outcome: .cancelled, failure: .cancelled))
+        }
+        recognitionGenerationID = UUID()
         stopAudioCapture()
         cleanupSessionState()
         removeCompletedAudioArchiveIfNeeded()
@@ -171,6 +197,7 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
     }
 
     private func cleanupSessionState() {
+        recognitionGenerationID = UUID()
         finalizeTimeoutTask?.cancel()
         finalizeTimeoutTask = nil
         isRecording = false
@@ -179,34 +206,67 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
     }
 
     private func stopAudioCapture() {
+        guard didPrepareCapture else { return }
         if audioEngine.isRunning {
             audioEngine.stop()
         }
         audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
+        didPrepareCapture = false
     }
 
-    private func forceFinalizeIfNeeded() {
+    func forceFinalizeIfNeeded() {
         guard !hasDeliveredFinalResult else { return }
-        finishRecognition(with: transcribedText)
+        finishRecognition(with: latestRecognizedText, outcome: .failed, failure: .timeout)
     }
 
-    private func finishRecognition(with text: String) {
+    private func finishRecognition(
+        with text: String,
+        outcome: RecordingDiagnosticEvent.Outcome,
+        failure: RecordingDiagnosticEvent.Failure = .none
+    ) {
         guard !hasDeliveredFinalResult else { return }
         hasDeliveredFinalResult = true
 
         finalizeTimeoutTask?.cancel()
         finalizeTimeoutTask = nil
+        diagnostics.record(.init(.asrCompleted, sessionID: diagnosticSessionID, backend: .dictation,
+            outcome: outcome, failure: failure, count: text.count))
         clearRecognitionPipeline(cancelTask: true)
         stageCompletedAudioArchive()
 
         onTranscriptionFinished?(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    func handleRecognitionUpdate(text: String?, isFinal: Bool, error: Error?, generationID: UUID) {
+        guard generationID == recognitionGenerationID, !hasDeliveredFinalResult else { return }
+        if let text { latestRecognizedText = text }
+        if let error {
+            let speechError = error as NSError
+            if speechError.domain == "kAFAssistantErrorDomain", speechError.code == 1110 {
+                finishRecognition(with: "", outcome: .empty)
+            } else {
+                let classified = RecordingDiagnosticEvent.Failure.classify(error)
+                let failure: RecordingDiagnosticEvent.Failure = speechError.domain == "kAFAssistantErrorDomain" && speechError.code == 216
+                    ? .cancelled : (classified == .unknown ? .runtime : classified)
+                finishRecognition(with: failure == .cancelled ? "" : latestRecognizedText,
+                    outcome: failure == .cancelled ? .cancelled : .failed, failure: failure)
+            }
+        } else if let text {
+            if !isFinal, !text.isEmpty {
+                diagnostics.record(.init(.asrFirstPartial, sessionID: diagnosticSessionID, backend: .dictation, count: text.count))
+            }
+            if (sessionReportsPartialResultsOverride ?? true) || isFinal { transcribedText = text }
+            if isFinal { finishRecognition(with: text, outcome: text.isEmpty ? .empty : .success) }
+        }
+    }
+
     private func startSpeechRecognition(
         recognizer: SFSpeechRecognizer,
         settings: ResolvedDictationSettings
     ) throws {
+        recognitionGenerationID = UUID()
+        let generationID = recognitionGenerationID
         clearRecognitionPipeline(cancelTask: true)
 
         if audioEngine.isRunning {
@@ -242,12 +302,21 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
             )
         }
 
+        let diagnosticSessionID = diagnosticSessionID
+        let diagnostics = diagnostics
+        didPrepareCapture = true
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] buffer, _ in
             guard let self else { return }
             self.recognitionRequest?.append(buffer)
 
             if let samples = AudioLevelMeter.monoSamples(from: buffer), !samples.isEmpty {
-                self.sampleStore.append(samples)
+                let firstAudio = self.sampleStore.append(samples)
+                if firstAudio {
+                    Task { @MainActor in
+                        diagnostics.record(.init(.asrReceivingAudio, sessionID: diagnosticSessionID,
+                            backend: .dictation, sampleCount: samples.count))
+                    }
+                }
             }
 
             guard let channelData = buffer.floatChannelData?[0] else { return }
@@ -270,35 +339,10 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
         try audioEngine.start()
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self else { return }
-
-            if let result {
-                let text = result.bestTranscription.formattedString
-                Task { @MainActor in
-                    let allowsPartial = self.sessionReportsPartialResultsOverride ?? true
-                    if allowsPartial || result.isFinal {
-                        self.transcribedText = text
-                    }
-                    if result.isFinal {
-                        self.finishRecognition(with: text)
-                    }
-                }
-            }
-
-            if let error {
-                let nsError = error as NSError
-                if nsError.domain != "kAFAssistantErrorDomain" || (nsError.code != 216 && nsError.code != 1110) {
-                    VoxtLog.asrError("Speech recognition error: \(error)")
-                }
-
-                Task { @MainActor in
-                    if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110 {
-                        self.finishRecognition(with: "")
-                        return
-                    }
-
-                    self.finishRecognition(with: self.transcribedText)
-                }
+            let text = result?.bestTranscription.formattedString
+            let isFinal = result?.isFinal ?? false
+            Task { @MainActor in
+                self?.handleRecognitionUpdate(text: text, isFinal: isFinal, error: error, generationID: generationID)
             }
         }
     }

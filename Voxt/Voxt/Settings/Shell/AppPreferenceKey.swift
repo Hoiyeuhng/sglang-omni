@@ -187,6 +187,7 @@ enum AppPreferenceKey {
     static let autoCheckForUpdates = "autoCheckForUpdates"
     static let betaUpdatesEnabled = "betaUpdatesEnabled"
     nonisolated static let hotkeyDebugLoggingEnabled = "hotkeyDebugLoggingEnabled"
+    static let recordingDiagnosticsEnabled = RecordingDiagnosticRecorder.preferenceKey
     nonisolated static let llmDebugLoggingEnabled = "llmDebugLoggingEnabled"
     static let llmDebugCustomPrompt = "llmDebugCustomPrompt"
     static let llmDebugPresetPromptOverrides = "llmDebugPresetPromptOverrides"

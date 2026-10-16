@@ -718,7 +718,7 @@ final class TranscriptionHistoryStore: ObservableObject {
             try repository.upsert(entry)
             didPersist = true
         } catch {
-            VoxtLog.historyWarning("History entry persistence failed. entryID=\(entry.id.uuidString), error=\(error.localizedDescription)")
+            VoxtLog.technical(.init(.historyWriteFailed, outcome: .failed, failure: .classify(error)), category: .history)
         }
         if interruptedReload, didPersist {
             reloadAsync()

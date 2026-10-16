@@ -22,7 +22,7 @@ extension AppDelegate {
 
         let stripped = voiceEndCommandState.pendingStrippedText ?? removingTrailingVoiceEndCommand(from: rawText)
         if stripped != rawText {
-            VoxtLog.hotkey("Voice end command removed from final transcription output.")
+            VoxtLog.hotkey(.init(.voiceStopCleared, action: .stop))
         }
         return stripped
     }
@@ -43,7 +43,7 @@ extension AppDelegate {
         let hasTrailingCommand = trailingVoiceEndCommandRange(in: overlayState.transcribedText) != nil
         if !hasTrailingCommand {
             if voiceEndCommandState.lastDetectedCommand {
-                VoxtLog.hotkey("Voice end command candidate cleared because transcript tail changed.")
+                VoxtLog.hotkey(.init(.voiceStopCleared, action: .stop))
             }
             voiceEndCommandState.lastDetectedCommand = false
             voiceEndCommandState.pendingStrippedText = nil
@@ -51,7 +51,7 @@ extension AppDelegate {
         }
 
         if !voiceEndCommandState.lastDetectedCommand {
-            VoxtLog.hotkey("Voice end command detected at transcript tail. awaitingSilenceSec=\(voiceEndCommandState.silenceDuration)")
+            VoxtLog.hotkey(.init(.voiceStopDetected, action: .stop))
         }
         voiceEndCommandState.lastDetectedCommand = true
         voiceEndCommandState.pendingStrippedText = removingTrailingVoiceEndCommand(from: overlayState.transcribedText)

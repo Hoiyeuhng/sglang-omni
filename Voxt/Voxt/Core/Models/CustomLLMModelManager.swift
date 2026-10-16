@@ -2,6 +2,7 @@
 // Provides Custom LLMModel Manager for model catalog and storage support.
 
 import Foundation
+import Logging
 import HuggingFace
 import Combine
 import MLX
@@ -192,7 +193,7 @@ class CustomLLMModelManager: ObservableObject {
                 )
             }
 
-            let overallStartedAt = Date()
+            let overallStartedAt = DispatchTime.now().uptimeNanoseconds
             let containerSnapshot = try await profiledContainer(for: request.repo)
             let container = containerSnapshot.container
             let behavior = CustomLLMModelBehaviorResolver.behavior(for: request.repo)
@@ -208,9 +209,9 @@ class CustomLLMModelManager: ObservableObject {
             let params = CustomLLMRequestRuntime.generationParameters(for: request, behavior: behavior, settings: settings, tuning: generationTuning)
             session.generateParameters = params
 
-            let modelStartedAt = Date()
-            let setupMs = Int(modelStartedAt.timeIntervalSince(overallStartedAt) * 1000) - containerSnapshot.elapsedMs
-            VoxtLog.llmDebug(CustomLLMRequestRuntime.startLogMessage(for: request, params: params, behavior: behavior))
+            let modelStartedAt = DispatchTime.now().uptimeNanoseconds
+            let setupMs = Int((modelStartedAt - overallStartedAt) / 1_000_000) - containerSnapshot.elapsedMs
+            VoxtLog.model(.init(.modelRequestStarted, backend: .mlx))
             VoxtLog.llm(CustomLLMRequestRuntime.contentLogMessage(for: request))
 
             var aggregated = ""
@@ -228,7 +229,7 @@ class CustomLLMModelManager: ObservableObject {
                 switch event {
                 case .chunk(let chunk):
                     if firstChunkLatencyMs == nil, !chunk.isEmpty {
-                        firstChunkLatencyMs = Int(Date().timeIntervalSince(modelStartedAt) * 1000)
+                        firstChunkLatencyMs = Int((DispatchTime.now().uptimeNanoseconds - modelStartedAt) / 1_000_000)
                     }
                     aggregated += chunk
                     if let repetition = repetitionGuard.repeatedSuffix(in: aggregated) {
@@ -253,8 +254,8 @@ class CustomLLMModelManager: ObservableObject {
                 }
             }
             let response = aggregated
-            let modelElapsedMs = Int(Date().timeIntervalSince(modelStartedAt) * 1000)
-            let totalElapsedMs = Int(Date().timeIntervalSince(overallStartedAt) * 1000)
+            let modelElapsedMs = Int((DispatchTime.now().uptimeNanoseconds - modelStartedAt) / 1_000_000)
+            let totalElapsedMs = Int((DispatchTime.now().uptimeNanoseconds - overallStartedAt) / 1_000_000)
             // Flush even if the last chunk arrived inside the preview interval.
             if let onPartialText {
                 let preview = CustomLLMOutputSanitizer.normalizeResultText(aggregated)
@@ -270,9 +271,7 @@ class CustomLLMModelManager: ObservableObject {
                 cleaned = CustomLLMRequestRuntime.sanitizeModelOutput(response)
             }
 
-            VoxtLog.llmDebug(
-                "Custom LLM \(request.kind.logLabel) completed. repo=\(request.repo), outputChars=\(cleaned.count), elapsedMs=\(modelElapsedMs), totalElapsedMs=\(totalElapsedMs)"
-            )
+            VoxtLog.model(.init(.modelRequestCompleted, backend: .mlx, outcome: cleaned.isEmpty ? .empty : .success, characterCount: cleaned.count, durationMilliseconds: UInt64(max(0, modelElapsedMs))))
             var diagnostics = CustomLLMRunDiagnostics(
                 repo: request.repo,
                 taskLabel: request.kind.logLabel,
@@ -291,9 +290,6 @@ class CustomLLMModelManager: ObservableObject {
                 totalOverheadMs: nil
             )
             if let completionInfo {
-                let firstChunkText = firstChunkLatencyMs.map(String.init) ?? "n/a"
-                let promptTPS = String(format: "%.1f", completionInfo.promptTokensPerSecond)
-                let generationTPS = String(format: "%.1f", completionInfo.tokensPerSecond)
                 let prefillMs = Int((completionInfo.promptTime * 1000).rounded())
                 let generationMs = Int((completionInfo.generateTime * 1000).rounded())
                 let modelOverheadMs = max(0, modelElapsedMs - prefillMs - generationMs)
@@ -315,9 +311,11 @@ class CustomLLMModelManager: ObservableObject {
                     modelOverheadMs: modelOverheadMs,
                     totalOverheadMs: totalOverheadMs
                 )
-                VoxtLog.llmDebug(
-                    "Custom LLM \(request.kind.logLabel) metrics. repo=\(request.repo), containerSource=\(containerSnapshot.source.rawValue), containerLoadMs=\(containerSnapshot.elapsedMs), setupMs=\(max(0, setupMs)), firstChunkMs=\(firstChunkText), overallFirstChunkMs=\(diagnostics.overallFirstChunkMs.map(String.init) ?? "n/a"), promptTokens=\(completionInfo.promptTokenCount), generationTokens=\(completionInfo.generationTokenCount), prefillMs=\(prefillMs), generationMs=\(generationMs), modelOverheadMs=\(modelOverheadMs), totalOverheadMs=\(totalOverheadMs), promptTPS=\(promptTPS), generationTPS=\(generationTPS), stopReason=\(completionInfo.stopReason)"
-                )
+                VoxtLog.model(.init(.modelRequestMetrics, backend: .mlx,
+                    tokenCount: completionInfo.generationTokenCount,
+                    durationMilliseconds: UInt64(max(0, totalElapsedMs)),
+                    prefillMilliseconds: UInt64(max(0, prefillMs)),
+                    firstTokenMilliseconds: firstChunkLatencyMs.map { UInt64(max(0, $0)) }))
             }
             lastRunDiagnostics = diagnostics
             VoxtLog.llm(
@@ -672,7 +670,7 @@ class CustomLLMModelManager: ObservableObject {
                         modelName: displayTitle(for: canonicalRepo),
                         message: message
                     )
-                    VoxtLog.modelError("Custom LLM download produced incomplete files: \(canonicalRepo)")
+                    VoxtLog.technical(.init(.modelDownloadFailed, backend: .mlx, outcome: .failed, failure: .runtime), category: .model)
                     return
                 }
                 try Task.checkCancellation()
@@ -681,21 +679,21 @@ class CustomLLMModelManager: ObservableObject {
                 SystemNotificationSupport.postModelDownloadSucceeded(
                     modelName: displayTitle(for: canonicalRepo)
                 )
-                VoxtLog.modelInfo("Custom LLM download completed: \(canonicalRepo)")
+                VoxtLog.technical(.init(.modelDownloadCompleted, backend: .mlx, outcome: .success), category: .model)
             } catch is CancellationError {
                 guard revision == storageRevision else { return }
                 cancelDownloadProgressTask(for: canonicalRepo)
                 switch downloadStopActionsByRepo[canonicalRepo] {
                 case .pause:
                     setPausedStatusMessage(nil, for: canonicalRepo)
-                    VoxtLog.modelInfo("Custom LLM download paused: \(canonicalRepo)")
+                    VoxtLog.technical(.init(.modelDownloadPaused, backend: .mlx), category: .model)
                 case .cancel, .none:
                     setPausedStatusMessage(nil, for: canonicalRepo)
                     await cleanupPartialDownload(for: canonicalRepo)
                     guard revision == storageRevision else { return }
                     clearSelectedDownloadSource(for: canonicalRepo)
                     markCancelledDownloadUnavailable(for: canonicalRepo)
-                    VoxtLog.modelWarning("Custom LLM download cancelled: \(canonicalRepo)")
+                    VoxtLog.technical(.init(.modelDownloadCancelled, backend: .mlx, outcome: .cancelled), category: .model)
                 }
             } catch {
                 guard revision == storageRevision else { return }
@@ -712,7 +710,7 @@ class CustomLLMModelManager: ObservableObject {
                     modelName: displayTitle(for: canonicalRepo),
                     message: message
                 )
-                VoxtLog.modelError("Custom LLM download failed: \(canonicalRepo), error=\(error.localizedDescription)")
+                VoxtLog.technical(.init(.modelDownloadFailed, backend: .mlx, outcome: .failed, failure: .classify(error)), category: .model)
             }
         }
         downloadTasksByRepo[canonicalRepo] = task
@@ -872,9 +870,7 @@ class CustomLLMModelManager: ObservableObject {
             } catch {
                 try Task.checkCancellation()
                 lastError = error
-                VoxtLog.modelWarning(
-                    "Custom LLM download source failed. repo=\(canonicalRepo), source=\(candidate.displayName), error=\(error.localizedDescription)"
-                )
+                VoxtLog.technical(.init(.modelDownloadFailed, backend: .mlx, outcome: .failed, failure: .classify(error)), category: .model)
                 await clearHubCache(for: canonicalRepo)
             }
         }
@@ -905,7 +901,7 @@ class CustomLLMModelManager: ObservableObject {
             baseURL: baseURL,
             userAgent: Self.hubUserAgent
         )
-        VoxtLog.modelInfo("Custom LLM download started: repo=\(context.repoID.description), files=\(context.entries.count), baseURL=\(baseURL.absoluteString)")
+        VoxtLog.technical(.init(.modelDownloadStarted, backend: .mlx), category: .model)
 
         let totalBytes = context.totalBytes
         let totalFiles = context.entries.count
@@ -948,7 +944,7 @@ class CustomLLMModelManager: ObservableObject {
                     totalFiles: totalFiles,
                     for: canonicalRepo
                 )
-                VoxtLog.modelInfo("Custom LLM download resume reused existing file: \(entry.path)", verbose: true)
+                VoxtLog.technical(.init(.modelDownloadResumed, backend: .mlx), category: .model)
                 continue
             }
             cancelDownloadProgressTask(for: canonicalRepo)
@@ -1244,7 +1240,7 @@ class CustomLLMModelManager: ObservableObject {
                 for: canonicalRepo
             )
         }
-        VoxtLog.modelWarning("Custom LLM download auto-paused after network issue. repo=\(canonicalRepo), error=\(error.localizedDescription)")
+        VoxtLog.technical(.init(.modelDownloadPaused, backend: .mlx, failure: .classify(error)), category: .model, level: .warning)
         return true
     }
 
@@ -1370,7 +1366,7 @@ class CustomLLMModelManager: ObservableObject {
         await waitForActiveInferencesToFinish()
 
         releaseInferenceResources()
-        VoxtLog.modelInfo("Custom LLM model released for application termination.", verbose: true)
+        VoxtLog.technical(.init(.modelReleased, backend: .mlx), category: .model)
     }
 
     private func waitForActiveInferencesToFinish() async {
@@ -1424,8 +1420,6 @@ class CustomLLMModelManager: ObservableObject {
         guard inferenceContainer != nil, inferenceModelRepo == expectedRepo else { return }
 
         releaseInferenceResources()
-        VoxtLog.modelInfo(
-            "Custom LLM model released. repo=\(expectedRepo ?? "unknown"), reason=\(reason)"
-        )
+        VoxtLog.technical(.init(.modelReleased, backend: .mlx), category: .model)
     }
 }

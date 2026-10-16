@@ -28,8 +28,24 @@ actor OmniVoiceActivityStream {
     private let session: URLSession
     private let socket: URLSessionWebSocketTask
     private var tail: Task<Void, Never>?
+    private let diagnostics: RecordingDiagnosticRecorder
+    private let diagnosticSessionID: UUID?
+    private let diagnosticRuntimeID: UUID?
+    private let diagnosticRequestID = UUID()
+    private var completedExchanges = 0
+    private var processedSamples = 0
+    private var pendingExchanges = 0
+    private var didCompleteDiagnostics = false
+    private var isClosed = false
 
-    init(endpoint: OmniServerEndpoint) {
+    init(
+        endpoint: OmniServerEndpoint,
+        diagnosticSessionID: UUID? = nil,
+        diagnostics: RecordingDiagnosticRecorder = RecordingDiagnostics.shared
+    ) {
+        self.diagnostics = diagnostics
+        self.diagnosticSessionID = diagnosticSessionID
+        diagnosticRuntimeID = endpoint.diagnosticRuntimeID
         let configuration = URLSessionConfiguration.ephemeral
         configuration.connectionProxyDictionary = [:]
         session = URLSession(configuration: configuration)
@@ -40,11 +56,15 @@ actor OmniVoiceActivityStream {
         components.path = "/v1/vad/stream"
         socket = session.webSocketTask(with: components.url!)
         socket.resume()
+        diagnostics.record(.init(.requestStarted, sessionID: diagnosticSessionID,
+            requestID: diagnosticRequestID, runtimeID: diagnosticRuntimeID, backend: .silero))
     }
 
     /// Feeds 16 kHz samples; the probability of the last whole 512-sample
     /// chunk they completed, or nil when none completed.
     func probability(samples16k: [Float]) async throws -> Float? {
+        pendingExchanges += 1
+        defer { pendingExchanges -= 1 }
         let previous = tail
         let socket = socket
         // Note (Jiaxin Deng): replies arrive in order, so one exchange at a time per stream.
@@ -57,12 +77,42 @@ actor OmniVoiceActivityStream {
             return try Self.probability(fromReply: text)
         }
         tail = Task { _ = try? await exchange.value }
-        return try await exchange.value
+        do {
+            let probability = try await exchange.value
+            if !didCompleteDiagnostics {
+                completedExchanges += 1
+                processedSamples += samples16k.count
+                if completedExchanges == 1 {
+                    diagnostics.record(.init(.vadStreamReady, sessionID: diagnosticSessionID,
+                        requestID: diagnosticRequestID, runtimeID: diagnosticRuntimeID, backend: .silero))
+                }
+            }
+            return probability
+        } catch {
+            let failure = RecordingDiagnosticEvent.Failure.classify(error)
+            completeDiagnostics(outcome: failure == .cancelled ? .cancelled : .failed,
+                failure: failure == .unknown ? .runtime : failure)
+            throw error
+        }
     }
 
     func close() {
+        guard !isClosed else { return }
+        isClosed = true
+        completeDiagnostics(outcome: pendingExchanges > 0 ? .cancelled : (completedExchanges > 0 ? .success : .empty),
+            failure: pendingExchanges > 0 ? .cancelled : .none)
         socket.cancel(with: .normalClosure, reason: nil)
         session.invalidateAndCancel()
+        diagnostics.record(.init(.requestCleanup, sessionID: diagnosticSessionID,
+            requestID: diagnosticRequestID, runtimeID: diagnosticRuntimeID, backend: .silero))
+    }
+
+    private func completeDiagnostics(outcome: RecordingDiagnosticEvent.Outcome, failure: RecordingDiagnosticEvent.Failure) {
+        guard !didCompleteDiagnostics else { return }
+        didCompleteDiagnostics = true
+        diagnostics.record(.init(.requestCompleted, sessionID: diagnosticSessionID,
+            requestID: diagnosticRequestID, runtimeID: diagnosticRuntimeID, backend: .silero,
+            outcome: outcome, failure: failure, count: completedExchanges, sampleCount: processedSamples))
     }
 
     nonisolated static func float32LittleEndian(_ samples: [Float]) -> Data {

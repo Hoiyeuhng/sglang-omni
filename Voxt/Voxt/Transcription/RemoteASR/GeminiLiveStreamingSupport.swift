@@ -21,7 +21,6 @@ extension RemoteASRTranscriber {
 
         let configuredModel = configuration.model.trimmingCharacters(in: .whitespacesAndNewlines)
         let model = configuredModel.isEmpty ? GeminiLivePayloadSupport.defaultModel : configuredModel
-        let loggedEndpoint = RemoteASREndpointSupport.resolvedGeminiLiveEndpoint(configuration.endpoint)
         guard let wsURL = RemoteASREndpointSupport.geminiLiveURL(
             endpoint: configuration.endpoint,
             apiKey: apiKey
@@ -35,7 +34,7 @@ extension RemoteASRTranscriber {
 
         var request = URLRequest(url: wsURL)
         request.timeoutInterval = 45
-        VoxtLog.model("Gemini live transcribe connect. endpoint=\(loggedEndpoint), model=\(model)")
+        VoxtLog.model(.init(.modelRequestStarted, backend: .remote))
 
         let managedSocket = VoxtNetworkSession.makeWebSocketTask(with: request)
         let ws = managedSocket.task
@@ -57,9 +56,7 @@ extension RemoteASRTranscriber {
         context.didStartAudioStream = true
 
         let payload = GeminiLivePayloadSupport.setupPayload(model: model, hintPayload: hintPayload)
-        VoxtLog.model(
-            "Gemini live setup sent. languageCodes=\(GeminiLivePayloadSupport.languageCodes(from: hintPayload).joined(separator: ",")), vocabulary=\(GeminiLivePayloadSupport.customVocabulary(from: hintPayload).count)"
-        )
+        VoxtLog.model(.init(.modelConfigured, backend: .remote))
         sendGeminiLiveJSON(payload, through: ws) { error in
             if let error {
                 Task { [responseState = context.responseState] in
@@ -70,7 +67,7 @@ extension RemoteASRTranscriber {
     }
 
     func stopGeminiLiveStreaming(_ context: GeminiLiveStreamingContext) {
-        VoxtLog.model("Gemini live stop requested. stopRequested=\(stopRequested)")
+        VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isCurrentGeneration(context.generationID),
@@ -92,9 +89,7 @@ extension RemoteASRTranscriber {
                 self.sendGeminiLiveAudioStreamEnd(context)
             } else {
                 context.shouldEndAudioStreamAfterSetup = true
-                VoxtLog.model(
-                    "Gemini live stop deferred until setupComplete. bufferedBytes=\(context.pendingAudioByteCount)"
-                )
+                VoxtLog.model(.init(.modelStopDeferred, backend: .remote))
             }
         }
     }
@@ -141,7 +136,7 @@ extension RemoteASRTranscriber {
             let current = await context.responseState.currentText()
             if !current.isEmpty {
                 context.isClosed = true
-                VoxtLog.model("Gemini live socket closed after stop. chars=\(current.count)")
+                VoxtLog.model(.init(.modelResultReceived, backend: .remote, characterCount: current.count))
                 await context.responseState.markSessionFinished()
                 return
             }
@@ -170,9 +165,7 @@ extension RemoteASRTranscriber {
             guard !context.isSetupComplete else { return }
             context.isSetupComplete = true
             flushPendingGeminiLiveAudio(context)
-            VoxtLog.model(
-                "Gemini live setupComplete acknowledged. pendingEnd=\(context.shouldEndAudioStreamAfterSetup)"
-            )
+            VoxtLog.model(.init(.modelInputReady, backend: .remote))
             if context.shouldEndAudioStreamAfterSetup {
                 context.shouldEndAudioStreamAfterSetup = false
                 sendGeminiLiveAudioStreamEnd(context)
@@ -183,17 +176,17 @@ extension RemoteASRTranscriber {
         let update = GeminiLivePayloadSupport.transcriptUpdate(from: object)
         if let final = update.final {
             let merged = await context.responseState.commit(final)
-            publishIntermediateTranscription(merged)
+            publishIntermediateTranscription(merged, isPartial: false, generationID: context.generationID)
         } else if let interim = update.interim {
             let merged = await context.responseState.setInterim(interim)
-            publishIntermediateTranscription(merged)
+            publishIntermediateTranscription(merged, isPartial: true, generationID: context.generationID)
         }
 
         // A turn ends on every pause, so only a terminal event after our own
         // audioStreamEnd means the session is really done.
         if context.didSendAudioStreamEnd, GeminiLivePayloadSupport.isSessionTerminal(object) {
             context.isClosed = true
-            VoxtLog.model("Gemini live session terminal event received.")
+            VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
             await context.responseState.markSessionFinished()
         }
     }
@@ -237,6 +230,7 @@ extension RemoteASRTranscriber {
 
         audioEngine.prepare()
         try audioEngine.start()
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
         VoxtLog.asr(
             "Gemini live audio capture started. sampleRate=\(Int(inputFormat.sampleRate)), channels=\(inputFormat.channelCount)",
@@ -273,6 +267,8 @@ extension RemoteASRTranscriber {
             droppedChunks += 1
         }
 
+        context.droppedChunkCount += droppedChunks
+        context.droppedByteCount += droppedBytes
         if droppedChunks > 0 {
             VoxtLog.asrWarning(
                 "Gemini live startup audio buffer exceeded limit; dropped oldest chunks. droppedChunks=\(droppedChunks), droppedBytes=\(droppedBytes)"
@@ -288,15 +284,14 @@ extension RemoteASRTranscriber {
         context.pendingAudioByteCount = 0
 
         guard !chunks.isEmpty else { return }
-        VoxtLog.model(
-            "Gemini live flushing buffered startup audio. chunks=\(chunks.count), bytes=\(byteCount)"
-        )
+        VoxtLog.model(.init(.modelAudioBufferFlushed, backend: .remote, byteCount: UInt64(max(0, byteCount))))
         for chunk in chunks {
             sendGeminiLiveAudioChunk(chunk, context: context)
         }
     }
 
     private func sendGeminiLiveAudioChunk(_ pcmData: Data, context: GeminiLiveStreamingContext) {
+        recordDiagnosticAudioSubmission(generationID: context.generationID)
         sendGeminiLiveJSON(GeminiLivePayloadSupport.audioPayload(pcmData), through: context.ws) { error in
             if let error {
                 Task { [responseState = context.responseState] in

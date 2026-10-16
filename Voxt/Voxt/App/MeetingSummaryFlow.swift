@@ -354,7 +354,6 @@ extension AppDelegate {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return "" }
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        let modelLabel = meetingSummaryModelLogLabel(resolvedModel)
         let provider = try meetingSummaryExecutionProvider(for: resolvedModel)
         let strategy = meetingSummaryExecutionStrategy(
             transcript: trimmedTranscript,
@@ -383,8 +382,8 @@ extension AppDelegate {
             previousResponseID: nil,
             responseFormat: nil
         )
-        VoxtLog.llmDebug("Meeting summary runtime dispatch. model=\(modelLabel), runtime=llm-execution-plan")
-        return try await executeLLMExecutionPlan(plan)
+        VoxtLog.model(.init(.modelRoutingChanged, backend: plan.provider.diagnosticBackend, action: .meeting))
+        return try await executeLLMExecutionPlan(plan, diagnosticSessionID: nil)
     }
 
     private func runHierarchicalMeetingSummary(

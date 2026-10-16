@@ -1,7 +1,7 @@
 // VoxtLogCategory.swift
 // Defines logging categories used by Voxt diagnostics.
 
-enum VoxtLogCategory: String, CaseIterable, Sendable {
+nonisolated enum VoxtLogCategory: String, Codable, CaseIterable, Sendable {
     case app
     case audio
     case dictionary

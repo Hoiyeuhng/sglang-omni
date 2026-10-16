@@ -187,6 +187,7 @@ extension RemoteASRTranscriber {
         configuration: RemoteProviderConfiguration,
         hintPayload: ResolvedASRHintPayload
     ) async throws -> String {
+        let generationID = recordingGenerationID
         let endpoint = URL(string: RemoteASREndpointSupport.normalizedEndpoint(
             configuration.endpoint,
             defaultValue: "https://api.stepfun.com/v1/audio/asr/sse"
@@ -290,17 +291,24 @@ extension RemoteASRTranscriber {
                 )
             }
 
-            switch StepFunPayloadSupport.parseSSEDataLine(line) {
+            let payload = StepFunPayloadSupport.parseSSEDataLine(line)
+            switch payload {
             case .delta(let fragment), .fragment(let fragment):
                 previewText = RemoteASRTextSupport.mergeStreamFragment(current: previewText, incoming: fragment)
                 await MainActor.run {
-                    self.publishIntermediateTranscription(previewText)
+                    let isPartial: Bool
+                    if case .delta = payload {
+                        isPartial = true
+                    } else {
+                        isPartial = RemoteASRTextSupport.isPartialStreamPayload(fromLine: line)
+                    }
+                    self.publishIntermediateTranscription(previewText, isPartial: isPartial, generationID: generationID)
                 }
             case .completed(let text):
                 finalText = text
                 previewText = text
                 await MainActor.run {
-                    self.publishIntermediateTranscription(text)
+                    self.publishIntermediateTranscription(text, isPartial: false, generationID: generationID)
                 }
             case .error(let message):
                 throw NSError(
@@ -524,6 +532,7 @@ extension RemoteASRTranscriber {
         model: String,
         extraFields: [String: String]
     ) async throws -> String {
+        let generationID = recordingGenerationID
         let boundary = "Boundary-\(UUID().uuidString)"
         let effectiveModel = model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? RemoteASRProvider.glmASR.suggestedModel
@@ -577,7 +586,11 @@ extension RemoteASRTranscriber {
             if let fragment = RemoteASRTextSupport.extractTextFragment(fromLine: line), !fragment.isEmpty {
                 aggregate = RemoteASRTextSupport.mergeStreamFragment(current: aggregate, incoming: fragment)
                 await MainActor.run {
-                    self.publishIntermediateTranscription(aggregate)
+                    self.publishIntermediateTranscription(
+                        aggregate,
+                        isPartial: RemoteASRTextSupport.isPartialStreamPayload(fromLine: line),
+                        generationID: generationID
+                    )
                 }
             }
         }

@@ -9,13 +9,9 @@ struct VoxtFileLogHandler: LogHandler {
     var metadataProvider: Logger.MetadataProvider?
     var logLevel: Logger.Level = .info
 
-    private let label: String
-    private let category: VoxtLogCategory
     private let fileStore: VoxtLogFileStore
 
     init(label: String, category: VoxtLogCategory, fileStore: VoxtLogFileStore = .shared) {
-        self.label = label
-        self.category = category
         self.fileStore = fileStore
     }
 
@@ -26,32 +22,8 @@ struct VoxtFileLogHandler: LogHandler {
 
     func log(event: LogEvent) {
         guard !VoxtRuntimeEnvironment.isRunningUnitTests else { return }
-        let mergedMetadata = mergedMetadata(event.metadata)
-        let redactedMetadata = VoxtLogRedactor.redactedMetadata(mergedMetadata)
-        let redactedMessage = VoxtLogRedactor.redact(event.message.description)
-        let formattedLine = VoxtLogFormatter.line(
-            level: event.level,
-            category: category,
-            message: redactedMessage,
-            metadata: redactedMetadata,
-            source: event.source.isEmpty ? label : event.source,
-            file: event.file,
-            function: event.function,
-            line: event.line
-        )
-        fileStore.append(formattedLine)
+        guard let line = RecordingDiagnosticEvent.safeLine(event.message.description) else { return }
+        fileStore.append(line)
     }
 
-    private func mergedMetadata(_ explicitMetadata: Logger.Metadata?) -> Logger.Metadata? {
-        var merged = metadataProvider?.get() ?? [:]
-        for (key, value) in metadata where merged[key] == nil {
-            merged[key] = value
-        }
-        if let explicitMetadata {
-            for (key, value) in explicitMetadata {
-                merged[key] = value
-            }
-        }
-        return merged.isEmpty ? nil : merged
-    }
 }

@@ -15,6 +15,9 @@ nonisolated final class VoxtLogFileStore: @unchecked Sendable {
     private var recentLines: [String] = []
     private let maxMemoryLines = 2_000
     private var didPrepareStorage = false
+    private var writeFailed = false
+
+    var lastWriteFailed: Bool { Self.queue.sync { writeFailed } }
 
     init(
         fileManager: FileManager = FileManager(),
@@ -89,22 +92,26 @@ nonisolated final class VoxtLogFileStore: @unchecked Sendable {
 
     private func appendSynchronously(_ line: String) {
         prepareStorageIfNeeded()
+        let bytes = Data((line + "\n").utf8)
+        guard UInt64(bytes.count) <= maxFileBytes else { writeFailed = true; return }
+        rotateIfNeeded(incomingLine: line)
+        let currentSize = ((try? fileManager.attributesOfItem(atPath: currentLogURL.path)[.size]) as? NSNumber)?.uint64Value ?? 0
+        guard currentSize + UInt64(bytes.count) <= maxFileBytes else { writeFailed = true; return }
+        writeFailed = !appendLineData(bytes)
+        guard !writeFailed else { return }
         recentLines.append(line)
         if recentLines.count > maxMemoryLines {
             recentLines = Array(recentLines.suffix(maxMemoryLines))
         }
-
-        rotateIfNeeded(incomingLine: line)
-        appendLineData(Data((line + "\n").utf8))
     }
 
-    private func appendLineData(_ data: Data) {
-        let descriptor = open(currentLogURL.path, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR)
-        guard descriptor >= 0 else { return }
+    private func appendLineData(_ data: Data) -> Bool {
+        let descriptor = open(currentLogURL.path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
 
-        data.withUnsafeBytes { buffer in
-            guard let baseAddress = buffer.baseAddress else { return }
+        return data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return true }
             var bytesWritten = 0
             while bytesWritten < buffer.count {
                 let result = write(
@@ -112,17 +119,23 @@ nonisolated final class VoxtLogFileStore: @unchecked Sendable {
                     baseAddress.advanced(by: bytesWritten),
                     buffer.count - bytesWritten
                 )
-                guard result > 0 else { return }
+                guard result > 0 else { return false }
                 bytesWritten += result
             }
+            return true
         }
     }
 
     private func prepareStorageIfNeeded() {
         guard !didPrepareStorage else { return }
-        didPrepareStorage = true
-        _ = try? fileManager.createDirectory(at: logsDirectoryURL, withIntermediateDirectories: true)
-        _ = try? fileManager.createDirectory(at: archiveDirectoryURL, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: logsDirectoryURL, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: archiveDirectoryURL, withIntermediateDirectories: true)
+            didPrepareStorage = true
+        } catch {
+            writeFailed = true
+            return
+        }
         migrateLegacyLogIfNeeded()
         removePersistedUnitTestLaunchLogsIfNeeded()
         recentLines = readPersistedLines(limit: maxMemoryLines)

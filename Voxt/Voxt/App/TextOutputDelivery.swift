@@ -63,6 +63,9 @@ extension AppDelegate {
             return
         }
 
+        let diagnosticSessionID = isSessionActive ? activeRecordingSessionID : nil
+        let diagnosticRequestID = UUID()
+        RecordingDiagnostics.shared.record(.init(.insertionAttempted, sessionID: diagnosticSessionID, requestID: diagnosticRequestID))
         let outputGeneration = recordingLifecycle.outputGeneration
         let injectionStartedAt = Date()
         let accessibilityTrusted = AccessibilityPermissionManager.isTrusted()
@@ -71,6 +74,8 @@ extension AppDelegate {
         guard accessibilityTrusted else {
             writeTextToPasteboard(text)
             promptForAccessibilityPermission()
+            RecordingDiagnostics.shared.record(.init(.insertionCompleted, sessionID: diagnosticSessionID, requestID: diagnosticRequestID,
+                outcome: .clipboardOnly, failure: .permission))
             VoxtLog.inputWarning("Accessibility permission missing. Transcription copied; paste manually after granting permission.")
             completion?(false)
             return
@@ -100,6 +105,8 @@ extension AppDelegate {
                 )
             },
             completion: { didInject in
+                RecordingDiagnostics.shared.record(.init(.insertionCompleted, sessionID: diagnosticSessionID, requestID: diagnosticRequestID,
+                    outcome: didInject ? .shortcutPosted : .notPosted))
                 let elapsedMs = Int(Date().timeIntervalSince(injectionStartedAt) * 1000)
                 VoxtLog.input(
                     "Text injection attempt completed. characters=\(text.count), elapsedMs=\(elapsedMs), didInject=\(didInject)"

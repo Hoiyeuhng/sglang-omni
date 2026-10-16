@@ -200,11 +200,9 @@ extension AppDelegate {
                 let finalResult = iterationResults.last
 
                 print("[VOXT_SMOKE] task=\(smokeTask.rawValue)")
-                print("[VOXT_SMOKE] repo=\(repo)")
                 print("[VOXT_SMOKE] iterations=\(iterations)")
                 print("[VOXT_SMOKE] prewarm=\(shouldPrewarm)")
                 print("[VOXT_SMOKE] prefillStepOverride=\(prefillStepOverride.map(String.init) ?? "auto")")
-                print("[VOXT_SMOKE] delivery=\(String(describing: plan.delivery))")
                 print("[VOXT_SMOKE] promptChars=\(plan.promptCharacterCount)")
                 print("[VOXT_SMOKE] inputChars=\(plan.primaryInputCharacterCount)")
                 print("[VOXT_SMOKE] instructionChars=\(compiledRequest.instructions.count)")
@@ -222,16 +220,10 @@ extension AppDelegate {
                 }
 
                 printAggregateMetrics(iterationResults)
-                print("[VOXT_SMOKE][instructions]")
-                print(compiledRequest.instructions)
-                print("[VOXT_SMOKE][prompt]")
-                print(compiledRequest.prompt)
-                print("[VOXT_SMOKE][output]")
-                print(finalResult?.output ?? "")
                 fflush(stdout)
                 self.requestApplicationTermination(exitStatus: 0)
             } catch {
-                print("[VOXT_SMOKE][error] \(error.localizedDescription)")
+                print("[VOXT_SMOKE][error] \(RecordingDiagnosticEvent.Failure.classify(error).rawValue)")
                 fflush(stdout)
                 self.requestApplicationTermination(exitStatus: 1)
             }

@@ -9,17 +9,20 @@ actor OmniSharedModelRuntime {
     private var modelDirectory: URL?
     private var leases = 0
     private let configuration: @Sendable () -> OmniBackendConfiguration?
+    private let diagnostics: RecordingDiagnosticRecorder
 
     init(
         kind: OmniASRModelKind,
-        configuration: (@Sendable () -> OmniBackendConfiguration?)? = nil
+        configuration: (@Sendable () -> OmniBackendConfiguration?)? = nil,
+        diagnostics: RecordingDiagnosticRecorder = RecordingDiagnostics.shared
     ) {
         self.kind = kind
+        self.diagnostics = diagnostics
         self.configuration = configuration ?? { @Sendable in OmniASRBackend.configuration(for: kind) }
     }
 
     /// A ready endpoint, held until `release()`.
-    func acquire(modelDirectory directory: URL) async throws -> OmniServerEndpoint {
+    func acquire(modelDirectory directory: URL, diagnosticSessionID: UUID? = nil) async throws -> OmniServerEndpoint {
         guard let configuration = configuration() else {
             throw OmniASRRuntimeError.launchFailed("The native runtime is not configured.")
         }
@@ -42,13 +45,30 @@ actor OmniSharedModelRuntime {
         if let current = self.runtime {
             runtime = current
         } else {
-            runtime = OmniASRRuntime(kind: kind, modelDirectory: directory, configuration: configuration)
+            runtime = OmniASRRuntime(kind: kind, modelDirectory: directory, configuration: configuration, diagnostics: diagnostics)
             self.runtime = runtime
             modelDirectory = directory
         }
+        if kind == .sileroVAD {
+            diagnostics.record(.init(.vadRuntimeAcquiring, sessionID: diagnosticSessionID,
+                runtimeID: runtime.diagnosticRuntimeID, backend: .silero))
+        }
         do {
-            return try await runtime.prepare()
+            var endpoint = try await runtime.prepare()
+            endpoint.diagnosticRuntimeID = runtime.diagnosticRuntimeID
+            if kind == .sileroVAD {
+                diagnostics.record(.init(.vadRuntimeAcquired, sessionID: diagnosticSessionID,
+                    runtimeID: runtime.diagnosticRuntimeID, backend: .silero, outcome: .success))
+            }
+            return endpoint
         } catch {
+            if kind == .sileroVAD {
+                let failure = RecordingDiagnosticEvent.Failure.classify(error)
+                diagnostics.record(.init(.vadRuntimeAcquired, sessionID: diagnosticSessionID,
+                    runtimeID: runtime.diagnosticRuntimeID, backend: .silero,
+                    outcome: failure == .cancelled ? .cancelled : .failed,
+                    failure: failure == .unknown ? .runtime : failure))
+            }
             await release()
             throw error
         }

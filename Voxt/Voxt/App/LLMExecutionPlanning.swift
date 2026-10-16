@@ -233,46 +233,57 @@ extension AppDelegate {
     func executeLLMExecutionPlan(
         _ plan: LLMExecutionPlan,
         onPartialText: (@Sendable (String) -> Void)? = nil,
-        onResponseID: ((String) -> Void)? = nil
+        onResponseID: ((String) -> Void)? = nil,
+        diagnosticSessionID: UUID? = RecordingDiagnosticContext.sessionID
     ) async throws -> String {
-        let compiledRequest = LLMExecutionPlanCompiler.compile(plan)
-        let executionStartedAt = Date()
-        VoxtLog.llmInfo(
-            "LLM execution plan. task=\(plan.taskLabel), provider=\(llmExecutionProviderLabel(plan.provider)), delivery=\(String(describing: plan.delivery)), promptChars=\(plan.promptCharacterCount), inputChars=\(plan.primaryInputCharacterCount), blocks=\(plan.contextBlocks.count), strategy=\(plan.executionStrategy.logLabel)"
-        )
+        let diagnosticRequestID = UUID()
+        RecordingDiagnostics.shared.record(.init(.enhancementStarted, sessionID: diagnosticSessionID, requestID: diagnosticRequestID, backend: plan.provider.diagnosticBackend))
+        do {
+            let compiledRequest = LLMExecutionPlanCompiler.compile(plan)
+            let executionStartedAt = Date()
+            VoxtLog.llmInfo(
+                "LLM execution plan. task=\(plan.taskLabel), provider=\(llmExecutionProviderLabel(plan.provider)), delivery=\(String(describing: plan.delivery)), promptChars=\(plan.promptCharacterCount), inputChars=\(plan.primaryInputCharacterCount), blocks=\(plan.contextBlocks.count), strategy=\(plan.executionStrategy.logLabel)"
+            )
 
-        let output: String
-        switch plan.executionStrategy.mode {
-        case .singlePass:
-            output = try await executeSingleLLMExecutionPlan(
-                plan,
-                compiledRequest: compiledRequest,
-                onPartialText: onPartialText,
-                onResponseID: onResponseID
+            let output: String
+            switch plan.executionStrategy.mode {
+            case .singlePass:
+                output = try await executeSingleLLMExecutionPlan(
+                    plan,
+                    compiledRequest: compiledRequest,
+                    onPartialText: onPartialText,
+                    onResponseID: onResponseID
+                )
+            case .segmented:
+                output = try await executeSegmentedLLMExecutionPlan(
+                    plan,
+                    onPartialText: onPartialText,
+                    onResponseID: onResponseID
+                )
+            }
+            recordSessionLLMExecutionTiming(
+                taskLabel: plan.taskLabel,
+                provider: plan.provider,
+                startedAt: executionStartedAt
             )
-        case .segmented:
-            output = try await executeSegmentedLLMExecutionPlan(
-                plan,
-                onPartialText: onPartialText,
-                onResponseID: onResponseID
+            let sanitized = LLMVisibleOutputSanitizer.sanitize(
+                output,
+                fallbackText: plan.fallbackText,
+                taskKind: visibleOutputSanitizerTaskKind(for: plan.task)
             )
+            if sanitized.didFallback || sanitized.didExtractFinalOutput || sanitized.didRemoveProcessText {
+                VoxtLog.llmWarning(
+                    "LLM visible output sanitized. task=\(plan.taskLabel), fallback=\(sanitized.didFallback), extractedFinal=\(sanitized.didExtractFinalOutput), removedProcess=\(sanitized.didRemoveProcessText), inputChars=\(plan.primaryInputCharacterCount), outputChars=\(output.count), finalChars=\(sanitized.text.count)"
+                )
+            }
+            RecordingDiagnostics.shared.record(.init(.enhancementCompleted, sessionID: diagnosticSessionID,
+                requestID: diagnosticRequestID, outcome: .success, count: sanitized.text.count))
+            return sanitized.text
+        } catch {
+            RecordingDiagnostics.shared.record(.init(.enhancementCompleted, sessionID: diagnosticSessionID,
+                requestID: diagnosticRequestID, outcome: RecordingDiagnosticEvent.Failure.classify(error) == .cancelled ? .cancelled : .failed, failure: .classify(error)))
+            throw error
         }
-        recordSessionLLMExecutionTiming(
-            taskLabel: plan.taskLabel,
-            provider: plan.provider,
-            startedAt: executionStartedAt
-        )
-        let sanitized = LLMVisibleOutputSanitizer.sanitize(
-            output,
-            fallbackText: plan.fallbackText,
-            taskKind: visibleOutputSanitizerTaskKind(for: plan.task)
-        )
-        if sanitized.didFallback || sanitized.didExtractFinalOutput || sanitized.didRemoveProcessText {
-            VoxtLog.llmWarning(
-                "LLM visible output sanitized. task=\(plan.taskLabel), fallback=\(sanitized.didFallback), extractedFinal=\(sanitized.didExtractFinalOutput), removedProcess=\(sanitized.didRemoveProcessText), inputChars=\(plan.primaryInputCharacterCount), outputChars=\(output.count), finalChars=\(sanitized.text.count)"
-            )
-        }
-        return sanitized.text
     }
 
     private func visibleOutputSanitizerTaskKind(for task: LLMExecutionTaskPayload) -> LLMVisibleOutputSanitizer.TaskKind {

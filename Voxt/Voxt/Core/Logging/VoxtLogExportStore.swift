@@ -8,8 +8,12 @@ enum VoxtLogExportStore {
         VoxtLogFileStore.shared.latestLogUpdateDate()
     }
 
-    nonisolated static func latestLogDisplayText(limit: Int = 1_000, metadataProvider: () -> String) -> String {
-        let selectedLines = VoxtLogFileStore.shared.latestLines(limit: limit)
+    nonisolated static func latestLogDisplayText(
+        limit: Int = 1_000,
+        store: VoxtLogFileStore = .shared,
+        metadataProvider: () -> RecordingDiagnosticExportMetadata
+    ) -> String {
+        let selectedLines = store.latestLines(limit: limit).compactMap(RecordingDiagnosticEvent.safeLine)
         let unavailableText = MainActorSync.run {
             AppLocalization.localizedString("No logs available")
         }
@@ -23,7 +27,7 @@ enum VoxtLogExportStore {
         return [
             logText,
             "========== \(appMetaTitle) ==========",
-            VoxtLogRedactor.redact(metadataProvider())
+            metadataProvider().encodedText()
         ].joined(separator: "\n\n")
     }
 }

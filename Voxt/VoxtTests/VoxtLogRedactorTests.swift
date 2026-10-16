@@ -106,23 +106,17 @@ final class VoxtLogRedactorTests: XCTestCase {
     }
 
     func testLLMDebugLoggerEvaluatesSafeMetadataWhenEnabled() {
-        let defaults = UserDefaults.standard
-        let previousValue = defaults.object(forKey: AppPreferenceKey.llmDebugLoggingEnabled)
+        let suiteName = "Voxt.SafeModelDebug.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(true, forKey: AppPreferenceKey.llmDebugLoggingEnabled)
-        defer {
-            if let previousValue {
-                defaults.set(previousValue, forKey: AppPreferenceKey.llmDebugLoggingEnabled)
-            } else {
-                defaults.removeObject(forKey: AppPreferenceKey.llmDebugLoggingEnabled)
-            }
-        }
-
+        let logger = VoxtLogger(category: .model,
+            logger: Logger(label: "Voxt.model") { _ in SwiftLogNoOpLogHandler() })
         var evaluated = false
-        VoxtLog.llmDebug({
+        VoxtLog.model({
             evaluated = true
-            return "model=test, inputChars=42"
-        }())
-
+            return RecordingDiagnosticEvent(.modelRequestStarted, characterCount: 42)
+        }(), defaults: defaults, logger: logger)
         XCTAssertTrue(evaluated)
     }
 }

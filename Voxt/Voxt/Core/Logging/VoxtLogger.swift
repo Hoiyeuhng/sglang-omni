@@ -1,17 +1,40 @@
 // VoxtLogger.swift
 // Provides typed category loggers backed by swift-log.
 
+import Foundation
 import Logging
 
 struct VoxtLogger: Sendable {
     private let category: VoxtLogCategory
     private let logger: Logger
 
-    nonisolated init(category: VoxtLogCategory) {
+    nonisolated init(category: VoxtLogCategory, logger: Logger? = nil) {
         self.category = category
-        LoggingBootstrap.bootstrapIfNeeded()
-        let logger = Logger(label: "Voxt.\(category.rawValue)")
-        self.logger = logger
+        if let logger {
+            self.logger = logger
+        } else {
+            LoggingBootstrap.bootstrapIfNeeded()
+            self.logger = Logger(label: "Voxt.\(category.rawValue)")
+        }
+    }
+
+    nonisolated static func recordDiagnosticLine(_ line: String, logger: Logger? = nil) {
+        if let logger {
+            logger.info("\(line)")
+        } else {
+            LoggingBootstrap.bootstrapIfNeeded()
+            Logger(label: "Voxt.asr").info("\(line)")
+        }
+    }
+
+    nonisolated func record(_ event: RecordingDiagnosticEvent, level: Logger.Level? = nil) {
+        var event = event
+        let level = level ?? (event.outcome == .failed ? .error : .info)
+        event.category = category
+        event.severity = level >= .error ? .error : (level >= .warning ? .warning : .info)
+        event.timestampMilliseconds = UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
+        guard let line = try? event.encodedLine() else { return }
+        logger.log(level: level, "\(line)")
     }
 
     nonisolated func trace(
@@ -82,8 +105,8 @@ struct VoxtLogger: Sendable {
         verbose: Bool = false
     ) {
         guard !verbose || VoxtLog.verboseEnabled else { return }
-        let redactedMessage = VoxtLogRedactor.redact(message(), privacy: privacy)
-        let metadata = VoxtLogRedactor.redactedMetadata(metadata) ?? [:]
-        logger.log(level: level, "\(redactedMessage)", metadata: metadata)
+        // Note (Voxt): legacy warnings retain category/severity, never arbitrary content or metadata.
+        guard level >= .warning else { return }
+        record(.init(.legacyDiagnostic, outcome: .failed), level: level)
     }
 }

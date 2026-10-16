@@ -68,6 +68,8 @@ final class StepFunStreamingContext {
     var shouldCommitAfterSessionUpdate = false
     var pendingAudioChunks: [Data] = []
     var pendingAudioByteCount = 0
+    var droppedChunkCount = 0
+    var droppedByteCount = 0
 
     init(
         session: URLSession,
@@ -124,6 +126,8 @@ final class GeminiLiveStreamingContext {
     var didSendAudioStreamEnd = false
     var pendingAudioChunks: [Data] = []
     var pendingAudioByteCount = 0
+    var droppedChunkCount = 0
+    var droppedByteCount = 0
 
     init(
         session: URLSession,

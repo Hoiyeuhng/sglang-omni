@@ -2375,3 +2375,6 @@
 "Open Notes from the main window" = "Open Notes from the main window";
 "Try Later" = "Try Later";
 "Less" = "Less";
+
+"Enable recording diagnostics" = "Enable recording diagnostics";
+"Logs session IDs and recording/VAD pipeline events without audio or transcript content." = "Keeps technical recording diagnostics until you turn it off. Older logs rotate automatically; audio and text content are excluded.";

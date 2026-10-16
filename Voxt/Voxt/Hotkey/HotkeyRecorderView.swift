@@ -93,7 +93,7 @@ final class KeyCaptureView: NSView {
             onCancel?()
             return
         }
-        VoxtLog.hotkey("Hotkey recorder keyDown. keyCode=\(event.keyCode), modifiers=\(HotkeyPreference.modifierSymbols(for: combinedModifiers(with: event.modifierFlags.intersection(.hotkeyRelevant))))", verbose: true)
+        VoxtLog.hotkey(.init(.hotkeyKeyObserved))
         captureKeyDown(
             keyCode: event.keyCode,
             modifiers: event.modifierFlags.intersection(.hotkeyRelevant),
@@ -117,7 +117,7 @@ final class KeyCaptureView: NSView {
             rawModifiers: event.modifierFlags.intersection(.hotkeyRelevant)
         )
         updateSidedModifiers(for: event.keyCode)
-        VoxtLog.hotkey("Hotkey recorder flagsChanged(local). keyCode=\(event.keyCode), modifiers=\(HotkeyPreference.modifierSymbols(for: modifiers))", verbose: true)
+        VoxtLog.hotkey(.init(.hotkeyModifierChanged))
         scheduleModifierOnlyCaptureIfNeeded(keyCode: event.keyCode, modifiers: modifiers)
     }
 
@@ -180,7 +180,7 @@ final class KeyCaptureView: NSView {
             (1 << CGEventType.flagsChanged.rawValue) |
             (1 << CGEventType.otherMouseDown.rawValue)
 
-        guard let (tap, tapLocation) = createEventTap(eventMask: eventMask) else {
+        guard let tap = createEventTap(eventMask: eventMask) else {
             onRecorderMessageChange?("System-reserved shortcuts such as fn+space may still be intercepted by macOS. If capture fails, disable or remap the Globe / input source shortcut in System Settings.")
             return
         }
@@ -190,7 +190,7 @@ final class KeyCaptureView: NSView {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        VoxtLog.hotkey("Hotkey recorder event tap started. location=\(tapLocation.debugName)")
+        VoxtLog.hotkey(.init(.hotkeyMonitorStarted))
         onRecorderMessageChange?(nil)
     }
 
@@ -206,7 +206,7 @@ final class KeyCaptureView: NSView {
         runLoopSource = nil
     }
 
-    private func createEventTap(eventMask: CGEventMask) -> (tap: CFMachPort, location: CGEventTapLocation)? {
+    private func createEventTap(eventMask: CGEventMask) -> CFMachPort? {
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             let view = Unmanaged<KeyCaptureView>.fromOpaque(refcon).takeUnretainedValue()
@@ -225,7 +225,7 @@ final class KeyCaptureView: NSView {
                 callback: callback,
                 userInfo: Unmanaged.passUnretained(self).toOpaque()
             ) {
-                return (tap, tapLocation)
+                return tap
             }
         }
         return nil
@@ -246,7 +246,7 @@ final class KeyCaptureView: NSView {
         }
         switch type {
         case .keyDown:
-            VoxtLog.hotkey("Hotkey recorder keyDown(tap). keyCode=\(keyCode), modifiers=\(HotkeyPreference.modifierSymbols(for: combinedModifiers(with: modifierFlags(from: event.flags).intersection(.hotkeyRelevant))))", verbose: true)
+            VoxtLog.hotkey(.init(.hotkeyKeyObserved))
             captureKeyDown(
                 keyCode: keyCode,
                 modifiers: combinedModifiers(with: modifierFlags(from: event.flags).intersection(.hotkeyRelevant)),
@@ -265,7 +265,7 @@ final class KeyCaptureView: NSView {
                 rawModifiers: modifierFlags(from: event.flags).intersection(.hotkeyRelevant)
             )
             currentSidedModifiers = SidedModifierFlags.from(eventFlags: event.flags).filtered(by: modifiers)
-            VoxtLog.hotkey("Hotkey recorder flagsChanged(tap). keyCode=\(keyCode), modifiers=\(HotkeyPreference.modifierSymbols(for: modifiers))", verbose: true)
+            VoxtLog.hotkey(.init(.hotkeyModifierChanged))
             scheduleModifierOnlyCaptureIfNeeded(keyCode: keyCode, modifiers: modifiers)
         default:
             break
@@ -295,7 +295,7 @@ final class KeyCaptureView: NSView {
         sidedModifiers: SidedModifierFlags
     ) {
         guard HotkeyPreference.isRecordableKeyboardKeyCode(keyCode) else {
-            VoxtLog.hotkey("Hotkey recorder ignored unsupported key. keyCode=\(keyCode)")
+            VoxtLog.hotkey(.init(.hotkeyIgnored))
             return
         }
         let capturedModifiers = combinedModifiers(with: modifiers.intersection(.hotkeyRelevant))
@@ -305,7 +305,7 @@ final class KeyCaptureView: NSView {
         lastModifierOnlyCaptureCount = 0
         Task { @MainActor [weak self] in
             guard let self else { return }
-            VoxtLog.hotkey("Hotkey recorder captured chord. keyCode=\(keyCode), modifiers=\(HotkeyPreference.modifierSymbols(for: capturedModifiers))")
+            VoxtLog.hotkey(.init(.hotkeyBindingCaptured))
             self.onHotkeyCaptured?(
                 HotkeyPreference.Hotkey(
                     keyCode: keyCode,
@@ -329,7 +329,7 @@ final class KeyCaptureView: NSView {
         lastModifierOnlyCaptureCount = 0
         Task { @MainActor [weak self] in
             guard let self else { return }
-            VoxtLog.hotkey("Hotkey recorder captured mouse button. button=\(buttonNumber), modifiers=\(HotkeyPreference.modifierSymbols(for: capturedModifiers))")
+            VoxtLog.hotkey(.init(.hotkeyBindingCaptured))
             self.onHotkeyCaptured?(
                 HotkeyPreference.Hotkey(
                     mouseButtonNumber: buttonNumber,
@@ -376,7 +376,7 @@ final class KeyCaptureView: NSView {
         modifiers: NSEvent.ModifierFlags
     ) {
         guard !modifiers.isEmpty else {
-            finalizePendingModifierCaptureIfNeeded(reason: "modifier release")
+            finalizePendingModifierCaptureIfNeeded()
             return
         }
 
@@ -414,7 +414,7 @@ final class KeyCaptureView: NSView {
             }
             self.lastModifierOnlyCaptureCount = capturedModifierCount
             self.pendingModifierCapture = nil
-            VoxtLog.hotkey("Hotkey recorder captured modifier-only after hold. modifiers=\(HotkeyPreference.modifierSymbols(for: capturedModifiers))")
+            VoxtLog.hotkey(.init(.hotkeyBindingCaptured))
             self.onHotkeyCaptured?(
                 HotkeyPreference.Hotkey(
                     keyCode: HotkeyPreference.modifierOnlyKeyCode,
@@ -425,7 +425,7 @@ final class KeyCaptureView: NSView {
         }
     }
 
-    private func finalizePendingModifierCaptureIfNeeded(reason: String) {
+    private func finalizePendingModifierCaptureIfNeeded() {
         pendingModifierCaptureTask?.cancel()
         pendingModifierCaptureTask = nil
         defer { pendingModifierCapture = nil }
@@ -433,7 +433,7 @@ final class KeyCaptureView: NSView {
         guard !hasCapturedChordDuringCurrentRecording else { return }
         guard pendingModifierCapture.count >= lastModifierOnlyCaptureCount else { return }
         lastModifierOnlyCaptureCount = pendingModifierCapture.count
-        VoxtLog.hotkey("Hotkey recorder captured modifier-only on \(reason). modifiers=\(HotkeyPreference.modifierSymbols(for: pendingModifierCapture.modifiers))")
+        VoxtLog.hotkey(.init(.hotkeyBindingCaptured))
         onHotkeyCaptured?(
             HotkeyPreference.Hotkey(
                 keyCode: HotkeyPreference.modifierOnlyKeyCode,

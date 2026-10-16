@@ -13,7 +13,7 @@ extension AppDelegate {
             return false
         }
         VoxtLog.meeting("Non-meeting recording blocked because meeting is active. source=\(source)")
-        VoxtLog.hotkey("Non-meeting recording blocked: meeting active. source=\(source)")
+        VoxtLog.hotkey(.init(.hotkeyIgnored, action: .meeting))
         if meetingSessionCoordinator.overlayState.isPresented {
             meetingOverlayWindow.show(
                 state: meetingSessionCoordinator.overlayState,
@@ -29,9 +29,7 @@ extension AppDelegate {
         VoxtLog.meeting(
             "Meeting hotkey invoked. isMeetingActive=\(meetingSessionCoordinator.isActive), isSessionActive=\(isSessionActive)"
         )
-        VoxtLog.hotkey(
-            "Hotkey callback meetingDown. isMeetingActive=\(meetingSessionCoordinator.isActive), isSessionActive=\(isSessionActive)"
-        )
+        VoxtLog.hotkey(.init(.hotkeyPressed, action: .meeting))
 
         cancelPendingTranscriptionStart()
 

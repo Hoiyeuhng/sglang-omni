@@ -511,7 +511,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         LoggingBootstrap.bootstrap()
         _ = noteObsidianSyncCoordinator
         _ = noteRemindersSyncCoordinator
-        VoxtLog.info("Voxt launching.")
+        VoxtLog.technical(.init(.applicationStarted), category: .app)
         VoxtLog.info("Runtime system version: \(currentSystemVersionLogDescription)")
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
         migrateLegacyPreferences()
@@ -784,7 +784,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func shutdownForApplicationTermination() async {
         guard !isApplicationTerminating else { return }
         isApplicationTerminating = true
-        VoxtLog.info("Application termination cleanup started.")
+        VoxtLog.technical(.init(.applicationStopping), category: .app)
+        let diagnosticSessionID = isSessionActive ? activeRecordingSessionID : nil
+        if let diagnosticSessionID {
+            RecordingDiagnostics.shared.record(.init(.sessionCancelled, sessionID: diagnosticSessionID, outcome: .cancelled))
+        }
 
         hotkeyManager.stop()
         let activeLLMTasks = cancelActiveLLMRequest()
@@ -846,7 +850,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             VoxtLog.persistenceWarning("Reminders sync did not finish before the application termination deadline.")
         }
 
-        VoxtLog.info("Application termination cleanup completed.")
+        if let diagnosticSessionID {
+            RecordingDiagnostics.shared.record(.init(.sessionCleanup, sessionID: diagnosticSessionID))
+        }
+        VoxtLog.technical(.init(.applicationStopped), category: .app)
         VoxtLogFileStore.shared.flush()
     }
 

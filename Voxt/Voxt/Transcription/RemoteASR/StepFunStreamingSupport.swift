@@ -27,7 +27,7 @@ extension RemoteASRTranscriber {
         var request = URLRequest(url: wsURL)
         request.timeoutInterval = 45
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        VoxtLog.model("StepFun realtime stream connect. endpoint=\(endpoint), model=\(model)")
+        VoxtLog.model(.init(.modelRequestStarted, backend: .remote))
 
         let managedSocket = VoxtNetworkSession.makeWebSocketTask(with: request)
         let ws = managedSocket.task
@@ -47,7 +47,7 @@ extension RemoteASRTranscriber {
         receiveStepFunMessages(context)
         try startStepFunAudioCapture(context: context)
         context.didStartAudioStream = true
-        VoxtLog.model("StepFun realtime audio capture started while waiting for session.updated.")
+        VoxtLog.model(.init(.modelInputReady, backend: .remote))
 
         let payload = StepFunPayloadSupport.sessionUpdatePayload(
             model: model,
@@ -64,7 +64,7 @@ extension RemoteASRTranscriber {
     }
 
     func stopStepFunStreaming(_ context: StepFunStreamingContext) {
-        VoxtLog.model("StepFun realtime stop requested. stopRequested=\(stopRequested)")
+        VoxtLog.model(.init(.modelStreamStopped, backend: .remote))
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isCurrentGeneration(context.generationID),
@@ -86,9 +86,7 @@ extension RemoteASRTranscriber {
                 self.sendStepFunCommit(context)
             } else {
                 context.shouldCommitAfterSessionUpdate = true
-                VoxtLog.model(
-                    "StepFun realtime stop deferred until session.updated. bufferedBytes=\(context.pendingAudioByteCount)"
-                )
+                VoxtLog.model(.init(.modelConfigurationChanged, backend: .remote))
             }
         }
     }
@@ -124,7 +122,7 @@ extension RemoteASRTranscriber {
         }
     }
 
-    private func handleStepFunRealtimeMessage(_ text: String, context: StepFunStreamingContext) async {
+    func handleStepFunRealtimeMessage(_ text: String, context: StepFunStreamingContext) async {
         guard let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
               let dict = object as? [String: Any] else {
@@ -146,9 +144,7 @@ extension RemoteASRTranscriber {
                 }
             }
             flushPendingStepFunAudio(context)
-            VoxtLog.model(
-                "StepFun session.updated acknowledged. didStartAudioStream=\(context.didStartAudioStream), pendingCommit=\(context.shouldCommitAfterSessionUpdate)"
-            )
+            VoxtLog.model(.init(.modelInputReady, backend: .remote))
             if context.shouldCommitAfterSessionUpdate {
                 context.shouldCommitAfterSessionUpdate = false
                 sendStepFunCommit(context)
@@ -157,12 +153,12 @@ extension RemoteASRTranscriber {
             let value = (dict["text"] as? String) ?? (dict["delta"] as? String) ?? ""
             guard !value.isEmpty else { return }
             let merged = await context.responseState.appendDelta(value, itemID: dict["item_id"] as? String)
-            publishIntermediateTranscription(merged)
+            publishIntermediateTranscription(merged, isPartial: true, generationID: context.generationID)
         case "conversation.item.input_audio_transcription.completed":
             let value = (dict["transcript"] as? String) ?? (dict["text"] as? String) ?? ""
             guard !value.isEmpty else { return }
             let merged = await context.responseState.commit(value, itemID: dict["item_id"] as? String)
-            publishIntermediateTranscription(merged)
+            publishIntermediateTranscription(merged, isPartial: false, generationID: context.generationID)
         case "error":
             let message = RemoteASRTextSupport.extractStreamErrorMessage(fromLine: text)
                 ?? (dict["message"] as? String)
@@ -215,6 +211,7 @@ extension RemoteASRTranscriber {
 
         audioEngine.prepare()
         try audioEngine.start()
+        RecordingDiagnostics.shared.record(.init(.inputReady, sessionID: diagnosticSessionID, backend: .remote))
         isRecording = true
         VoxtLog.asr(
             "StepFun realtime audio capture engine started. sampleRate=\(Int(inputFormat.sampleRate)), channels=\(inputFormat.channelCount)",
@@ -249,6 +246,8 @@ extension RemoteASRTranscriber {
             droppedChunks += 1
         }
 
+        context.droppedChunkCount += droppedChunks
+        context.droppedByteCount += droppedBytes
         if droppedChunks > 0 {
             VoxtLog.asrWarning(
                 "StepFun startup audio buffer exceeded limit; dropped oldest chunks. droppedChunks=\(droppedChunks), droppedBytes=\(droppedBytes)"
@@ -264,15 +263,14 @@ extension RemoteASRTranscriber {
         context.pendingAudioByteCount = 0
 
         guard !chunks.isEmpty else { return }
-        VoxtLog.model(
-            "StepFun realtime flushing buffered startup audio. chunks=\(chunks.count), bytes=\(byteCount)"
-        )
+        VoxtLog.model(.init(.modelAudioBufferFlushed, backend: .remote, byteCount: UInt64(max(0, byteCount))))
         for chunk in chunks {
             sendStepFunAudioChunk(chunk, context: context)
         }
     }
 
     private func sendStepFunAudioChunk(_ pcmData: Data, context: StepFunStreamingContext) {
+        recordDiagnosticAudioSubmission(generationID: context.generationID)
         let payload: [String: Any] = [
             "event_id": UUID().uuidString.lowercased(),
             "type": "input_audio_buffer.append",
