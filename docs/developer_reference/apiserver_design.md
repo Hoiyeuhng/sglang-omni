@@ -70,6 +70,24 @@ It:
 
 Use it when you want the standard out-of-the-box server path.
 
+### WebSocket close codes for shared sessions
+
+A shared session sends the last JSON events before the WebSocket Close frame. The frame gives a close code and a close reason.
+
+| Close code | Close reason |
+| --- | --- |
+| `1000` | `client_closed` or `disconnect` |
+| `1008` | `session_update_timeout` or `context_exhausted` |
+| `1011` | An internal error, adapter failure, or cleanup failure |
+
+The server uses code `1008` for an admission timeout or the context limit. These conditions are application policies. [RFC 6455, section 7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1) gives the WebSocket close codes.
+
+The Close frame has a limit of 123 bytes for the close reason. The server uses UTF-8 for this text. If the text is too long, the server removes whole characters from the end. The JSON events keep the full reason.
+
+The first close request sets the reason. A cleanup failure changes the reason to `cleanup_timeout`. An unknown reason uses code `1011`. A missing reason uses code `1011` and the reason `internal`.
+
+A request error closes the session only if it is a fatal error.
+
 ## Route Surface
 
 The current server exposes these main routes:

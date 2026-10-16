@@ -7,6 +7,13 @@ from collections.abc import Awaitable
 from dataclasses import asdict, dataclass
 from typing import Protocol, get_args
 
+from starlette.status import (
+    WS_1000_NORMAL_CLOSURE,
+    WS_1008_POLICY_VIOLATION,
+    WS_1011_INTERNAL_ERROR,
+)
+
+from sglang_omni.admission import ContextExhaustedError
 from sglang_omni.profiler.duplex_events import SessionUnitReadyObservation
 from sglang_omni.serve.realtime.control import ControlEvent
 from sglang_omni.serve.realtime.output import OutputEvent
@@ -23,6 +30,20 @@ PCM16_BYTES_PER_SAMPLE = 2
 MS_PER_SECOND = 1000
 MAX_BUFFERED_INPUT_S = 60
 SUPPORTED_OUTPUT_MODALITIES = frozenset({"text", "audio"})
+CLOSE_REASON_CLIENT_CLOSED = "client_closed"
+CLOSE_REASON_DISCONNECT = "disconnect"
+CLOSE_REASON_SESSION_UPDATE_TIMEOUT = "session_update_timeout"
+CLOSE_REASON_CONTEXT_EXHAUSTED = ContextExhaustedError.CODE
+CLOSE_REASON_INTERNAL = "internal"
+CLOSE_REASON_CLEANUP_TIMEOUT = "cleanup_timeout"
+CLOSE_CODE_BY_REASON: dict[str, int] = {
+    CLOSE_REASON_CLIENT_CLOSED: WS_1000_NORMAL_CLOSURE,
+    CLOSE_REASON_DISCONNECT: WS_1000_NORMAL_CLOSURE,
+    CLOSE_REASON_SESSION_UPDATE_TIMEOUT: WS_1008_POLICY_VIOLATION,
+    CLOSE_REASON_CONTEXT_EXHAUSTED: WS_1008_POLICY_VIOLATION,
+    CLOSE_REASON_INTERNAL: WS_1011_INTERNAL_ERROR,
+    CLOSE_REASON_CLEANUP_TIMEOUT: WS_1011_INTERNAL_ERROR,
+}
 
 
 class ProtocolError(ValueError):

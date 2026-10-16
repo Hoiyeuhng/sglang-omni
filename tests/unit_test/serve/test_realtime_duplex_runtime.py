@@ -38,6 +38,7 @@ NATIVE_UNIT_MS = 20
 UNIT_BYTES = SAMPLE_RATE * NATIVE_UNIT_MS // 1000 * 2
 RUNTIME_LOGGER_NAME = "sglang_omni.serve.realtime.runtime"
 UPDATE_DEADLINE_S = 600.0
+TEST_WAIT_TIMEOUT_SECONDS = 5.0
 
 
 class GatedAdapter(InteractionAdapter):
@@ -380,3 +381,18 @@ def test_output_budget_counts_outbound_events_only() -> None:
         completed,
         None,
     ]
+
+
+@pytest.mark.asyncio
+async def test_competing_closes_keep_initial_failure_reason() -> None:
+    runtime = await open_runtime(GatedAdapter([]))
+    try:
+        runtime.fail("context full", "context_exhausted")
+        await asyncio.wait_for(
+            asyncio.gather(runtime.close("disconnect"), runtime.close("client_closed")),
+            TEST_WAIT_TIMEOUT_SECONDS,
+        )
+    finally:
+        await asyncio.wait_for(runtime.close("disconnect"), TEST_WAIT_TIMEOUT_SECONDS)
+
+    assert runtime.close_reason == "context_exhausted"
