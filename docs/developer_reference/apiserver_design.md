@@ -139,6 +139,34 @@ WebSocket Pong frames do not prevent this closure.
 For long periods without audio input, increase `--realtime-idle-input-timeout-s`.
 For example, use `--realtime-idle-input-timeout-s 300` for a five-minute timeout period.
 
+### Transport timeouts for shared duplex sessions
+
+`RuntimeLimits.transport_timeout_s` has a default value of 30 seconds.
+Set this deployment limit to a finite number greater than zero.
+The capabilities endpoint gives this value with the admission timeout and the input-idle timeout.
+
+Each WebSocket text write has a transport timeout.
+If a write timeout occurs while the runtime is active, the runtime starts cleanup with the reason `transport_timeout`.
+If there is already a close task, that task keeps its initial reason.
+
+After native cleanup, the connection waits a maximum of one transport timeout period for the last events and the Close frame.
+If the sender does not complete, the connection cancels the local transport tasks.
+The connection gives these tasks a maximum of two more transport timeout periods to stop.
+If the connection receives more cancellation requests, it continues to wait for this local cleanup.
+The connection raises the initial `CancelledError` after local cleanup.
+If local cleanup has an error, that error is the cause of the cancellation exception.
+
+The local transport tasks must stop after cancellation for these time limits to be correct.
+With this condition, the connection slot becomes available in three transport timeout periods or less after native cleanup.
+The event loop can make this total period longer.
+
+Transport timeouts do not cancel the native cleanup task.
+Native cleanup uses the cleanup timeout limits.
+After a transport timeout, the peer does not always receive the last JSON events or the Close frame.
+
+The ASGI backend controls TCP shutdown.
+Its Close handshake timer can continue after the connection slot becomes available.
+
 ### WebSocket close codes for shared duplex sessions
 
 The server sends the last application events before it sends the WebSocket Close frame.

@@ -21,11 +21,13 @@ from sglang_omni.serve.realtime.schema import (
     ImageAppendEvent,
     SessionUpdateEvent,
 )
+from sglang_omni.serve.realtime.task_cleanup import cancel_local_tasks
 from sglang_omni.serve.realtime.types import (
     CLOSE_CODE_BY_REASON,
     CLOSE_REASON_CLIENT_CLOSED,
     CLOSE_REASON_DISCONNECT,
     CLOSE_REASON_INTERNAL,
+    CLOSE_REASON_TRANSPORT_TIMEOUT,
     ProtocolError,
 )
 
@@ -43,36 +45,80 @@ class SharedRealtimeSession:
         self.websocket = websocket
         self.runtime = runtime
         self.session_id = runtime.session_id
+        self.send_task: asyncio.Task[None] | None = None
 
     async def run(self) -> None:
         self.runtime.start()
         reader = asyncio.create_task(self.read())
         sender = asyncio.create_task(self.send())
+        runtime_closed = asyncio.create_task(self.runtime.closed_event.wait())
         is_disconnected = False
+        cancellation_error: asyncio.CancelledError | None = None
         try:
             finished_tasks, _ = await asyncio.wait(
-                (reader, sender), return_when=asyncio.FIRST_COMPLETED
+                (reader, sender, runtime_closed), return_when=asyncio.FIRST_COMPLETED
             )
             for task in finished_tasks:
                 try:
-                    has_client_left = task.result() is True
+                    task_result = task.result()
+                    has_client_left = task is reader and task_result is True
                 except WebSocketDisconnect:
                     has_client_left = True
-                is_disconnected = is_disconnected or has_client_left
-        finally:
-            await self.runtime.close(CLOSE_REASON_DISCONNECT)
-            if not is_disconnected and not sender.done():
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(sender), self.runtime.limits.cleanup_timeout_s
+                except asyncio.TimeoutError:
+                    logger.warning(f"Realtime session {self.session_id} send timed out")
+                    # Note (Haiyang Luo): Retain the terminal cause even if the peer cannot receive Failure.
+                    self.runtime.fail(
+                        "WebSocket send timed out", CLOSE_REASON_TRANSPORT_TIMEOUT
                     )
-                except (asyncio.TimeoutError, WebSocketDisconnect):
+                    has_client_left = True
+                is_disconnected = is_disconnected or has_client_left
+        except asyncio.CancelledError as exc:
+            cancellation_error = exc
+        finally:
+            try:
+                await self.runtime.close(CLOSE_REASON_DISCONNECT)
+                if not is_disconnected:
+                    finished_senders, _ = await asyncio.wait(
+                        (sender,), timeout=self.runtime.limits.transport_timeout_s
+                    )
+                    if sender in finished_senders:
+                        try:
+                            sender.result()
+                        except (asyncio.TimeoutError, WebSocketDisconnect):
+                            pass
+                    else:
+                        logger.warning(
+                            f"Realtime session {self.session_id} transport drain timed out"
+                        )
+                else:
                     pass
-            else:
-                pass
-            for task in (reader, sender):
-                task.cancel()
-            await asyncio.gather(reader, sender, return_exceptions=True)
+            except asyncio.CancelledError as exc:
+                cancellation_error = cancellation_error or exc
+            finally:
+                # Note (Haiyang Luo): The sender must not replace its write task after cleanup captures it.
+                sender.cancel()
+                local_cleanup = asyncio.create_task(
+                    cancel_local_tasks(
+                        (reader, sender, runtime_closed, self.send_task),
+                        self.runtime.limits.transport_timeout_s,
+                    )
+                )
+                try:
+                    while not local_cleanup.done():
+                        try:
+                            await asyncio.shield(local_cleanup)
+                        except asyncio.CancelledError as exc:
+                            cancellation_error = cancellation_error or exc
+                    local_cleanup.result()
+                except RuntimeError as exc:
+                    if cancellation_error is not None:
+                        raise cancellation_error from exc
+                    else:
+                        raise
+                if cancellation_error is not None:
+                    raise cancellation_error
+                else:
+                    pass
 
     async def teardown(self) -> None:
         await self.runtime.close(CLOSE_REASON_DISCONNECT)
@@ -105,7 +151,17 @@ class SharedRealtimeSession:
             else:
                 pass
             self.runtime.output_buffer.before_send(envelope)
-            await self.websocket.send_text(json.dumps(server_event, allow_nan=False))
+            self.send_task = asyncio.create_task(
+                self.websocket.send_text(json.dumps(server_event, allow_nan=False))
+            )
+            finished_writes, _ = await asyncio.wait(
+                (self.send_task,), timeout=self.runtime.limits.transport_timeout_s
+            )
+            if self.send_task in finished_writes:
+                self.send_task.result()
+                self.send_task = None
+            else:
+                raise asyncio.TimeoutError("WebSocket send timed out")
             self.runtime.output_buffer.sent(envelope)
         close_reason = self.runtime.close_reason
         if close_reason is None:

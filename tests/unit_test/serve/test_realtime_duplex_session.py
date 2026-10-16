@@ -648,7 +648,7 @@ async def test_missing_close_reason_closes_with_internal_error() -> None:
 
 
 def test_capabilities_endpoint_reports_deployment_grant() -> None:
-    limits = RuntimeLimits(max_output_events=8)
+    limits = RuntimeLimits(max_output_events=8, transport_timeout_s=0.25)
     response = build_test_client(ScriptedAdapter(), limits=limits).get(
         "/v1/realtime/capabilities"
     )
@@ -658,6 +658,7 @@ def test_capabilities_endpoint_reports_deployment_grant() -> None:
     assert body["model"] == MODEL_NAME
     assert body["native_full_duplex"] is True
     assert body["limits"]["max_output_events"] == 8
+    assert body["limits"]["transport_timeout_s"] == limits.transport_timeout_s
 
 
 def test_capabilities_endpoint_is_unavailable_until_running() -> None:
@@ -710,6 +711,10 @@ def test_connection_that_never_opens_is_closed_and_frees_its_slot(
         max_connections=1,
     )
 
+    async def wait_for_slot_release() -> None:
+        while client.app.state.realtime_manager.active_sessions():
+            await asyncio.sleep(0)
+
     with client.websocket_connect("/v1/realtime") as websocket:
         if first_update is not None:
             send_event(websocket, "session.update", session=first_update)
@@ -718,6 +723,9 @@ def test_connection_that_never_opens_is_closed_and_frees_its_slot(
         events = receive_until(websocket, "session.closed")
         with pytest.raises(WebSocketDisconnect) as close_exception:
             websocket.receive_json()
+        websocket.portal.call(
+            asyncio.wait_for, wait_for_slot_release(), TEST_WAIT_TIMEOUT_SECONDS
+        )
         with client.websocket_connect("/v1/realtime") as reopened_socket:
             reopened = reopened_socket.receive_json()
 
