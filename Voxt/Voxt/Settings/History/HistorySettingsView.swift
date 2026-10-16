@@ -14,6 +14,10 @@ struct HistorySettingsView: View {
     @AppStorage(AppPreferenceKey.historyRetentionPeriod) private var historyRetentionPeriodRaw = HistoryRetentionPeriod.ninetyDays.rawValue
     @AppStorage(AppPreferenceKey.historyRetentionCount) private var historyRetentionCountRaw = HistoryRetentionCount.unlimited.rawValue
     @AppStorage(AppPreferenceKey.historyAudioStorageEnabled) private var historyAudioStorageEnabled = false
+    @AppStorage(HistoryAudioQuotaPreference.limitKey) private var historyAudioStorageLimitMB = 100
+
+    @AppStorage(HistoryAudioQuotaPreference.migrationKey) private var historyAudioQuotaMigrationPending = false
+    @AppStorage(VoxtLogFileStore.quotaPreferenceKey) private var diagnosticLogStorageLimitMiB = 12
 
     @ObservedObject var historyStore: TranscriptionHistoryStore
     @ObservedObject var noteStore: VoxtNoteStore
@@ -282,6 +286,9 @@ struct HistorySettingsView: View {
                 historyCleanupEnabled: $historyCleanupEnabled,
                 historyRetentionPeriodRaw: $historyRetentionPeriodRaw,
                 historyRetentionCountRaw: $historyRetentionCountRaw,
+                historyAudioStorageLimitMB: $historyAudioStorageLimitMB,
+                historyAudioQuotaMigrationPending: $historyAudioQuotaMigrationPending,
+                diagnosticLogStorageLimitMiB: $diagnosticLogStorageLimitMiB,
                 historyAudioStorageEnabled: $historyAudioStorageEnabled,
                 historyAudioStorageDisplayPath: $historyAudioStorageDisplayPath,
                 historyAudioStorageSelectionError: $historyAudioStorageSelectionError,
@@ -290,9 +297,15 @@ struct HistorySettingsView: View {
                 historyRetentionPeriod: historyRetentionPeriod,
                 historyRetentionCount: historyRetentionCount,
                 historyAudioStorageStatsSummary: historyAudioStorageStatsSummary,
+                diagnosticStorageSummary: storageSummary(historyStore.diagnosticStorageBytes),
+                databaseStorageSummary: storageSummary(historyStore.databaseStorageBytes),
+                diagnosticStorageIssue: historyStore.diagnosticStorageIssue,
+                unavailableAudioRootPaths: historyStore.audioQuotaSnapshot.unavailableRootPaths,
                 onOpenHistoryAudioStorageInFinder: openHistoryAudioStorageInFinder,
                 onChooseHistoryAudioStorageDirectory: chooseHistoryAudioStorageDirectory,
-                onExportAllHistoryAudio: exportAllHistoryAudio
+                onExportAllHistoryAudio: exportAllHistoryAudio,
+                onReconnectAudioDirectory: reconnectHistoryAudioDirectory,
+                onStopManagingAudioDirectory: stopManagingHistoryAudioDirectory
             )
         }
         .sheet(item: $selectedHistoryInfoEntry) { entry in
@@ -352,6 +365,14 @@ struct HistorySettingsView: View {
         .onChange(of: selectedNoteStatuses) { _, _ in
             noteVisibleLimit = notePageSize
             linearCompletedVisibleLimit = 20
+        }
+        .onChange(of: diagnosticLogStorageLimitMiB) { _, _ in
+            VoxtLogFileStore.shared.applyStorageQuota()
+            historyStore.applyAudioStorageQuotaIfNeeded()
+        }
+        .onChange(of: historyAudioStorageLimitMB) { _, _ in
+            historyStore.applyAudioStorageQuotaIfNeeded()
+            refreshHistoryAudioStorageStats()
         }
         .onChange(of: historyCleanupEnabled) { _, _ in
             applyRetentionPolicyAndReload()
@@ -867,6 +888,7 @@ struct HistorySettingsView: View {
             try HistoryAudioStorageDirectoryManager.saveUserSelectedRootURL(selectedURL)
             historyAudioStorageSelectionError = nil
             refreshHistoryAudioStorageDisplayPath()
+            historyStore.applyAudioStorageQuotaIfNeeded()
         } catch {
             historyAudioStorageSelectionError = AppLocalization.format(
                 "Failed to update history audio storage path: %@",
@@ -879,6 +901,29 @@ struct HistorySettingsView: View {
         historyAudioStorageDisplayPath = HistoryAudioStorageDirectoryManager.resolvedRootURL().path
     }
 
+    private func reconnectHistoryAudioDirectory(_ path: String) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: path, isDirectory: true)
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        do {
+            try HistoryAudioStorageDirectoryManager.reauthorizeRootURL(selectedURL, previousPath: path)
+            historyAudioStorageSelectionError = nil
+            historyStore.applyAudioStorageQuotaIfNeeded()
+        } catch {
+            historyAudioStorageSelectionError = localized("Reconnect the same folder shown above. If it is on an external disk, connect that disk first.")
+        }
+    }
+
+    private func stopManagingHistoryAudioDirectory(_ path: String) {
+        if HistoryAudioStorageDirectoryManager.stopManagingPreviousRoot(path: path) {
+            historyAudioStorageSelectionError = nil
+            historyStore.applyAudioStorageQuotaIfNeeded()
+        }
+    }
+
     private func refreshHistoryAudioStorageStats() {
         historyAudioStatsGeneration += 1
         let generation = historyAudioStatsGeneration
@@ -889,11 +934,19 @@ struct HistorySettingsView: View {
     }
 
     private var historyAudioStorageStatsSummary: String {
-        AppLocalization.format(
-            "Saved audio: %d files · %@",
-            historyAudioStorageStats.storedFileCount,
-            formattedByteCount(historyAudioStorageStats.totalBytes)
-        )
+        let snapshot = historyStore.audioQuotaSnapshot
+        guard !snapshot.measurementFailed else { return localized("Storage usage unavailable") }
+        let limit = HistoryAudioQuotaPreference.limitMegabytes(historyAudioStorageLimitMB)
+        let capacity = limit == 0 ? localized("Unlimited") : "\(limit) MB"
+        let usage = AppLocalization.format("Saved audio: %d files · %@", snapshot.fileCount, formattedByteCount(snapshot.totalBytes))
+        let status = snapshot.cleanupFailed ? localized("Cleanup failed; retained files will be retried.")
+            : snapshot.cleanupDeferred ? localized("Audio cleanup is waiting for files in use.")
+            : snapshot.overLimit ? localized("Over limit: audio in use will be retried after release.") : ""
+        return "\(usage) / \(capacity)\n\(status)"
+    }
+
+    private func storageSummary(_ bytes: Int64?) -> String {
+        bytes.map(formattedByteCount) ?? localized("Storage usage unavailable")
     }
 
     private func formattedByteCount(_ bytes: Int64) -> String {

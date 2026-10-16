@@ -244,19 +244,31 @@ jobs:
           fi
           xcrun metal --version
 
+      - name: Prepare isolated test identity
+        run: |
+          echo "VOXT_TEST_BUNDLE_PREFIX=com.voxt.validation.r$(python3 -c 'import uuid; print(uuid.uuid4().hex)')" >> "$GITHUB_ENV"
+          python3 -B -m unittest discover -s Voxt/tools -p 'test_*.py' -v
+
       - name: Build for testing
         working-directory: Voxt
         run: |
           xcodebuild build-for-testing -project Voxt.xcodeproj -scheme Voxt -configuration TestDebug \
             -destination platform=macOS -derivedDataPath "$RUNNER_TEMP/voxt-derived" \
             -clonedSourcePackagesDirPath "$VOXT_CI_ROOT/swift-packages" \
-            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO > "$RUNNER_TEMP/voxt-build.log" 2>&1 \
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO \
+            PRODUCT_BUNDLE_IDENTIFIER="$VOXT_TEST_BUNDLE_PREFIX.\$(TARGET_NAME).testhost" > "$RUNNER_TEMP/voxt-build.log" 2>&1 \
             || { tail -100 "$RUNNER_TEMP/voxt-build.log"; exit 1; }
 
-      - name: Omni unit tests
+      - name: Voxt unit tests
         run: |
-          xctestrun="$(find "$RUNNER_TEMP/voxt-derived/Build/Products" -maxdepth 1 -name 'Voxt_*.xctestrun' -print -quit)"
-          xcodebuild test-without-building -xctestrun "$xctestrun" -destination platform=macOS \
+          xctestrun="$(find "$RUNNER_TEMP/voxt-derived/Build/Products" -maxdepth 1 -name 'Voxt_*.xctestrun' ! -name '*-isolated.xctestrun' -print -quit)"
+          isolated_xctestrun="$(python3 Voxt/tools/prepare_isolated_xctestrun.py \
+            --xctestrun "$xctestrun" --isolation-directory "$RUNNER_TEMP/voxt-xctest-isolation" \
+            --bundle-prefix "$VOXT_TEST_BUNDLE_PREFIX")"
+          xcodebuild test-without-building -xctestrun "$isolated_xctestrun" -destination platform=macOS \
+            -parallel-testing-enabled NO -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 300 \
+            -resultBundlePath "$RUNNER_TEMP/voxt-unit-tests.xcresult" \
             -only-testing:VoxtTests/OmniTranscriptionRequestTests \
             -only-testing:VoxtTests/OmniRealtimeSessionUpdateTests \
             -only-testing:VoxtTests/OmniASRRuntimeLaunchTests \
@@ -265,4 +277,24 @@ jobs:
             -only-testing:VoxtTests/OmniModelManagerRecoveryTests \
             -only-testing:VoxtTests/OmniFailurePathTests \
             -only-testing:VoxtTests/MLXModelManagerLifecycleTests \
-            -only-testing:VoxtTests/MLXNativeLiveRuntimeTests
+            -only-testing:VoxtTests/MLXNativeLiveRuntimeTests \
+            -only-testing:VoxtTests/HistoryAudioQuotaTests \
+            -only-testing:VoxtTests/HistoryAudioArchiveSupportTests \
+            -only-testing:VoxtTests/SQLiteStorageRepositoryTests \
+            -only-testing:VoxtTests/TranscriptionHistoryStoreAsyncTests \
+            -only-testing:VoxtTests/VoxtLogFileStoreTests
+
+      - name: Feature contract tests
+        run: |
+          bash Voxt/tools/run_history_storage_tests.sh
+
+      - name: Upload unit test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxt-unit-test-evidence
+          path: |
+            ${{ runner.temp }}/voxt-build.log
+            ${{ runner.temp }}/voxt-unit-tests.xcresult
+            ${{ runner.temp }}/voxt-xctest-isolation/manifest.json
+          if-no-files-found: warn

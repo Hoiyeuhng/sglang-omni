@@ -2375,3 +2375,44 @@
 "Open Notes from the main window" = "在主窗口中打开「笔记」";
 "Try Later" = "稍后体验";
 "Less" = "收起";
+
+"Audio storage limit" = "音频存储上限";
+
+"Existing audio remains Unlimited until you choose a limit. A finite limit deletes the oldest saved audio, preserving text history." = "现有音频在您选择上限前保持不限容量。设置有限容量会删除最旧的已保存音频，并保留文字历史。";
+
+"Use 100 MB and clean oldest audio" = "使用 100 MB 并清理最旧音频";
+
+"Keep Unlimited" = "保持不限容量";
+
+"Other Local Storage" = "其他本地存储";
+
+"Diagnostic logs" = "诊断日志";
+
+"Diagnostic log limit" = "诊断日志上限";
+
+"Includes current, rotated and legacy Voxt logs. Default: 12 MiB. Logs rotate independently of audio." = "包含当前、轮转及旧版 Voxt 日志。默认 12 MiB，日志与音频独立轮转。";
+
+"Log cleanup or writing failed; storage may remain over limit." = "日志清理或写入失败；占用可能仍超过上限。";
+
+"Database files (shared)" = "数据库文件（共享）";
+
+"Includes SQLite, WAL and SHM for history, notes and dictionaries. Text and notes are not quota caches." = "包含历史、笔记和词典使用的 SQLite、WAL 和 SHM 文件。文字和笔记不会作为配额缓存清理。";
+
+"Audio imports and active files can temporarily exceed the limit. A recording larger than the limit is not saved; its text is retained." = "导入音频和使用中的文件可能暂时超过上限。单条录音大于上限时不会保存音频，文字仍会保留。";
+
+"New history audio is stored here. Previous locations remain managed; switching does not move files." = "新历史音频保存于此。原位置仍纳入管理，切换不会移动文件。";
+
+"Storage usage unavailable" = "无法统计存储占用";
+
+"Cleanup failed; retained files will be retried." = "清理失败，将重试保留的文件。";
+
+"Over limit: audio in use will be retried after release." = "已超过上限：使用中的音频将在释放后重试清理。";
+
+"Audio cleanup is waiting for files in use." = "音频清理正在等待使用中的文件释放。";
+
+"Audio folders need attention" = "音频文件夹需要处理";
+"Total usage is unavailable. Automatic capacity cleanup is paused; explicit deletions in accessible folders can still finish." = "无法统计总占用，已暂停按容量自动清理。仍可完成可访问文件夹中的手动删除。";
+"Reconnect folder" = "重新授权文件夹";
+"Stop managing folder" = "停止管理文件夹";
+"Stopping management leaves files and text history unchanged. That folder is excluded from the quota and its audio cannot be played until you select it again." = "停止管理不会删除文件或文字历史。该文件夹将不再计入配额，其中的音频需重新选择此文件夹后才能播放。";
+"Reconnect the same folder shown above. If it is on an external disk, connect that disk first." = "请选择上方显示的同一文件夹。若位于外置磁盘，请先连接磁盘。";

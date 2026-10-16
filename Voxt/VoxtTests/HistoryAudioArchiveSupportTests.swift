@@ -5,6 +5,32 @@ import XCTest
 @testable import Voxt
 
 final class HistoryAudioArchiveSupportTests: XCTestCase {
+    @MainActor
+    func testStoppingPreviousFolderManagementPreservesFilesAndCurrentFolder() throws {
+        let suite = "VoxtAudioDirectories-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("voxt-audio-directories-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let current = root.appendingPathComponent("current", isDirectory: true)
+        let previous = root.appendingPathComponent("previous", isDirectory: true)
+        try FileManager.default.createDirectory(at: previous, withIntermediateDirectories: true)
+        let recording = previous.appendingPathComponent("retained.wav")
+        try Data("retained synthetic audio".utf8).write(to: recording)
+        defaults.set(current.path, forKey: AppPreferenceKey.historyAudioStorageRootPath)
+        defaults.set([previous.path, current.path], forKey: "historyAudioPreviousRootPaths")
+
+        XCTAssertFalse(HistoryAudioStorageDirectoryManager.stopManagingPreviousRoot(path: current.path, defaults: defaults))
+        XCTAssertTrue(HistoryAudioStorageDirectoryManager.stopManagingPreviousRoot(path: previous.path, defaults: defaults))
+        XCTAssertEqual(HistoryAudioStorageDirectoryManager.knownRootURLs(defaults: defaults), [current])
+        XCTAssertEqual(try String(contentsOf: recording, encoding: .utf8), "retained synthetic audio")
+        XCTAssertThrowsError(try HistoryAudioStorageDirectoryManager.reauthorizeRootURL(
+            current, previousPath: previous.path, defaults: defaults
+        ))
+        XCTAssertEqual(defaults.string(forKey: AppPreferenceKey.historyAudioStorageRootPath), current.path)
+    }
+
     func testExportWAVRoundTripsAsMono16BitSamples() throws {
         let samples: [Float] = [0, 0.25, -0.25, 0.75, -0.75]
         let destinationURL = HistoryAudioArchiveSupport.temporaryArchiveURL(prefix: "history-audio-roundtrip")

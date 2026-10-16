@@ -27,6 +27,8 @@ enum HistoryAudioArchiveSupport {
         existingArchiveURL: URL?,
         appendedArchiveURL: URL
     ) throws -> URL {
+        let existingAudioUse = existingArchiveURL.map { HistoryAudioFileUse(url: $0) }
+        defer { withExtendedLifetime(existingAudioUse) {} }
         let appendedSamples = try readWAVSamples(from: appendedArchiveURL)
         guard !appendedSamples.isEmpty else {
             throw NSError(

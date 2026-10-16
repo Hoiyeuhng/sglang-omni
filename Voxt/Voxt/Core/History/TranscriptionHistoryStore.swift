@@ -3,6 +3,7 @@
 
 import Foundation
 import Combine
+import os
 
 @MainActor
 final class TranscriptionHistoryStore: ObservableObject {
@@ -24,22 +25,66 @@ final class TranscriptionHistoryStore: ObservableObject {
     ]
 
     private let fileManager = FileManager.default
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+    private var audioUseObserver: AnyCancellable?
+    private var importedAudioUses: [String: HistoryAudioFileUse] = [:]
+    @Published private(set) var databaseStorageBytes: Int64?
+    @Published private(set) var diagnosticStorageBytes: Int64?
+    @Published private(set) var diagnosticStorageIssue = false
+    @Published private(set) var audioQuotaSnapshot = HistoryAudioQuotaSnapshot(measurementFailed: true)
+    private static let audioQuotaQueue = DispatchQueue(label: "app.voxt.history-audio-quota", qos: .utility)
+    private let requestedAudioQuotaLimitBytes = OSAllocatedUnfairLock<Int64?>(initialState: nil)
+    private var audioQuotaRefreshInProgress = false
+    private var audioQuotaRefreshRequested = false
     private let repository: HistoryRepositoryProtocol
     private let audioArchive: HistoryAudioArchiveManaging
+    private let logFileStore: VoxtLogFileStore
+    private let isolatedDefaultsSuite: String?
+    private let isolatedHistoryFileURL: URL?
 
     init(
         repository: HistoryRepositoryProtocol? = nil,
-        audioArchive: HistoryAudioArchiveManaging? = nil
+        audioArchive: HistoryAudioArchiveManaging? = nil,
+        defaults: UserDefaults? = nil,
+        logFileStore: VoxtLogFileStore? = nil
     ) {
+        let isolationID = UUID().uuidString
+        let isolatedRoot = repository.map { _ in
+            FileManager.default.temporaryDirectory.appendingPathComponent("voxt-history-store-\(isolationID)")
+        }
+        let suite = repository != nil && defaults == nil ? "VoxtHistoryStore-\(isolationID)" : nil
+        self.isolatedDefaultsSuite = suite
+        self.isolatedHistoryFileURL = isolatedRoot?.appendingPathComponent("transcription-history.json")
+        if let defaults {
+            self.defaults = defaults
+        } else if let suite {
+            guard let isolatedDefaults = UserDefaults(suiteName: suite) else {
+                preconditionFailure("Cannot create isolated history preferences")
+            }
+            self.defaults = isolatedDefaults
+        } else {
+            self.defaults = .standard
+        }
         self.repository = repository ?? HistoryRepository()
-        self.audioArchive = audioArchive ?? HistoryAudioArchiveService()
+        self.audioArchive = audioArchive ?? HistoryAudioArchiveService(rootURL: isolatedRoot?.appendingPathComponent("audio"))
+        self.logFileStore = logFileStore ?? isolatedRoot.map { VoxtLogFileStore(baseDirectoryURL: $0.appendingPathComponent("logs")) } ?? .shared
+        HistoryAudioQuotaPreference.initialize(
+            defaults: self.defaults,
+            hasExistingData: ((try? self.repository.entryCount(kind: nil, query: "")) ?? 1) > 0
+        )
+        audioUseObserver = NotificationCenter.default.publisher(for: HistoryAudioFileUse.releasedNotification)
+            .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyAudioStorageQuotaIfNeeded() }
         if repository == nil {
             reloadAsync()
         } else {
             // Injected repositories are primarily deterministic test/support stores.
             reload()
         }
+    }
+
+    deinit {
+        if let isolatedDefaultsSuite { defaults.removePersistentDomain(forName: isolatedDefaultsSuite) }
     }
 
     var hasMore: Bool {
@@ -363,7 +408,12 @@ final class TranscriptionHistoryStore: ObservableObject {
             dictionarySuggestedTerms: dictionarySuggestedTerms
         )
 
-        guard persistEntry(entry) else { return nil }
+        let importedPaths = [audioRelativePath, transcriptAudioRelativePath].compactMap { $0 }
+        defer { importedPaths.forEach(releaseImportedAudio(path:)) }
+        guard persistEntry(entry) else {
+            removeUnreferencedAudio(paths: importedPaths)
+            return nil
+        }
 
         totalEntryCount += 1
         cacheUpdatedEntry(entry)
@@ -371,6 +421,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         refreshEntryIndexes()
         publishVisibleEntries()
         cleanupRetainedEntriesIfNeeded()
+        applyAudioStorageQuotaIfNeeded()
         return entry.id
     }
 
@@ -392,7 +443,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         loadedCount = min(loadedCount, totalEntryCount)
         refreshEntryIndexes()
         publishVisibleEntries()
-        removed.map(audioArchive.removeArchive(for:))
+        if let removed { removeUnreferencedAudio(paths: [removed.audioRelativePath, removed.transcriptAudioRelativePath].compactMap { $0 }) }
         if interruptedReload {
             reloadAsync()
         }
@@ -400,7 +451,7 @@ final class TranscriptionHistoryStore: ObservableObject {
     }
 
     func clearAll() {
-        let audioPaths = (try? repository.audioRelativePaths()) ?? []
+        guard let audioPaths = try? repository.audioRelativePaths() else { return }
         do {
             try repository.clearAll()
         } catch {
@@ -408,7 +459,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         }
 
         invalidatePendingLoads()
-        audioPaths.forEach(audioArchive.removeArchive(relativePath:))
+        removeUnreferencedAudio(paths: audioPaths)
         allEntries = []
         loadedCount = 0
         totalEntryCount = 0
@@ -426,7 +477,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         }
 
         let interruptedReload = invalidatePendingLoads()
-        removedEntries.forEach(audioArchive.removeArchive(for:))
+        removeUnreferencedAudio(paths: removedEntries.flatMap { [$0.audioRelativePath, $0.transcriptAudioRelativePath].compactMap { $0 } })
         allEntries.removeAll { $0.kind == kind }
         totalEntryCount = max(0, totalEntryCount - removedEntries.count)
         loadedCount = min(loadedCount, allEntries.count)
@@ -443,21 +494,33 @@ final class TranscriptionHistoryStore: ObservableObject {
         kind: TranscriptionHistoryKind,
         preferredFileName: String? = nil
     ) throws -> String {
-        try audioArchive.importArchive(from: sourceURL, kind: kind, preferredFileName: preferredFileName)
+        if let limitBytes = HistoryAudioQuotaPreference.limitBytes(defaults: defaults),
+           let bytes = try sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           Int64(bytes) > limitBytes {
+            throw HistoryAudioQuotaError.oversized
+        }
+        let path = try audioArchive.importArchive(from: sourceURL, kind: kind, preferredFileName: preferredFileName)
+        importedAudioUses[path] = HistoryAudioFileUse(url: try audioArchive.rootURL().appendingPathComponent(path))
+        return path
     }
 
     func removeImportedAudioArchive(relativePath: String) {
-        audioArchive.removeArchive(relativePath: relativePath)
+        releaseImportedAudio(path: relativePath)
+        removeUnreferencedAudio(paths: [relativePath])
     }
 
     func replaceAudioArchive(for entryID: UUID, with sourceURL: URL) throws -> TranscriptionHistoryEntry? {
         guard let existingEntry = entry(id: entryID) else { return nil }
 
-        let resolvedRelativePath = try audioArchive.replaceArchive(for: existingEntry, with: sourceURL)
-
+        let resolvedRelativePath = try importAudioArchive(from: sourceURL, kind: existingEntry.kind)
         let updatedEntry = existingEntry.updatingAudioRelativePath(resolvedRelativePath)
+        defer { releaseImportedAudio(path: resolvedRelativePath) }
+        guard persistEntry(updatedEntry) else {
+            removeUnreferencedAudio(paths: [resolvedRelativePath])
+            throw HistoryAudioQuotaError.filesystem
+        }
         cacheUpdatedEntry(updatedEntry)
-        persistEntry(updatedEntry)
+        applyAudioStorageQuotaIfNeeded()
         return updatedEntry
     }
 
@@ -471,21 +534,111 @@ final class TranscriptionHistoryStore: ObservableObject {
         }
     }
 
+    func applyAudioStorageQuotaIfNeeded() {
+        let limitBytes = HistoryAudioQuotaPreference.limitBytes(defaults: defaults)
+        let requestedLimitBytes = requestedAudioQuotaLimitBytes
+        requestedLimitBytes.withLock { $0 = limitBytes }
+        audioQuotaRefreshRequested = true
+        guard !audioQuotaRefreshInProgress else { return }
+        audioQuotaRefreshRequested = false
+        audioQuotaRefreshInProgress = true
+        let roots: [URL]
+        do {
+            roots = try audioArchive.managedRootURLs()
+        } catch {
+            audioQuotaRefreshInProgress = false
+            audioQuotaSnapshot = HistoryAudioQuotaSnapshot(measurementFailed: true)
+            return
+        }
+        do {
+            _ = try audioArchive.rootURL()
+        } catch {
+            audioQuotaSnapshot = HistoryAudioQuotaSnapshot(
+                measurementFailed: true, unavailableRootPaths: roots.first.map { [$0.path] } ?? []
+            )
+        }
+        let repository = repository
+        let protectedPaths = Set(importedAudioUses.keys)
+        let logFileStore = logFileStore
+        Self.audioQuotaQueue.async { [weak self] in
+            var snapshot: HistoryAudioQuotaSnapshot
+            var clearedPaths = Set<String>()
+            do {
+                let paths = try repository.audioRelativePaths()
+                snapshot = HistoryAudioQuota.reconcile(
+                    roots: roots,
+                    referencedPaths: paths,
+                    requestedDeletions: Set(try repository.pendingAudioDeletionPaths()),
+                    limitBytes: requestedLimitBytes.withLock { $0 },
+                    protectedPaths: protectedPaths,
+                    clearReferences: { path in
+                        try repository.clearAudioReferences(path: path)
+                        clearedPaths.insert(path)
+                    }
+                )
+                snapshot.cleanupDeferred = !(try repository.pendingAudioDeletionPaths()).isEmpty
+            } catch {
+                snapshot = HistoryAudioQuotaSnapshot(measurementFailed: true)
+            }
+            let databaseBytes = try? (repository as? HistoryRepository)?.databaseStorageBytes()
+            let logUsage = logFileStore.storageUsage()
+            let clearedAudioPaths = clearedPaths
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if !self.audioQuotaRefreshRequested {
+                    self.databaseStorageBytes = databaseBytes
+                    self.diagnosticStorageBytes = logUsage.bytes
+                    self.diagnosticStorageIssue = logUsage.cleanupFailed || logUsage.overLimit
+                    self.audioQuotaSnapshot = snapshot
+                }
+                let updatedEntries = self.allEntries.map { entry in
+                    var updatedEntry = entry
+                    for path in [entry.audioRelativePath, entry.transcriptAudioRelativePath].compactMap({ $0 })
+                    where clearedAudioPaths.contains(path) {
+                        updatedEntry = updatedEntry.removingAudioArchiveReference(path: path)
+                    }
+                    return updatedEntry
+                }
+                if updatedEntries != self.allEntries {
+                    self.allEntries = updatedEntries
+                    self.refreshEntryIndexes()
+                    self.publishVisibleEntries()
+                }
+                self.audioQuotaRefreshInProgress = false
+                if self.audioQuotaRefreshRequested { self.applyAudioStorageQuotaIfNeeded() }
+            }
+        }
+    }
+
+    private func releaseImportedAudio(path: String) {
+        importedAudioUses.removeValue(forKey: path)
+        audioArchive.releaseImportedArchive(path: path)
+    }
+
+    private func removeUnreferencedAudio(paths: [String]) {
+        guard audioArchive is HistoryAudioArchiveService else {
+            paths.forEach(audioArchive.removeArchive(relativePath:))
+            return
+        }
+        do {
+            try repository.scheduleAudioDeletion(paths: paths)
+            applyAudioStorageQuotaIfNeeded()
+        } catch {
+            audioQuotaSnapshot.cleanupFailed = true
+        }
+    }
+
     func currentAudioArchiveStorageStats() -> HistoryAudioStorageStats {
-        let audioPaths = (try? repository.audioRelativePaths()) ?? []
-        return audioArchive.storageStats(audioPaths: audioPaths)
+        HistoryAudioStorageStats(
+            storedFileCount: audioQuotaSnapshot.fileCount,
+            totalBytes: audioQuotaSnapshot.totalBytes,
+            measurementFailed: audioQuotaSnapshot.measurementFailed
+        )
     }
 
     func currentAudioArchiveStorageStats(completion: @escaping (HistoryAudioStorageStats) -> Void) {
-        let repository = repository
-        let rootURL = try? audioArchive.rootURL()
-        DispatchQueue.global(qos: .utility).async {
-            let audioPaths = (try? repository.audioRelativePaths()) ?? []
-            let stats = HistoryAudioArchiveService.storageStats(rootURL: rootURL, audioPaths: audioPaths)
-            DispatchQueue.main.async {
-                completion(stats)
-            }
-        }
+        applyAudioStorageQuotaIfNeeded()
+        completion(currentAudioArchiveStorageStats())
     }
 
     func applyDictionaryCorrectedTerms(_ correctedTermsByHistoryID: [UUID: [String]]) {
@@ -780,6 +933,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         refreshEntryIndexes()
         publishVisibleEntries()
         cleanupRetainedEntriesIfNeeded()
+        applyAudioStorageQuotaIfNeeded()
     }
 
     private func cleanupRetainedEntriesIfNeeded(referenceDate: Date = Date()) {
@@ -812,7 +966,7 @@ final class TranscriptionHistoryStore: ObservableObject {
 
         guard !removedEntries.isEmpty else { return }
         let interruptedReload = invalidatePendingLoads()
-        removedEntries.forEach(audioArchive.removeArchive(for:))
+        removeUnreferencedAudio(paths: removedEntries.flatMap { [$0.audioRelativePath, $0.transcriptAudioRelativePath].compactMap { $0 } })
         let removedIDs = Set(removedEntries.map(\.id))
         allEntries.removeAll { removedIDs.contains($0.id) }
         totalEntryCount = max(0, totalEntryCount - removedIDs.count)
@@ -883,6 +1037,7 @@ final class TranscriptionHistoryStore: ObservableObject {
     }
 
     private func historyFileURL() throws -> URL {
+        if let isolatedHistoryFileURL { return isolatedHistoryFileURL }
         let appSupport = try fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,

@@ -17,6 +17,82 @@ final class SQLiteStorageRepositoryTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testClearsSharedAudioReferencesAndPreservesText() throws {
+        let database = try makeDatabase()
+        let repository = retain(HistoryRepository(database: database, migrateLegacyJSON: false))
+        let path = "transcription/shared.wav"
+        let first = makeHistoryEntry(text: "first synthetic text", createdAt: Date(), kind: .normal)
+            .updatingAudioRelativePath(path)
+        let second = makeHistoryEntry(text: "second synthetic text", createdAt: Date(), kind: .normal)
+            .updatingAudioRelativePath(path)
+        try repository.upsertAll([first, second])
+        XCTAssertEqual(try repository.audioRelativePaths(), [path])
+        try repository.clearAudioReferences(path: path)
+        XCTAssertEqual(try repository.entry(id: first.id)?.text, first.text)
+        XCTAssertEqual(try repository.entry(id: second.id)?.text, second.text)
+        XCTAssertNil(try repository.entry(id: first.id)?.audioRelativePath)
+        XCTAssertNil(try repository.entry(id: second.id)?.audioRelativePath)
+        XCTAssertGreaterThan(try repository.databaseStorageBytes(), 0)
+    }
+
+    func testStaleWriteCannotRestoreDeletedAudioReference() throws {
+        let database = try makeDatabase()
+        let repository = retain(HistoryRepository(database: database, migrateLegacyJSON: false))
+        let original = makeHistoryEntry(text: "synthetic text", createdAt: Date(), kind: .normal)
+            .updatingAudioRelativePath("transcription/old.wav")
+        try repository.upsert(original)
+        try repository.clearAudioReferences(path: "transcription/old.wav")
+        try repository.upsert(original)
+        XCTAssertNil(try repository.entry(id: original.id)?.audioRelativePath)
+        try repository.upsert(original.updatingAudioRelativePath("transcription/new.wav"))
+        XCTAssertEqual(try repository.entry(id: original.id)?.audioRelativePath, "transcription/new.wav")
+    }
+
+    func testExplicitDeletionOutboxWaitsForLastReferenceAndSurvivesReload() throws {
+        let database = try makeDatabase()
+        let repository = retain(HistoryRepository(database: database, migrateLegacyJSON: false))
+        let path = "transcription/shared-deletion.wav"
+        let first = makeHistoryEntry(text: "first", createdAt: Date(), kind: .normal).updatingAudioRelativePath(path)
+        let second = makeHistoryEntry(text: "second", createdAt: Date(), kind: .normal).updatingAudioRelativePath(path)
+        try repository.upsertAll([first, second])
+        try repository.delete(id: first.id)
+        XCTAssertTrue(try repository.pendingAudioDeletionPaths().isEmpty)
+        try repository.delete(id: second.id)
+        let reopened = retain(HistoryRepository(database: database, migrateLegacyJSON: false))
+        XCTAssertEqual(try reopened.pendingAudioDeletionPaths(), [path])
+        try reopened.upsert(second)
+        XCTAssertNil(try reopened.entry(id: second.id)?.audioRelativePath)
+        try reopened.clearAudioReferences(path: path)
+        XCTAssertTrue(try reopened.pendingAudioDeletionPaths().isEmpty)
+        XCTAssertEqual(try reopened.entry(id: second.id)?.text, "second")
+    }
+
+    func testClearAllPersistsEveryDistinctAudioDeletion() throws {
+        let repository = retain(HistoryRepository(database: try makeDatabase(), migrateLegacyJSON: false))
+        let first = makeHistoryEntry(text: "first", createdAt: Date(), kind: .normal)
+            .updatingAudioRelativePath("transcription/first.wav")
+        let second = makeHistoryEntry(text: "second", createdAt: Date(), kind: .normal)
+            .updatingAudioRelativePath("transcription/second.wav")
+        try repository.upsertAll([first, second])
+        try repository.clearAll()
+        XCTAssertEqual(Set(try repository.pendingAudioDeletionPaths()), ["transcription/first.wav", "transcription/second.wav"])
+        XCTAssertEqual(try repository.entryCount(kind: nil, query: ""), 0)
+    }
+
+    func testReplacementQueuesOldAudioOnlyAfterLastReferenceChanges() throws {
+        let repository = retain(HistoryRepository(database: try makeDatabase(), migrateLegacyJSON: false))
+        let old = "transcription/replace-old.wav"
+        let first = makeHistoryEntry(text: "first", createdAt: Date(), kind: .normal).updatingAudioRelativePath(old)
+        let second = makeHistoryEntry(text: "second", createdAt: Date(), kind: .normal).updatingAudioRelativePath(old)
+        try repository.upsertAll([first, second])
+        try repository.upsert(first.updatingAudioRelativePath("transcription/new-one.wav"))
+        XCTAssertTrue(try repository.pendingAudioDeletionPaths().isEmpty)
+        try repository.upsert(second.updatingAudioRelativePath("transcription/new-two.wav"))
+        XCTAssertEqual(try repository.pendingAudioDeletionPaths(), [old])
+        try repository.clearAudioReferences(path: old)
+        XCTAssertTrue(try repository.pendingAudioDeletionPaths().isEmpty)
+    }
+
     func testFreshDatabaseCreatesStorageTablesAndIndexes() throws {
         let database = try makeDatabase()
 
