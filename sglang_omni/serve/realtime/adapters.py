@@ -20,6 +20,8 @@ from sglang_omni.serve.realtime.output import OutputEvent, TurnFailure
 from sglang_omni.serve.realtime.schema import SessionConfiguration
 from sglang_omni.serve.realtime.task_cleanup import cancel_local_tasks
 from sglang_omni.serve.realtime.types import (
+    CLOSE_REASON_CONTEXT_EXHAUSTED,
+    CLOSE_REASON_INTERNAL,
     InteractionAdapter,
     OutputSink,
     RuntimeLimits,
@@ -143,10 +145,10 @@ class CoordinatorAdapter(InteractionAdapter):
                 pass
         except Exception as exc:
             if ContextExhaustedError.matches(exc):
-                failure_code = ContextExhaustedError.CODE
+                failure_code = CLOSE_REASON_CONTEXT_EXHAUSTED
             else:
                 logger.exception("Realtime session output reader failed")
-                failure_code = "internal"
+                failure_code = CLOSE_REASON_INTERNAL
             self.reader_error = exc
             if self.unit_completion is not None and not self.unit_completion.done():
                 self.unit_completion.set_exception(exc)
