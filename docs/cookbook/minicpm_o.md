@@ -108,7 +108,7 @@ curl --fail http://localhost:8000/v1/realtime/capabilities
 The results should be as follows:
 
 ```json
-{"model":"openbmb/MiniCPM-o-4_5","interaction":"native","native_full_duplex":true,"proactive_output":false,"turn_control":[null],"client_commit":false,"input_modalities":["audio","image"],"output_modalities":["audio","text"],"input_audio_format":{"type":"audio/pcm","rate":16000},"output_audio_format":{"type":"audio/pcm","rate":24000},"native_unit_ms":1000,"first_unit_ms":1000,"microturn_ms":"variable","tail_policy":"pad","supports_server_interrupt":false,"supports_truncate":false,"supports_resume":false,"partial_style":"append_only","pressure_policy":"reject","strict_order":true,"sampling_parameters":["greedy","temperature","top_k","top_p","repetition_penalty","listen_prob_scale","force_listen_count","max_new_tokens_per_unit","repetition_window_size","talker_temperature","talker_repetition_penalty"],"supports_reference_audio":true,"input_image_format":{"types":["image/jpeg","image/png"],"max_bytes":524288,"max_frames_per_unit":4,"max_slice_nums":9},"limits":{"max_input_bytes":1920000,"max_output_bytes":4194304,"max_output_events":256,"max_history_chars":65536,"cleanup_timeout_s":30,"session_update_timeout_s":60}}#
+{"model":"openbmb/MiniCPM-o-4_5","interaction":"native","native_full_duplex":true,"proactive_output":false,"turn_control":[null],"client_commit":false,"input_modalities":["audio","image"],"output_modalities":["audio","text"],"input_audio_format":{"type":"audio/pcm","rate":16000},"output_audio_format":{"type":"audio/pcm","rate":24000},"native_unit_ms":1000,"first_unit_ms":1000,"microturn_ms":"variable","tail_policy":"pad","supports_server_interrupt":false,"supports_truncate":false,"supports_resume":false,"partial_style":"append_only","pressure_policy":"reject","strict_order":true,"sampling_parameters":["greedy","temperature","top_k","top_p","repetition_penalty","listen_prob_scale","force_listen_count","max_new_tokens_per_unit","repetition_window_size","talker_temperature","talker_repetition_penalty"],"supports_reference_audio":true,"input_image_format":{"types":["image/jpeg","image/png"],"max_bytes":524288,"max_frames_per_unit":4,"max_slice_nums":9},"limits":{"max_input_bytes":1920000,"max_output_bytes":4194304,"max_output_events":256,"max_history_chars":65536,"cleanup_timeout_s":30,"session_update_timeout_s":60,"idle_input_timeout_s":60}}
 ```
 
 The duplex server only accepts `/v1/realtime` requests; other chat completions or voice cloning against it fail.
@@ -130,23 +130,34 @@ The settings panel switches between English and Chinese, changes the voice and a
 
 ### Full-duplex protocol
 
-Clients connect to `/v1/realtime` over WebSocket. They send 16 kHz mono PCM16 audio in `input_audio_buffer.append`; the server returns 24 kHz audio in `response.output_audio.delta` and text in `response.output_audio_transcript.delta`. The model decides once per second of audio whether to keep listening or to speak.
+Use a WebSocket connection to `/v1/realtime`. Send 16 kHz mono PCM16 audio with `input_audio_buffer.append`. The server sends 24 kHz audio with `response.output_audio.delta`. It sends text with `response.output_audio_transcript.delta`. After each second of input, the model can send audio.
 
-1. After `session.created`, send `session.update` and wait for `session.updated`. If the session is still not open 60 seconds after `session.created`, and no `session.update` is being processed at that moment, the server closes the connection with `session_update_timeout`. The deadline includes the upload: an update with two full-size reference clips is about 2.8 MB, which needs an uplink of roughly 0.4 Mbit/s.
-2. Send audio with `input_audio_buffer.append` at the pace it is captured; replies arrive while you send.
-3. When the audio ends, send `sglang.input_audio.end`, wait for `sglang.input_audio.drained`, then send `session.close`.
+1. After you receive `session.created`, send `session.update`.
+2. Wait for `session.updated`.
+3. Send each `input_audio_buffer.append` as you record the audio.
+4. After you send all audio input, send `sglang.input_audio.end`.
+5. Wait for `sglang.input_audio.drained`.
+6. Send `session.close`.
 
-For a Python client, see `warmup` in `playground/realtime/app.py`.
+The server can send text and audio while you send input audio.
 
-Session settings go in the `sglang` field of `session.update`, before the first audio packet, and stay fixed for the session:
+The default admission timeout is 60 seconds. The admission timer starts when the connection starts. If admission does not start before the deadline, the server sends `session_update_timeout` and closes the session.
 
-| Setting | Field | Notes |
-|---|---|---|
-| Voice | `reference_audio` | `{"media_type": "audio/wav", "data": "<base64>"}`, a PCM16 WAV of at most 30 s and 1 MiB; `tts_reference_audio` changes only the output voice |
-| Sampling | `sampling` | For example `temperature`, `top_p` and `listen_prob_scale`; unset fields keep the server's defaults |
-| Image detail | `max_slice_nums` | Higher is sharper but accepts fewer frames per second |
+An admission error does not start a new timer. The runtime waits for an admission operation and its cleanup. Each operation has a time limit. You can send a new `session.update` before the deadline.
 
-Send camera frames with `sglang.input_image.append`: a base64 JPEG or PNG in `image`, and its position on the audio timeline in `sglang.t_ms`. By default up to 4 frames per second are accepted; `session.updated` reports the actual limit.
+The admission timeout includes the upload time. A `session.update` with two reference clips at the size limit contains approximately 2.8 MB. A connection speed of approximately 0.4 Mbit/s or more is necessary.
+
+For a Python client, refer to `warmup` in `playground/realtime/app.py`.
+
+Set the session parameters in the `sglang` field of `session.update`. Send these parameters before the first audio packet. These parameters do not change during the session.
+
+| Parameter | Field | Function |
+| --- | --- | --- |
+| Voice | `reference_audio` | Use a PCM16 WAV file with the format `{"media_type": "audio/wav", "data": "<base64>"}`. The maximum audio time is 30 seconds. The maximum size is 1 MiB. `tts_reference_audio` changes only the output voice. |
+| Sampling | `sampling` | Parameters include `temperature`, `top_p`, and `listen_prob_scale`. If you do not set a parameter, the server uses its default value. |
+| Image detail | `max_slice_nums` | A higher value gives more image detail. A higher value also decreases the number of frames that the server can accept each second. |
+
+Send camera frames with `sglang.input_image.append`. Put a base64 JPEG or PNG in `image`. Set `sglang.t_ms` to the frame position in milliseconds on the audio timeline. The default limit is 4 frames each second. The `session.updated` event gives the limit for the session.
 
 ## Text to speech
 

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import Protocol
 
 from sglang_omni.admission import ContextExhaustedError
 from sglang_omni.client.client import Client
 from sglang_omni.proto.request import OmniRequest
 from sglang_omni.proto.session import (
+    DEFAULT_IDLE_TIMEOUT_S,
     OutputChunk,
     SessionIdentity,
     SessionLimits,
@@ -30,6 +33,7 @@ from sglang_omni.serve.realtime.types import (
 )
 
 logger = logging.getLogger(__name__)
+RUNTIME_IDLE_TIMEOUT_PERIODS = 2
 
 
 class RequestBuilder(Protocol):
@@ -77,6 +81,20 @@ class CoordinatorAdapter(InteractionAdapter):
 
     def set_limits(self, limits: RuntimeLimits) -> None:
         self.cleanup_timeout_s = limits.cleanup_timeout_s
+        # note (Haiyang Luo): The pipeline idle timer must give runtime idle checks and native cleanup time to complete.
+        pipeline_idle_timeout_seconds = max(
+            DEFAULT_IDLE_TIMEOUT_S,
+            self.limits.idle_timeout_s,
+            RUNTIME_IDLE_TIMEOUT_PERIODS * limits.idle_input_timeout_s
+            + limits.cleanup_timeout_s
+            + self.limits.operation_timeout_s,
+        )
+        if not math.isfinite(pipeline_idle_timeout_seconds):
+            raise ValueError("pipeline idle timeout must be finite")
+        else:
+            self.limits = replace(
+                self.limits, idle_timeout_s=pipeline_idle_timeout_seconds
+            )
 
     async def open(
         self, session_id: str, config: SessionConfiguration, emit: OutputSink

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Annotated, Literal, NoReturn
 
 import typer
@@ -123,6 +124,15 @@ def normalize_allowed_media_domains(values: list[str] | None) -> list[str]:
             part.strip().lower() for part in value.split(",") if part.strip()
         )
     return domains
+
+
+def validate_realtime_timeout(timeout_seconds: float | None) -> float | None:
+    if timeout_seconds is not None and (
+        not math.isfinite(timeout_seconds) or timeout_seconds <= 0
+    ):
+        raise typer.BadParameter("must be finite and positive")
+    else:
+        return timeout_seconds
 
 
 def validate_tts_batch_max_items(value: int) -> int:
@@ -464,6 +474,30 @@ def serve(
             help="Report ready without sending the pipeline's warmup requests first.",
         ),
     ] = False,
+    realtime_admission_timeout_s: Annotated[
+        float | None,
+        typer.Option(
+            "--realtime-admission-timeout-s",
+            callback=validate_realtime_timeout,
+            help=(
+                "Set the admission timeout for shared sessions, in seconds. "
+                "Use --enable-realtime with this option. "
+                "If you do not set this option, the server uses the deployment limit."
+            ),
+        ),
+    ] = None,
+    realtime_idle_input_timeout_s: Annotated[
+        float | None,
+        typer.Option(
+            "--realtime-idle-input-timeout-s",
+            callback=validate_realtime_timeout,
+            help=(
+                "Set the input-idle timeout for shared sessions, in seconds. "
+                "Use --enable-realtime with this option. "
+                "If you do not set this option, the server uses the deployment limit."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Serve the pipeline.
 
@@ -581,6 +615,8 @@ def serve(
         model_name=model_name,
         log_level=log_level,
         enable_realtime=enable_realtime,
+        realtime_admission_timeout_s=realtime_admission_timeout_s,
+        realtime_idle_input_timeout_s=realtime_idle_input_timeout_s,
         allowed_local_media_path=validate_allowed_local_media_path(
             allowed_local_media_path
         ),

@@ -70,6 +70,54 @@ It:
 
 Use it when you want the standard out-of-the-box server path.
 
+### Timeouts for shared sessions
+
+A shared session has an admission timeout and an input-idle timeout. The admission timeout sets a time limit to start session admission. The input-idle timeout sets a time limit without accepted input.
+
+| Timeout | Runtime limit | Default |
+| --- | --- | --- |
+| Admission timeout | `session_update_timeout_s` | 60 seconds |
+| Input-idle timeout | `idle_input_timeout_s` | 60 seconds |
+
+To use these options, set `--enable-realtime`. The pipeline must have `realtime_deployment_factory`. `MiniCPMODuplexPipelineConfig` has this factory.
+
+| Server option | Python argument | Example value |
+| --- | --- | --- |
+| `--realtime-admission-timeout-s` | `realtime_admission_timeout_s` | `20` seconds |
+| `--realtime-idle-input-timeout-s` | `realtime_idle_input_timeout_s` | `300` seconds |
+
+Set each timeout to a finite number greater than zero. If you do not set an option, the server uses the deployment limit. Give the Python arguments to `launch_server` or `run_server`. Do not put these options in the pipeline YAML.
+
+The admission timer starts when the connection starts. An admission error does not start a new timer. After the deadline, a new `session.update` cannot start admission.
+
+An admission operation can complete after the deadline. The timer waits for this operation and its cleanup. Each operation uses `cleanup_timeout_s` as its time limit.
+
+A new input-idle period starts when the session opens. A new period also starts after each of these events:
+
+- The runtime accepts audio input or an image.
+- An input clear or input end command completes.
+- The adapter completes an input unit.
+
+The input-idle timeout cannot close a session while the adapter processes an input unit. A command that holds the command lock also prevents this closure. WebSocket Pong frames and `session.update` messages do not start a new input-idle period. Rejected images do not start a new period.
+
+The runtime does an input activity check each input-idle period. An input timeout can occur after approximately two periods. Cleanup and the event loop can add more time.
+
+`CoordinatorAdapter` also sets a pipeline idle timeout. This timeout gives a second time limit. Its value is the maximum of these values:
+
+- The default pipeline idle timeout of 300 seconds.
+- The pipeline idle timeout in the configuration.
+- Two input-idle periods, plus the runtime cleanup timeout and the pipeline operation timeout.
+
+The pipeline receives full input units. The runtime can accept audio before an input unit is full. Audio, images, and clear commands can keep the runtime active without a new pipeline input unit. The pipeline idle timeout can close that session.
+
+Other pipeline sessions keep the idle timeout from their configuration. This change does not change operation timeouts or cleanup timeouts.
+
+### Release note: input-idle timeout
+
+Shared sessions have a default input-idle timeout of 60 seconds. Before this change, the runtime did not have this timeout. If a client sends no input during a long pause, the server can close its connection. WebSocket Pong frames do not prevent this closure.
+
+To let a pause continue for more time, increase `--realtime-idle-input-timeout-s`. For example, use `--realtime-idle-input-timeout-s 300` for a timeout of five minutes.
+
 ### WebSocket close codes for shared sessions
 
 A shared session sends the last JSON events before the WebSocket Close frame. The frame gives a close code and a close reason.
@@ -77,10 +125,10 @@ A shared session sends the last JSON events before the WebSocket Close frame. Th
 | Close code | Close reason |
 | --- | --- |
 | `1000` | `client_closed` or `disconnect` |
-| `1008` | `session_update_timeout` or `context_exhausted` |
+| `1008` | `session_update_timeout`, `idle_timeout`, or `context_exhausted` |
 | `1011` | An internal error, adapter failure, or cleanup failure |
 
-The server uses code `1008` for an admission timeout or the context limit. These conditions are application policies. [RFC 6455, section 7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1) gives the WebSocket close codes.
+The server uses code `1008` for an admission timeout, an input-idle timeout, or the context limit. These conditions are application policies. [RFC 6455, section 7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1) gives the WebSocket close codes.
 
 The Close frame has a limit of 123 bytes for the close reason. The server uses UTF-8 for this text. If the text is too long, the server removes whole characters from the end. The JSON events keep the full reason.
 
