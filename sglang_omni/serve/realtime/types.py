@@ -37,6 +37,7 @@ CLOSE_REASON_IDLE_TIMEOUT = "idle_timeout"
 CLOSE_REASON_CONTEXT_EXHAUSTED = ContextExhaustedError.CODE
 CLOSE_REASON_INTERNAL = "internal"
 CLOSE_REASON_CLEANUP_TIMEOUT = "cleanup_timeout"
+CLOSE_REASON_TRANSPORT_TIMEOUT = "transport_timeout"
 CLOSE_CODE_BY_REASON: dict[str, int] = {
     CLOSE_REASON_CLIENT_CLOSED: WS_1000_NORMAL_CLOSURE,
     CLOSE_REASON_DISCONNECT: WS_1000_NORMAL_CLOSURE,
@@ -45,6 +46,7 @@ CLOSE_CODE_BY_REASON: dict[str, int] = {
     CLOSE_REASON_CONTEXT_EXHAUSTED: WS_1008_POLICY_VIOLATION,
     CLOSE_REASON_INTERNAL: WS_1011_INTERNAL_ERROR,
     CLOSE_REASON_CLEANUP_TIMEOUT: WS_1011_INTERNAL_ERROR,
+    CLOSE_REASON_TRANSPORT_TIMEOUT: WS_1011_INTERNAL_ERROR,
 }
 
 
@@ -70,6 +72,7 @@ class RuntimeLimits:
     cleanup_timeout_s: float = 30
     session_update_timeout_s: float = 60
     idle_input_timeout_s: float = 60
+    transport_timeout_s: float = 30
 
     def __post_init__(self) -> None:
         if any(
