@@ -180,7 +180,7 @@ final class KeyCaptureView: NSView {
             (1 << CGEventType.flagsChanged.rawValue) |
             (1 << CGEventType.otherMouseDown.rawValue)
 
-        guard let (tap, tapLocation) = createEventTap(eventMask: eventMask) else {
+        guard let tap = createEventTap(eventMask: eventMask) else {
             onRecorderMessageChange?("System-reserved shortcuts such as fn+space may still be intercepted by macOS. If capture fails, disable or remap the Globe / input source shortcut in System Settings.")
             return
         }
@@ -206,7 +206,7 @@ final class KeyCaptureView: NSView {
         runLoopSource = nil
     }
 
-    private func createEventTap(eventMask: CGEventMask) -> (tap: CFMachPort, location: CGEventTapLocation)? {
+    private func createEventTap(eventMask: CGEventMask) -> CFMachPort? {
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             let view = Unmanaged<KeyCaptureView>.fromOpaque(refcon).takeUnretainedValue()
@@ -225,7 +225,7 @@ final class KeyCaptureView: NSView {
                 callback: callback,
                 userInfo: Unmanaged.passUnretained(self).toOpaque()
             ) {
-                return (tap, tapLocation)
+                return tap
             }
         }
         return nil
