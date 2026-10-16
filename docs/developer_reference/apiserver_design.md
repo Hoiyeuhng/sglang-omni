@@ -70,6 +70,29 @@ It:
 
 Use it when you want the standard out-of-the-box server path.
 
+### WebSocket close codes for shared duplex sessions
+
+The server sends the last application events before it sends the WebSocket Close frame.
+The Close frame gives the code and reason for session closure.
+
+| Close code | Reason for session closure |
+| --- | --- |
+| `1000` | `client_closed` or `disconnect` |
+| `1008` | `session_update_timeout` or `context_exhausted` |
+| `1011` | An internal error, adapter failure, or cleanup failure |
+
+[RFC 6455 section 7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1) gives these codes.
+The server uses `1008` for the admission timeout and the context limit.
+The RFC does not set the timeout periods or the JSON error codes.
+The application sets the JSON error codes.
+
+The reason in the Close frame has a maximum length of 123 UTF-8 bytes.
+If the reason is too long, the server removes characters from its end.
+The server does not keep part of a UTF-8 character.
+The JSON events keep the full reason.
+
+A non-fatal request error does not close the connection.
+
 ## Route Surface
 
 The current server exposes these main routes:

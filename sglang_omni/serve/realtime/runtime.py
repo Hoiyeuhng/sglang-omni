@@ -38,6 +38,12 @@ from sglang_omni.serve.realtime.schema import (
 )
 from sglang_omni.serve.realtime.task_cleanup import cancel_local_tasks
 from sglang_omni.serve.realtime.types import (
+    CLOSE_REASON_CLEANUP_TIMEOUT,
+    CLOSE_REASON_CLIENT_CLOSED,
+    CLOSE_REASON_CONTEXT_EXHAUSTED,
+    CLOSE_REASON_DISCONNECT,
+    CLOSE_REASON_INTERNAL,
+    CLOSE_REASON_SESSION_UPDATE_TIMEOUT,
     PCM16_BYTES_PER_SAMPLE,
     AdapterFactory,
     Capabilities,
@@ -92,6 +98,7 @@ class SessionRuntime:
         self.pump_task: asyncio.Task[None] | None = None
         self.update_deadline_task: asyncio.Task[None] | None = None
         self.close_task: asyncio.Task[None] | None = None
+        self.close_reason: str | None = None
         self.processing_unit: ContextVar[Unit | None] = ContextVar(
             "realtime_unit", default=None
         )
@@ -138,7 +145,7 @@ class SessionRuntime:
                 self.state = "CLOSING"
                 self.fail(
                     f"session not opened within {self.limits.session_update_timeout_s:g} s",
-                    "session_update_timeout",
+                    CLOSE_REASON_SESSION_UPDATE_TIMEOUT,
                 )
             else:
                 pass
@@ -499,16 +506,19 @@ class SessionRuntime:
         except Exception as exc:
             if ContextExhaustedError.matches(exc):
                 logger.error(f"Realtime session {self.session_id} closed: {exc}")
-                failure_code = ContextExhaustedError.CODE
+                failure_code = CLOSE_REASON_CONTEXT_EXHAUSTED
             else:
                 logger.exception(
                     f"Realtime session {self.session_id} input pump failed"
                 )
-                failure_code = "internal"
+                failure_code = CLOSE_REASON_INTERNAL
             self.fail(str(exc), failure_code)
 
     def fail(
-        self, message: str, code: str = "internal", event_id: str | None = None
+        self,
+        message: str,
+        code: str = CLOSE_REASON_INTERNAL,
+        event_id: str | None = None,
     ) -> None:
         if self.close_task is None:
             self.output_buffer.enqueue_terminal(
@@ -526,6 +536,7 @@ class SessionRuntime:
         await asyncio.shield(self.close_task)
 
     async def run_close(self, reason: str, event_id: str | None = None) -> None:
+        self.close_reason = reason
         # Note (Junnan Li): Set CLOSING under the command lock, then release it: adapter
         # teardown can run a VAD callback that must observe CLOSING.
         async with self.command_lock:
@@ -555,10 +566,11 @@ class SessionRuntime:
                 cleanup_error = cleanup_error or exc
         try:
             if cleanup_error is not None:
+                self.close_reason = CLOSE_REASON_CLEANUP_TIMEOUT
                 self.output_buffer.clear()
                 self.output_buffer.enqueue_terminal(
                     Failure(
-                        "cleanup_timeout",
+                        CLOSE_REASON_CLEANUP_TIMEOUT,
                         str(cleanup_error)[:MAX_FAILURE_MESSAGE_CHARS],
                         True,
                         event_id,
@@ -567,7 +579,7 @@ class SessionRuntime:
             else:
                 status: ResponseStatus = (
                     "cancelled"
-                    if reason in ("client_closed", "disconnect")
+                    if reason in (CLOSE_REASON_CLIENT_CLOSED, CLOSE_REASON_DISCONNECT)
                     else "failed"
                 )
                 self.output_buffer.finish_responses(status, reason)
