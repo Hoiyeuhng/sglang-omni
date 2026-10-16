@@ -105,6 +105,7 @@ class SessionRuntime:
         self.watchdog_task: asyncio.Task[None] | None = None
         self.close_task: asyncio.Task[None] | None = None
         self.close_reason: str | None = None
+        self.closed_event: asyncio.Event = asyncio.Event()
         self.processing_unit: ContextVar[Unit | None] = ContextVar(
             "realtime_unit", default=None
         )
@@ -659,3 +660,4 @@ class SessionRuntime:
         finally:
             self.state = "CLOSED"
             self.output_buffer.output_ready.set()
+            self.closed_event.set()

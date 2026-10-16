@@ -665,6 +665,16 @@ async def test_competing_closes_keep_initial_failure_reason() -> None:
     assert runtime.close_reason == "context_exhausted"
 
 
+@pytest.mark.parametrize(
+    "timeout_seconds", [0, -1, float("nan"), float("inf"), float("-inf")]
+)
+def test_transport_timeout_requires_a_finite_positive_value(
+    timeout_seconds: float,
+) -> None:
+    with pytest.raises(ValueError, match="finite and positive"):
+        RuntimeLimits(transport_timeout_s=timeout_seconds)
+
+
 def closing_failure(envelopes: list[Envelope]) -> tuple[str, str]:
     failures = [
         envelope.event for envelope in envelopes if isinstance(envelope.event, Failure)

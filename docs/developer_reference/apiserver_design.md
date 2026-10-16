@@ -118,6 +118,22 @@ Shared sessions have a default input-idle timeout of 60 seconds. Before this cha
 
 To let a pause continue for more time, increase `--realtime-idle-input-timeout-s`. For example, use `--realtime-idle-input-timeout-s 300` for a timeout of five minutes.
 
+### Transport timeouts for shared sessions
+
+The transport timeout sets a time limit for WebSocket write and close operations. `RuntimeLimits.transport_timeout_s` has a default value of 30 seconds. Set this deployment limit to a finite number greater than zero. The `/v1/realtime/capabilities` response gives this limit.
+
+Each text write has a timeout. If a write does not complete in time, the runtime starts cleanup with the reason `transport_timeout`. If a close task controls cleanup, that task keeps its first reason.
+
+After native cleanup, the session waits for the last JSON events and the Close frame. This wait has a limit of one transport timeout period. The session then cancels local tasks that did not stop. Each of the two cancellation rounds has a limit of one transport timeout period.
+
+If local tasks stop after cancellation, the connection slot is available in three transport timeout periods or less after native cleanup. The event loop can add more time. If a task ignores the two cancellation rounds, the connection reports a cleanup error. That task can stay active.
+
+The connection keeps its first `CancelledError`, including the message. More cancellation requests do not replace this error. The connection task waits for local cleanup before it stops with this error. If local cleanup has an error, the cleanup error becomes the cause of the cancellation error.
+
+A different task controls native cleanup. A transport timeout does not cancel that task. Native cleanup keeps its time limits. After a transport timeout, the last JSON events or the Close frame might not get to the peer.
+
+The ASGI backend controls TCP shutdown. The Close handshake timer can continue after the connection slot is available.
+
 ### WebSocket close codes for shared sessions
 
 A shared session sends the last JSON events before the WebSocket Close frame. The frame gives a close code and a close reason.
@@ -126,7 +142,7 @@ A shared session sends the last JSON events before the WebSocket Close frame. Th
 | --- | --- |
 | `1000` | `client_closed` or `disconnect` |
 | `1008` | `session_update_timeout`, `idle_timeout`, or `context_exhausted` |
-| `1011` | An internal error, adapter failure, or cleanup failure |
+| `1011` | An internal error, adapter failure, cleanup failure, or transport timeout |
 
 The server uses code `1008` for an admission timeout, an input-idle timeout, or the context limit. These conditions are application policies. [RFC 6455, section 7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1) gives the WebSocket close codes.
 

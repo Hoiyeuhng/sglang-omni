@@ -9,9 +9,11 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Literal
 
 import pytest
 import uvicorn
+from uvicorn.config import WS_PROTOCOLS
 
 from sglang_omni.client.client import Client
 from sglang_omni.serve.openai_api import create_app
@@ -19,6 +21,7 @@ from sglang_omni.serve.realtime.manager import (
     RealtimeDeployment,
     RealtimeSessionManager,
 )
+from sglang_omni.serve.realtime.schema import JsonObject
 from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits
 from tests.unit_test.serve.test_realtime_duplex_session import (
     MODEL_NAME,
@@ -33,6 +36,14 @@ from websockets.asyncio.client import (  # noqa: E402 - websockets version gate
     ClientConnection,
     connect,
 )
+from websockets.client import ClientProtocol  # noqa: E402 - websockets version gate
+from websockets.frames import (  # noqa: E402 - websockets version gate
+    Close,
+    Frame,
+    Opcode,
+)
+from websockets.http11 import Response  # noqa: E402 - websockets version gate
+from websockets.uri import parse_uri  # noqa: E402 - websockets version gate
 
 PING_INTERVAL_SECONDS = 0.2
 PING_TIMEOUT_SECONDS = 0.2
@@ -40,8 +51,18 @@ ADMISSION_TIMEOUT_SECONDS = 1.2
 IDLE_INPUT_TIMEOUT_SECONDS = 3 * (PING_INTERVAL_SECONDS + PING_TIMEOUT_SECONDS)
 RELEASE_MARGIN_SECONDS = 2.0
 SOCKET_WAIT_TIMEOUT_SECONDS = 5.0
+SOCKET_READ_CHUNK_BYTES = 64 * 1024
+TRANSPORT_TIMEOUT_SECONDS = 0.05
 STARTUP_POLL_INTERVAL_SECONDS = 0.01
 RELEASE_POLL_INTERVAL_SECONDS = 0.02
+LEGACY_CLOSE_TIMEOUT_SECONDS = 10.0
+# Note (Haiyang Luo): The legacy WebSocket server waits 10 seconds for a peer to complete closure.
+DEAD_PEER_RELEASE_SECONDS = (
+    PING_INTERVAL_SECONDS
+    + PING_TIMEOUT_SECONDS
+    + LEGACY_CLOSE_TIMEOUT_SECONDS
+    + RELEASE_MARGIN_SECONDS
+)
 
 
 @dataclass(kw_only=True)
@@ -52,7 +73,12 @@ class LiveServer:
 
 
 @asynccontextmanager
-async def serve_live(limits: RuntimeLimits) -> AsyncIterator[LiveServer]:
+async def serve_live(
+    limits: RuntimeLimits,
+    *,
+    websocket_backend: Literal["auto", "websockets", "websockets-sansio"] = "auto",
+    ping_interval_seconds: float | None = PING_INTERVAL_SECONDS,
+) -> AsyncIterator[LiveServer]:
     adapter = ScriptedAdapter()
     deployment = RealtimeDeployment(
         capabilities=Capabilities(),
@@ -65,12 +91,14 @@ async def serve_live(limits: RuntimeLimits) -> AsyncIterator[LiveServer]:
         model_name=MODEL_NAME,
         realtime_deployment=deployment,
     )
+    # Note (Haiyang Luo): Short ping intervals help the tests detect a dead peer.
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
         port=0,
         log_level="warning",
-        ws_ping_interval=PING_INTERVAL_SECONDS,
+        ws=websocket_backend,
+        ws_ping_interval=ping_interval_seconds,
         ws_ping_timeout=PING_TIMEOUT_SECONDS,
     )
     server = uvicorn.Server(config)
@@ -125,6 +153,52 @@ async def assert_released(live_server: LiveServer, timeout_seconds: float) -> No
         await receive_until(connection, "session.created")
 
 
+async def receive_raw_until(
+    reader: asyncio.StreamReader,
+    protocol: ClientProtocol,
+    event_type: Literal["session.created", "session.updated", "websocket.close"],
+) -> Frame:
+    deadline_seconds = time.monotonic() + SOCKET_WAIT_TIMEOUT_SECONDS
+    while True:
+        socket_bytes = await asyncio.wait_for(
+            reader.read(SOCKET_READ_CHUNK_BYTES), deadline_seconds - time.monotonic()
+        )
+        assert socket_bytes, "peer disconnected before the expected event"
+        protocol.receive_data(socket_bytes)
+        for event in protocol.events_received():
+            if isinstance(event, Response):
+                assert event.status_code == 101
+            elif isinstance(event, Frame) and event.opcode == Opcode.CLOSE:
+                assert event_type == "websocket.close"
+                return event
+            elif (
+                isinstance(event, Frame)
+                and event.opcode == Opcode.TEXT
+                and json.loads(event.data)["type"] == event_type
+            ):
+                return event
+            else:
+                pass
+
+
+async def send_raw_event(
+    writer: asyncio.StreamWriter,
+    protocol: ClientProtocol,
+    event_type: Literal["session.update", "session.close"],
+) -> None:
+    client_event: JsonObject = {
+        "event_id": f"client_{event_type}",
+        "type": event_type,
+    }
+    if event_type == "session.update":
+        client_event["session"] = {}
+    else:
+        pass
+    protocol.send_text(json.dumps(client_event).encode("utf-8"))
+    writer.write(b"".join(protocol.data_to_send()))
+    await asyncio.wait_for(writer.drain(), SOCKET_WAIT_TIMEOUT_SECONDS)
+
+
 @pytest.mark.asyncio
 async def test_client_close_releases_session() -> None:
     async with serve_live(RuntimeLimits()) as live_server:
@@ -139,6 +213,30 @@ async def test_client_close_releases_session() -> None:
             "client_closed",
         )
         await assert_released(live_server, RELEASE_MARGIN_SECONDS)
+        assert live_server.adapter.is_closed
+
+
+@pytest.mark.asyncio
+async def test_aborted_socket_releases_session() -> None:
+    async with serve_live(RuntimeLimits()) as live_server:
+        connection = await connect(live_server.url, ping_interval=None)
+        await open_session(connection)
+        connection.transport.abort()
+        await assert_released(live_server, RELEASE_MARGIN_SECONDS)
+        assert live_server.adapter.is_closed
+
+
+@pytest.mark.asyncio
+async def test_unresponsive_peer_is_reaped_by_ping_timeout() -> None:
+    async with serve_live(RuntimeLimits()) as live_server:
+        connection = await connect(live_server.url, ping_interval=None)
+        await open_session(connection)
+        # Note (Haiyang Luo): A client that does not read cannot answer server pings.
+        connection.transport.pause_reading()
+        try:
+            await assert_released(live_server, DEAD_PEER_RELEASE_SECONDS)
+        finally:
+            connection.transport.abort()
         assert live_server.adapter.is_closed
 
 
@@ -181,3 +279,62 @@ async def test_open_peer_answering_pings_is_closed_by_idle_timeout() -> None:
         )
         await assert_released(live_server, RELEASE_MARGIN_SECONDS)
         assert live_server.adapter.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "websocket_backend",
+    [
+        "websockets",
+        pytest.param(
+            "websockets-sansio",
+            marks=pytest.mark.skipif(
+                "websockets-sansio" not in WS_PROTOCOLS,
+                reason="uvicorn does not provide the SansIO WebSocket backend",
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("close_trigger", ["client", "idle_timeout"])
+async def test_peer_that_ignores_close_releases_session(
+    websocket_backend: Literal["websockets", "websockets-sansio"],
+    close_trigger: Literal["client", "idle_timeout"],
+) -> None:
+    limits = RuntimeLimits(
+        transport_timeout_s=TRANSPORT_TIMEOUT_SECONDS,
+        idle_input_timeout_s=IDLE_INPUT_TIMEOUT_SECONDS,
+    )
+    async with serve_live(
+        limits, websocket_backend=websocket_backend, ping_interval_seconds=None
+    ) as live_server:
+        websocket_uri = parse_uri(live_server.url)
+        protocol = ClientProtocol(websocket_uri)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(websocket_uri.host, websocket_uri.port),
+            SOCKET_WAIT_TIMEOUT_SECONDS,
+        )
+        try:
+            protocol.send_request(protocol.connect())
+            writer.write(b"".join(protocol.data_to_send()))
+            await asyncio.wait_for(writer.drain(), SOCKET_WAIT_TIMEOUT_SECONDS)
+            await receive_raw_until(reader, protocol, "session.created")
+            await send_raw_event(writer, protocol, "session.update")
+            await receive_raw_until(reader, protocol, "session.updated")
+            if close_trigger == "client":
+                await send_raw_event(writer, protocol, "session.close")
+                expected_close = Close(1000, "client_closed")
+            else:
+                expected_close = Close(1008, "idle_timeout")
+            close_frame = await receive_raw_until(reader, protocol, "websocket.close")
+            assert Close.parse(close_frame.data) == expected_close
+            # Note (Haiyang Luo): Discard the queued reply to leave the closing handshake incomplete.
+            assert protocol.data_to_send()
+            release_timeout_seconds = TRANSPORT_TIMEOUT_SECONDS + RELEASE_MARGIN_SECONDS
+            await asyncio.wait_for(
+                assert_released(live_server, release_timeout_seconds),
+                release_timeout_seconds,
+            )
+            assert live_server.adapter.is_closed
+        finally:
+            writer.close()
+            await asyncio.wait_for(writer.wait_closed(), SOCKET_WAIT_TIMEOUT_SECONDS)
