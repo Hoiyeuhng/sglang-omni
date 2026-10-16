@@ -2375,3 +2375,53 @@
 "Open Notes from the main window" = "Open Notes from the main window";
 "Try Later" = "Try Later";
 "Less" = "Less";
+
+"Export diagnostic sample" = "Export diagnostic sample";
+
+"Export diagnostic sample…" = "Export diagnostic sample…";
+
+"Choose content from this record only. Audio, saved final text and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust." = "Choose content from this record only. Audio, saved final text and expected transcription may contain confidential information. Nothing is uploaded. Share the exported folder only with people you trust.";
+
+"Include saved final text" = "Include saved final text";
+
+"This record has no saved final text." = "This record has no saved final text.";
+
+"Include saved audio" = "Include saved audio";
+
+"Checking saved audio…" = "Checking saved audio…";
+
+"Saved audio: %@. Only this record's audio will be exported." = "Saved audio: %@. Only this record's audio will be exported.";
+
+"Saved audio is unavailable for this record. Exporting will not record audio or enable audio saving." = "Saved audio is unavailable for this record. Exporting will not record audio or enable audio saving.";
+
+"Expected transcription (optional, included if entered)" = "Expected transcription (optional, included if entered)";
+
+"Expected transcription" = "Expected transcription";
+
+"Files to export:" = "Files to export:";
+
+"The manifest contains only a format version, numeric app version, selected filenames, audio byte count and final-text origin. It contains no settings, endpoints or diagnostic logs." = "The manifest contains only a format version, numeric app version, selected filenames, audio byte count and final-text origin. It contains no settings, endpoints or diagnostic logs.";
+
+"Show partial export in Finder" = "Show partial export in Finder";
+
+"Choose export folder…" = "Choose export folder…";
+
+"Choose where to create the private diagnostic sample folder" = "Choose where to create the private diagnostic sample folder";
+
+"Export failed and a partial private sample could not be removed. Delete the folder shown below when you no longer need it." = "Export failed and a partial private sample could not be removed. Delete the folder shown below when you no longer need it.";
+
+"Export cancelled. No sample was saved." = "Export cancelled. No sample was saved.";
+
+"The destination already exists. No existing files were changed. Choose another folder and try again." = "The destination already exists. No existing files were changed. Choose another folder and try again.";
+
+"Could not export the sample. Check that the audio and destination are available and there is enough free space. No partial sample was saved." = "Could not export the sample. Check that the audio and destination are available and there is enough free space. No partial sample was saved.";
+
+"Exporting…" = "Exporting…";
+
+"Partial diagnostic sample remains" = "Partial diagnostic sample remains";
+
+"Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output." = "Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output.";
+
+"This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved." = "This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved.";
+
+"Export failed and cleanup could not be confirmed. The sample folder's current location could not be determined; check the selected destination and any folders moved during export." = "Export failed and cleanup could not be confirmed. The sample folder's current location could not be determined; check the selected destination and any folders moved during export.";

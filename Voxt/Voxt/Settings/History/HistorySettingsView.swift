@@ -31,6 +31,7 @@ struct HistorySettingsView: View {
     @State private var historyAudioStorageStats = HistoryAudioStorageStats(storedFileCount: 0, totalBytes: 0)
     @State private var pendingBulkDeletionTarget: HistoryBulkDeletionTarget?
     @State private var selectedHistoryInfoEntry: TranscriptionHistoryEntry?
+    @State private var pendingDebugSample: TranscriptionHistoryEntry?
     @State private var historySearchText = ""
     @State private var showHistorySearchDialog = false
     @State private var visibleHistoryEntries: [TranscriptionHistoryEntry] = []
@@ -293,6 +294,13 @@ struct HistorySettingsView: View {
                 onOpenHistoryAudioStorageInFinder: openHistoryAudioStorageInFinder,
                 onChooseHistoryAudioStorageDirectory: chooseHistoryAudioStorageDirectory,
                 onExportAllHistoryAudio: exportAllHistoryAudio
+            )
+        }
+        .sheet(item: $pendingDebugSample) { entry in
+            HistoryDiagnosticSampleSheet(
+                entry: entry,
+                audioRootURL: HistoryAudioStorageDirectoryManager.resolvedRootURL(),
+                resolvedAudioURL: historyStore.audioURL(for: entry)
             )
         }
         .sheet(item: $selectedHistoryInfoEntry) { entry in
@@ -607,6 +615,9 @@ struct HistorySettingsView: View {
                     },
                     onDelete: { deleteHistoryEntry(entry) }
                 )
+                .contextMenu {
+                    Button(localized("Export diagnostic sample…")) { pendingDebugSample = entry }
+                }
                 .padding(.vertical, historyRowVerticalInset)
             case .meetingEntry(let entry):
                 HistoryListRow(
@@ -616,6 +627,11 @@ struct HistorySettingsView: View {
                     onShowInfo: { showHistoryDetail(for: entry) },
                     onDelete: { deleteHistoryEntry(id: entry.id) }
                 )
+                .contextMenu {
+                    Button(localized("Export diagnostic sample…")) {
+                        pendingDebugSample = historyStore.entry(id: entry.id)
+                    }
+                }
                 .padding(.vertical, historyRowVerticalInset)
             }
         }
