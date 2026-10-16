@@ -2,6 +2,7 @@
 // Provides Custom LLMModel Manager for model catalog and storage support.
 
 import Foundation
+import Logging
 import HuggingFace
 import Combine
 import MLX

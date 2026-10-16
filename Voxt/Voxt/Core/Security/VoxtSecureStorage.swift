@@ -2,6 +2,7 @@
 // Provides Voxt Secure Storage for permissions and secure storage.
 
 import Foundation
+import Logging
 import LocalAuthentication
 import Security
 

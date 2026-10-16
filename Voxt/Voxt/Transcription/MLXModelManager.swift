@@ -2,6 +2,7 @@
 // Provides MLXModel Manager for transcription engines.
 
 import Foundation
+import Logging
 import Combine
 import CFNetwork
 import MLX
