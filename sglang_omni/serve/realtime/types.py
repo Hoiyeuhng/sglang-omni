@@ -33,6 +33,7 @@ SUPPORTED_OUTPUT_MODALITIES = frozenset({"text", "audio"})
 CLOSE_REASON_CLIENT_CLOSED = "client_closed"
 CLOSE_REASON_DISCONNECT = "disconnect"
 CLOSE_REASON_SESSION_UPDATE_TIMEOUT = "session_update_timeout"
+CLOSE_REASON_IDLE_TIMEOUT = "idle_timeout"
 CLOSE_REASON_CONTEXT_EXHAUSTED = ContextExhaustedError.CODE
 CLOSE_REASON_INTERNAL = "internal"
 CLOSE_REASON_CLEANUP_TIMEOUT = "cleanup_timeout"
@@ -40,6 +41,7 @@ CLOSE_CODE_BY_REASON: dict[str, int] = {
     CLOSE_REASON_CLIENT_CLOSED: WS_1000_NORMAL_CLOSURE,
     CLOSE_REASON_DISCONNECT: WS_1000_NORMAL_CLOSURE,
     CLOSE_REASON_SESSION_UPDATE_TIMEOUT: WS_1008_POLICY_VIOLATION,
+    CLOSE_REASON_IDLE_TIMEOUT: WS_1008_POLICY_VIOLATION,
     CLOSE_REASON_CONTEXT_EXHAUSTED: WS_1008_POLICY_VIOLATION,
     CLOSE_REASON_INTERNAL: WS_1011_INTERNAL_ERROR,
     CLOSE_REASON_CLEANUP_TIMEOUT: WS_1011_INTERNAL_ERROR,
@@ -67,6 +69,7 @@ class RuntimeLimits:
     max_history_chars: int = 64 * 1024
     cleanup_timeout_s: float = 30
     session_update_timeout_s: float = 60
+    idle_input_timeout_s: float = 60
 
     def __post_init__(self) -> None:
         if any(
