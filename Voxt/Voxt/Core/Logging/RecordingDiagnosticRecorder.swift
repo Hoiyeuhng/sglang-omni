@@ -5,7 +5,7 @@ nonisolated struct RecordingDiagnosticEvent: Codable, Sendable {
         case sessionStarted, inputPreparing, inputReady, recordingStopped
         case sessionFailed, sessionCancelled, sessionFinished, sessionCleanup
         case captureSummary, asrInitializing, asrReceivingAudio, asrFirstPartial, asrCompleted
-        case vadStarted, vadFallback, vadSummary, vadReleased
+        case vadStarted, vadFallback, vadSummary, vadReleased, vadRuntimeAcquiring, vadRuntimeAcquired, vadStreamReady
         case runtimeStarted, runtimeReady, runtimeModelLoaded, runtimeFailed, runtimeExited, runtimeReleased
         case requestStarted, requestFirstPartial, requestCompleted, requestCleanup
         case enhancementStarted, enhancementCompleted, insertionAttempted, insertionCompleted

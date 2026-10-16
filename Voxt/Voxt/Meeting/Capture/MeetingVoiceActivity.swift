@@ -278,6 +278,8 @@ actor MeetingVoiceActivityDetector {
 }
 
 actor ASRSileroStreamingVoiceActivityDetector {
+    private let diagnosticSessionID: UUID?
+    private let diagnostics: RecordingDiagnosticRecorder
     private let sampleRate = 16_000
     private let chunkSize = 512
     private var model: SileroVAD?
@@ -290,6 +292,11 @@ actor ASRSileroStreamingVoiceActivityDetector {
     private var omniStreams: [String: OmniVoiceActivityStream] = [:]
     private var omniEndpoint: OmniServerEndpoint?
     private var unloadGeneration = 0
+
+    init(diagnosticSessionID: UUID? = nil, diagnostics: RecordingDiagnosticRecorder = RecordingDiagnostics.shared) {
+        self.diagnosticSessionID = diagnosticSessionID
+        self.diagnostics = diagnostics
+    }
 
     func reset() {
         states.removeAll()
@@ -378,7 +385,7 @@ actor ASRSileroStreamingVoiceActivityDetector {
         if let existing = omniStreams[streamID] {
             stream = existing
         } else {
-            stream = OmniVoiceActivityStream(endpoint: endpoint)
+            stream = OmniVoiceActivityStream(endpoint: endpoint, diagnosticSessionID: diagnosticSessionID, diagnostics: diagnostics)
             omniStreams[streamID] = stream
         }
         do {
@@ -421,7 +428,7 @@ actor ASRSileroStreamingVoiceActivityDetector {
         }
         let generation = unloadGeneration
         let directory = try await SileroVADModelProvisioner.shared.ensureModelDirectory()
-        let endpoint = try await OmniSileroVADRuntime.shared.acquire(modelDirectory: directory)
+        let endpoint = try await OmniSileroVADRuntime.shared.acquire(modelDirectory: directory, diagnosticSessionID: diagnosticSessionID)
         if unloadGeneration != generation {
             // Note (Jiaxin Deng): unload() ran while this call waited, so it could not return this lease.
             await OmniSileroVADRuntime.shared.release()

@@ -20,7 +20,10 @@ swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratc
   "$project_directory/Voxt/Core/Logging/VoxtRuntimeEnvironment.swift" \
   "$project_directory/Voxt/Transcription/OmniASRRuntime.swift" \
   "$project_directory/Voxt/Transcription/OmniTranscriptionRequest.swift" \
+  "$project_directory/Voxt/Transcription/OmniSharedModelRuntime.swift" \
+  "$project_directory/Voxt/Transcription/OmniVoiceActivity.swift" \
   "$project_directory/tools/RecordingDiagnosticRuntimeTests.swift" \
+  "$project_directory/tools/RecordingDiagnosticNativeVADTests.swift" \
   -o "$scratch_directory/runtime-tests"
 "$scratch_directory/runtime-tests" "$project_directory/VoxtTests/Fixtures/Audio/qwen-official/qwen_audio_short_en.flac"
 swiftc -swift-version 5 -default-isolation MainActor -module-cache-path "$scratch_directory/module-cache" \

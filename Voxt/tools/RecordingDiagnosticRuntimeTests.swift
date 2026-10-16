@@ -16,7 +16,10 @@ struct RecordingDiagnosticRuntimeTests {
         let server = scratch.appendingPathComponent("fake-runtime")
         let script = """
         #!/usr/bin/python3
+        import base64
+        import hashlib
         import http.server
+        import struct
         import json
         import os
         import sys
@@ -25,10 +28,41 @@ struct RecordingDiagnosticRuntimeTests {
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *values):
                 pass
+            protocol_version = 'HTTP/1.1'
+            def do_GET(self):
+                key = self.headers.get('Sec-WebSocket-Key', '')
+                accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
+                self.send_response(101)
+                self.send_header('Upgrade', 'websocket')
+                self.send_header('Connection', 'Upgrade')
+                self.send_header('Sec-WebSocket-Accept', accept)
+                self.end_headers()
+                while True:
+                    header = self.rfile.read(2)
+                    if len(header) != 2 or header[0] & 15 == 8:
+                        return
+                    length = header[1] & 127
+                    if length == 126:
+                        length = struct.unpack('!H', self.rfile.read(2))[0]
+                    elif length == 127:
+                        length = struct.unpack('!Q', self.rfile.read(8))[0]
+                    mask = self.rfile.read(4) if header[1] & 128 else b''
+                    payload = self.rfile.read(length)
+                    if mask:
+                        payload = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+                    first = struct.unpack('<f', payload[:4])[0] if len(payload) >= 4 else 0
+                    if first == -2:
+                        open(os.path.join(os.path.dirname(sys.argv[0]), 'vad-stalled'), 'wb').close()
+                        time.sleep(0.5)
+                    reply = b'{"private":"token=secret /Users/test/model https://private.invalid"}' if first == -1 else b'{"probability":0.75}'
+                    self.wfile.write(bytes([0x81, len(reply)]) + reply)
+                    self.wfile.flush()
             def do_POST(self):
                 body = self.rfile.read(int(self.headers['Content-Length']))
                 if b'FAIL_REQUEST' in body:
                     self.send_response(422)
+                    self.send_header('Connection', 'close')
+                    self.close_connection = True
                     self.end_headers()
                     self.wfile.write(b'private transcript token=secret /private/model')
                     return
@@ -37,10 +71,12 @@ struct RecordingDiagnosticRuntimeTests {
                 text = '' if b'EMPTY_REQUEST' in body else 'synthetic private transcript'
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Connection', 'close')
+                self.close_connection = True
                 self.end_headers()
                 for event in [{'type': 'transcript.text.delta', 'delta': text}, {'type': 'transcript.text.done', 'text': text}]:
                     self.wfile.write(('data: ' + json.dumps(event) + '\\n\\n').encode())
-        server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         print(json.dumps({'event': 'ready', 'host': '127.0.0.1', 'port': server.server_port, 'model_name': 'private/custom-model', 'server_pid': os.getpid()}), flush=True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         sys.stdin.readline()
@@ -115,6 +151,7 @@ struct RecordingDiagnosticRuntimeTests {
         precondition(!lines.joined().contains("secret"))
         precondition(!lines.joined().contains(scratch.path))
         print("PASS 19 runtime integration assertions; fixture samples=\(samples.count); fake runtime only")
+        try await verifyNativeVAD(server: server, scratch: scratch, recorder: recorder, output: output)
     }
 }
 

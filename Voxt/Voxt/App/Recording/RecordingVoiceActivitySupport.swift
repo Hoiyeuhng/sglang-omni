@@ -160,7 +160,7 @@ actor RecordingVoiceActivityFrameDecider {
     private let useCase: ASRVoiceActivityUseCase
     private let energyBackend: ASREnergyVoiceActivityBackend
     private let sileroThreshold: Float
-    private let sileroDetector = ASRSileroStreamingVoiceActivityDetector()
+    private let sileroDetector: ASRSileroStreamingVoiceActivityDetector
     private let omniDetector: OmniStreamVoiceActivityBackend
     private var sileroFallbackWarningLogged = false
     private var diagnosticFallbackLogged = false
@@ -175,6 +175,7 @@ actor RecordingVoiceActivityFrameDecider {
     ) {
         self.diagnostics = diagnostics
         self.diagnosticSessionID = diagnosticSessionID
+        self.sileroDetector = ASRSileroStreamingVoiceActivityDetector(diagnosticSessionID: diagnosticSessionID, diagnostics: diagnostics)
         self.mode = mode
         self.useCase = useCase
         self.energyBackend = ASREnergyVoiceActivityBackend(threshold: energyThreshold)

@@ -38,6 +38,7 @@ nonisolated struct OmniServerEndpoint: Sendable, Equatable {
     let port: Int
     let modelName: String
     let serverProcessIdentifier: Int32
+    var diagnosticRuntimeID: UUID? = nil
 
     var baseURL: URL { URL(string: "http://\(host):\(port)")! }
 }

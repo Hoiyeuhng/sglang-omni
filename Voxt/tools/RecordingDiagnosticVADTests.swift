@@ -55,6 +55,7 @@ actor VADTestControl {
 }
 
 actor ASRSileroStreamingVoiceActivityDetector {
+    init(diagnosticSessionID: UUID? = nil, diagnostics: RecordingDiagnosticRecorder) {}
     func probability(samples: [Float], sampleRate: Double, streamID: String) async throws -> Float? {
         throw NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut,
             userInfo: [NSLocalizedDescriptionKey: "private VAD error /private/model token=secret"])
