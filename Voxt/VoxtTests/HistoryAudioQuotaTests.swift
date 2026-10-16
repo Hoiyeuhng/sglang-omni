@@ -54,6 +54,63 @@ nonisolated enum HistoryAudioQuotaContracts {
         }
     }
 
+    static func blockedOversizedPreservesSmallerArchives() throws {
+        for failure in [false, true] {
+            try withRoot { root, quota in
+                let oversized = try archive(root, quota, "oversized", bytes: 120)
+                let small = try archive(root, quota, "small", bytes: 20)
+                let explicit = try archive(root, quota, "explicit", bytes: 10)
+                try quota.requestDeletion(paths: [explicit])
+                let use = failure ? nil : HistoryAudioFileUse(url: root.appendingPathComponent(oversized))
+                let testedQuota = HistoryAudioQuota(rootURL: root, removeFile: { directory, name in
+                    if name == "oversized.wav", failure { throw Failure.injected }
+                    guard unlinkat(directory, name, 0) == 0 else { throw Failure.injected }
+                })
+                var cleared: [String] = []
+                let result = withExtendedLifetime(use) {
+                    testedQuota.enforce(limitBytes: 100) { cleared.append($0) }
+                }
+                try check(result.overLimit && result.totalBytes == 140, "blocked oversized archive must not sacrifice smaller history")
+                try check(cleared == [explicit], "explicit deletion must proceed independently of blocked capacity cleanup")
+                try check(FileManager.default.fileExists(atPath: root.appendingPathComponent(small).path), "small archive lost")
+            }
+        }
+    }
+
+    static func unavailableRootPreservesAudioButCompletesExplicitDeletion() throws {
+        try withRoot { root, quota in
+            let retained = try archive(root, quota, "retained", bytes: 20)
+            let removed = try archive(root, quota, "explicit", bytes: 10)
+            let missing = root.appendingPathComponent("offline-volume")
+            var cleared: [String] = []
+            let result = HistoryAudioQuota.reconcile(
+                roots: [root, missing], referencedPaths: [retained], requestedDeletions: [removed],
+                limitBytes: 1, protectedPaths: [], clearReferences: { cleared.append($0) }
+            )
+            try check(result.measurementFailed, "offline storage must not be reported as zero")
+            try check(result.unavailableRootPaths == [missing.path], "offline folder must be actionable")
+            try check(cleared == [removed], "offline root must not block explicit deletion from available storage")
+            try check(FileManager.default.fileExists(atPath: root.appendingPathComponent(retained).path), "unknown total usage must not trigger blind eviction")
+        }
+    }
+
+    static func largeCatalogMaintainsQuotaAndReferences() throws {
+        try withRoot { root, quota in
+            let paths = (0..<1_000).map { "transcription/scale-\($0).wav" }
+            for path in paths { try Data(repeating: 1, count: 10).write(to: root.appendingPathComponent(path)) }
+            var cleared = Set<String>()
+            let initial = HistoryAudioQuota.reconcile(
+                roots: [root], referencedPaths: paths, limitBytes: nil, protectedPaths: [], clearReferences: { cleared.insert($0) }
+            )
+            try check(initial.fileCount == 1_000 && initial.totalBytes == 10_000 && cleared.isEmpty, "large catalog registration")
+            let pruned = quota.enforce(limitBytes: 100) { cleared.insert($0) }
+            try check(!pruned.measurementFailed && !pruned.cleanupFailed, "large catalog cleanup failed")
+            try check(pruned.fileCount == 10 && pruned.totalBytes == 100 && cleared.count == 990, "large catalog eviction contract")
+            let restarted = HistoryAudioQuota(rootURL: root).snapshot(limitBytes: 100)
+            try check(restarted == pruned, "large catalog restart lost durable state")
+        }
+    }
+
     static func preferences() throws {
         let suite = "voxt-quota-test-\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!
@@ -129,24 +186,6 @@ nonisolated enum HistoryAudioQuotaContracts {
             try check(result.measurementFailed, "symlink statistics must fail, not zero")
             let targetBytes = try Data(contentsOf: target)
             try check(targetBytes.count == 10, "symlink target changed")
-        }
-    }
-
-    static func activeFilesAndConcurrentRegistration() throws {
-        try withRoot { root, quota in
-            let path = try archive(root, quota, "playing", bytes: 20)
-            var lease: HistoryAudioFileUse? = HistoryAudioFileUse(url: root.appendingPathComponent(path))
-            try withExtendedLifetime(lease) {
-                let result = quota.enforce(limitBytes: 10) { _ in }
-                try check(result.overLimit && result.totalBytes == 20, "active audio deleted")
-            }
-            lease = nil
-            try check(quota.enforce(limitBytes: 10) { _ in }.totalBytes == 0, "released lease not reclaimed")
-            DispatchQueue.concurrentPerform(iterations: 30) { index in
-                do { try quota.register(path: "transcription/concurrent-\(index).wav") }
-                catch { fatalError("registration failed: \(error)") }
-            }
-            try check(!quota.snapshot(limitBytes: nil).measurementFailed, "concurrent catalog corrupt")
         }
     }
 
@@ -274,6 +313,11 @@ nonisolated enum HistoryAudioQuotaContracts {
     }
 
     static let cases: [(String, () throws -> Void)] = [
+        ("slowDeletionDoesNotBlockUnrelatedAudioUse", slowDeletionDoesNotBlockUnrelatedAudioUse),
+        ("blockedOversizedPreservesSmallerArchives", blockedOversizedPreservesSmallerArchives),
+        ("unavailableRootPreservesAudioButCompletesExplicitDeletion", unavailableRootPreservesAudioButCompletesExplicitDeletion),
+        ("largeCatalogMaintainsQuotaAndReferences", largeCatalogMaintainsQuotaAndReferences),
+        ("batchedDeletionPreservesConcurrentImportsAndFailedReferences", batchedDeletionPreservesConcurrentImportsAndFailedReferences),
         ("hostileImportAndLogRoots", hostileImportAndLogRoots), ("boundaries", boundaries), ("oldestAndOversized", oldestAndOversized),
         ("preferences", preferences), ("deletionFailure", deletionFailure),
         ("databaseFailureAndRestart", databaseFailureAndRestart),
@@ -298,6 +342,11 @@ nonisolated enum HistoryAudioQuotaContracts {
 }
 #else
 final class HistoryAudioQuotaTests: XCTestCase {
+    func testSlowDeletionDoesNotBlockUnrelatedAudioUse() throws { try HistoryAudioQuotaContracts.slowDeletionDoesNotBlockUnrelatedAudioUse() }
+    func testBlockedOversizedPreservesSmallerArchives() throws { try HistoryAudioQuotaContracts.blockedOversizedPreservesSmallerArchives() }
+    func testUnavailableRootPreservesAudioButCompletesExplicitDeletion() throws { try HistoryAudioQuotaContracts.unavailableRootPreservesAudioButCompletesExplicitDeletion() }
+    func testLargeCatalogMaintainsQuotaAndReferences() throws { try HistoryAudioQuotaContracts.largeCatalogMaintainsQuotaAndReferences() }
+    func testBatchedDeletionPreservesConcurrentImportsAndFailedReferences() throws { try HistoryAudioQuotaContracts.batchedDeletionPreservesConcurrentImportsAndFailedReferences() }
     func testHostileImportAndLogRoots() throws { try HistoryAudioQuotaContracts.hostileImportAndLogRoots() }
     func testRootAliasesAndDeferredDeletion() throws { try HistoryAudioQuotaContracts.rootAliasesAndDeferredDeletion() }
     func testCatalogAndParentFailures() throws { try HistoryAudioQuotaContracts.catalogAndParentFailures() }

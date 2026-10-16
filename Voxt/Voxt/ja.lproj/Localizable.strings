@@ -2403,3 +2403,10 @@
 "Over limit: audio in use will be retried after release." = "上限超過：使用中の音声は解放後に再試行されます。";
 
 "Audio cleanup is waiting for files in use." = "使用中のファイルが解放されるまで音声の削除を待機しています。";
+
+"Audio folders need attention" = "音声フォルダの確認が必要です";
+"Total usage is unavailable. Automatic capacity cleanup is paused; explicit deletions in accessible folders can still finish." = "合計使用量を取得できないため、容量による自動削除を一時停止しています。アクセス可能なフォルダでの手動削除は実行できます。";
+"Reconnect folder" = "フォルダに再接続";
+"Stop managing folder" = "フォルダの管理を停止";
+"Stopping management leaves files and text history unchanged. That folder is excluded from the quota and its audio cannot be played until you select it again." = "管理を停止してもファイルやテキスト履歴は削除されません。このフォルダは容量制限の対象外となり、再度選択するまで音声を再生できなくなります。";
+"Reconnect the same folder shown above. If it is on an external disk, connect that disk first." = "上に表示された同じフォルダを選択してください。外部ディスクにある場合は、先にそのディスクを接続してください。";

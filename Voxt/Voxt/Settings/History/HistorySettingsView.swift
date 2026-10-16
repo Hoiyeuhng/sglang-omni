@@ -300,9 +300,12 @@ struct HistorySettingsView: View {
                 diagnosticStorageSummary: storageSummary(historyStore.diagnosticStorageBytes),
                 databaseStorageSummary: storageSummary(historyStore.databaseStorageBytes),
                 diagnosticStorageIssue: historyStore.diagnosticStorageIssue,
+                unavailableAudioRootPaths: historyStore.audioQuotaSnapshot.unavailableRootPaths,
                 onOpenHistoryAudioStorageInFinder: openHistoryAudioStorageInFinder,
                 onChooseHistoryAudioStorageDirectory: chooseHistoryAudioStorageDirectory,
-                onExportAllHistoryAudio: exportAllHistoryAudio
+                onExportAllHistoryAudio: exportAllHistoryAudio,
+                onReconnectAudioDirectory: reconnectHistoryAudioDirectory,
+                onStopManagingAudioDirectory: stopManagingHistoryAudioDirectory
             )
         }
         .sheet(item: $selectedHistoryInfoEntry) { entry in
@@ -896,6 +899,29 @@ struct HistorySettingsView: View {
 
     private func refreshHistoryAudioStorageDisplayPath() {
         historyAudioStorageDisplayPath = HistoryAudioStorageDirectoryManager.resolvedRootURL().path
+    }
+
+    private func reconnectHistoryAudioDirectory(_ path: String) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: path, isDirectory: true)
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        do {
+            try HistoryAudioStorageDirectoryManager.reauthorizeRootURL(selectedURL, previousPath: path)
+            historyAudioStorageSelectionError = nil
+            historyStore.applyAudioStorageQuotaIfNeeded()
+        } catch {
+            historyAudioStorageSelectionError = localized("Reconnect the same folder shown above. If it is on an external disk, connect that disk first.")
+        }
+    }
+
+    private func stopManagingHistoryAudioDirectory(_ path: String) {
+        if HistoryAudioStorageDirectoryManager.stopManagingPreviousRoot(path: path) {
+            historyAudioStorageSelectionError = nil
+            historyStore.applyAudioStorageQuotaIfNeeded()
+        }
     }
 
     private func refreshHistoryAudioStorageStats() {

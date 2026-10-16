@@ -34,6 +34,8 @@ final class TranscriptionHistoryStore: ObservableObject {
     @Published private(set) var audioQuotaSnapshot = HistoryAudioQuotaSnapshot(measurementFailed: true)
     private static let audioQuotaQueue = DispatchQueue(label: "app.voxt.history-audio-quota", qos: .utility)
     private let requestedAudioQuotaLimitBytes = OSAllocatedUnfairLock<Int64?>(initialState: nil)
+    private var audioQuotaRefreshInProgress = false
+    private var audioQuotaRefreshRequested = false
     private let repository: HistoryRepositoryProtocol
     private let audioArchive: HistoryAudioArchiveManaging
     private let logFileStore: VoxtLogFileStore
@@ -536,19 +538,31 @@ final class TranscriptionHistoryStore: ObservableObject {
         let limitBytes = HistoryAudioQuotaPreference.limitBytes(defaults: defaults)
         let requestedLimitBytes = requestedAudioQuotaLimitBytes
         requestedLimitBytes.withLock { $0 = limitBytes }
+        audioQuotaRefreshRequested = true
+        guard !audioQuotaRefreshInProgress else { return }
+        audioQuotaRefreshRequested = false
+        audioQuotaRefreshInProgress = true
         let roots: [URL]
         do {
-            _ = try audioArchive.rootURL()
             roots = try audioArchive.managedRootURLs()
         } catch {
+            audioQuotaRefreshInProgress = false
             audioQuotaSnapshot = HistoryAudioQuotaSnapshot(measurementFailed: true)
             return
+        }
+        do {
+            _ = try audioArchive.rootURL()
+        } catch {
+            audioQuotaSnapshot = HistoryAudioQuotaSnapshot(
+                measurementFailed: true, unavailableRootPaths: roots.first.map { [$0.path] } ?? []
+            )
         }
         let repository = repository
         let protectedPaths = Set(importedAudioUses.keys)
         let logFileStore = logFileStore
         Self.audioQuotaQueue.async { [weak self] in
             var snapshot: HistoryAudioQuotaSnapshot
+            var clearedPaths = Set<String>()
             do {
                 let paths = try repository.audioRelativePaths()
                 snapshot = HistoryAudioQuota.reconcile(
@@ -557,7 +571,10 @@ final class TranscriptionHistoryStore: ObservableObject {
                     requestedDeletions: Set(try repository.pendingAudioDeletionPaths()),
                     limitBytes: requestedLimitBytes.withLock { $0 },
                     protectedPaths: protectedPaths,
-                    clearReferences: repository.clearAudioReferences(path:)
+                    clearReferences: { path in
+                        try repository.clearAudioReferences(path: path)
+                        clearedPaths.insert(path)
+                    }
                 )
                 snapshot.cleanupDeferred = !(try repository.pendingAudioDeletionPaths()).isEmpty
             } catch {
@@ -565,17 +582,30 @@ final class TranscriptionHistoryStore: ObservableObject {
             }
             let databaseBytes = try? (repository as? HistoryRepository)?.databaseStorageBytes()
             let logUsage = logFileStore.storageUsage()
+            let clearedAudioPaths = clearedPaths
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.databaseStorageBytes = databaseBytes
-                self.diagnosticStorageBytes = logUsage.bytes
-                self.diagnosticStorageIssue = logUsage.cleanupFailed || logUsage.overLimit
-                self.audioQuotaSnapshot = snapshot
-                self.allEntries = self.allEntries.map { entry in
-                    (try? repository.entry(id: entry.id)) ?? entry
+                if !self.audioQuotaRefreshRequested {
+                    self.databaseStorageBytes = databaseBytes
+                    self.diagnosticStorageBytes = logUsage.bytes
+                    self.diagnosticStorageIssue = logUsage.cleanupFailed || logUsage.overLimit
+                    self.audioQuotaSnapshot = snapshot
                 }
-                self.refreshEntryIndexes()
-                self.publishVisibleEntries()
+                let updatedEntries = self.allEntries.map { entry in
+                    var updatedEntry = entry
+                    for path in [entry.audioRelativePath, entry.transcriptAudioRelativePath].compactMap({ $0 })
+                    where clearedAudioPaths.contains(path) {
+                        updatedEntry = updatedEntry.removingAudioArchiveReference(path: path)
+                    }
+                    return updatedEntry
+                }
+                if updatedEntries != self.allEntries {
+                    self.allEntries = updatedEntries
+                    self.refreshEntryIndexes()
+                    self.publishVisibleEntries()
+                }
+                self.audioQuotaRefreshInProgress = false
+                if self.audioQuotaRefreshRequested { self.applyAudioStorageQuotaIfNeeded() }
             }
         }
     }

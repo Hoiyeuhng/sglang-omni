@@ -36,9 +36,8 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
             logFileStore: VoxtLogFileStore(baseDirectoryURL: directoryURL.appendingPathComponent("logs"))
         )
         XCTAssertTrue(repository.waitUntilRequestIsBlocked())
-        let refreshed = expectation(description: "Both queued quota requests complete")
-        refreshed.expectedFulfillmentCount = 2
-        let observation = store.$audioQuotaSnapshot.dropFirst().prefix(2).sink { snapshot in
+        let refreshed = expectation(description: "Only the latest requested quota state is published")
+        let observation = store.$audioQuotaSnapshot.dropFirst().prefix(1).sink { snapshot in
             XCTAssertFalse(snapshot.measurementFailed)
             XCTAssertFalse(snapshot.cleanupFailed)
             XCTAssertFalse(snapshot.overLimit)
@@ -57,6 +56,26 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
         let persistedEntry = try XCTUnwrap(repository.entry(id: entry.id))
         XCTAssertEqual(persistedEntry.audioRelativePath, relativePath)
         XCTAssertEqual(persistedEntry.text, entry.text)
+    }
+
+    func testUsageRefreshDoesNotRepublishHistoryOrQueueEveryRequest() async throws {
+        let repository = try makeFixture(entries: [makeEntry(index: 0)])
+        repository.blockNextAudioPathsRequest()
+        let store = TranscriptionHistoryStore(repository: repository)
+        XCTAssertTrue(repository.waitUntilRequestIsBlocked())
+        let measured = expectation(description: "Coalesced usage refresh")
+        var historyPublicationCount = 0
+        let historyObservation = store.$entries.dropFirst().sink { _ in
+            historyPublicationCount += 1
+            store.applyAudioStorageQuotaIfNeeded()
+        }
+        let usageObservation = store.$audioQuotaSnapshot.dropFirst().prefix(1).sink { _ in measured.fulfill() }
+        defer { historyObservation.cancel(); usageObservation.cancel() }
+        for _ in 0..<100 { store.applyAudioStorageQuotaIfNeeded() }
+        repository.releaseBlockedRequest()
+        await fulfillment(of: [measured], timeout: 3)
+        XCTAssertEqual(repository.audioPathsRequestCount, 2)
+        XCTAssertEqual(historyPublicationCount, 0)
     }
 
     func testClearAllInvalidatesInFlightReloadSnapshot() async throws {
@@ -381,6 +400,9 @@ private final class BlockingHistoryRepository: HistoryRepositoryProtocol, @unche
     private var shouldBlockNextEntriesRequest = false
     private var shouldBlockNextAudioPathsRequest = false
     private var shouldFailNextUpsertRequest = false
+    private var audioPathsRequests = 0
+
+    var audioPathsRequestCount: Int { lock.withLock { audioPathsRequests } }
 
     init(base: HistoryRepositoryProtocol) {
         self.base = base
@@ -449,6 +471,7 @@ private final class BlockingHistoryRepository: HistoryRepositoryProtocol, @unche
     }
 
     func audioRelativePaths() throws -> [String] {
+        lock.withLock { audioPathsRequests += 1 }
         let snapshot = try base.audioRelativePaths()
         let shouldBlock = lock.withLock {
             let value = shouldBlockNextAudioPathsRequest

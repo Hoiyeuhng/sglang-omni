@@ -147,7 +147,8 @@ final class HistoryAudioArchiveService: HistoryAudioArchiveManaging {
     }
 
     func managedRootURLs() throws -> [URL] {
-        isolatedRootURL == nil ? HistoryAudioStorageDirectoryManager.knownRootURLs() : [try rootURL()]
+        if let isolatedRootURL { return [isolatedRootURL] }
+        return HistoryAudioStorageDirectoryManager.knownRootURLs()
     }
 
     nonisolated static func storageStats(rootURL: URL?, audioPaths: [String]) -> HistoryAudioStorageStats {
