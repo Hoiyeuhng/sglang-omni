@@ -12,6 +12,9 @@ final class HistoryDiagnosticSampleExportTests: XCTestCase {
     func testCancellationRemovesPartialSample() throws { try HistoryDiagnosticSampleChecks.cancelCleanup() }
     func testPublishFailureRemovesPartialSample() throws { try HistoryDiagnosticSampleChecks.publishFailureCleanup() }
     func testCleanupFailureDisclosesPartialLocation() throws { try HistoryDiagnosticSampleChecks.cleanupFailureDisclosure() }
+    func testReplacedStagingAndPublishedDirectoryCannotPublishOrDeleteReplacement() throws { try HistoryDiagnosticSampleChecks.replacedStagingDirectory() }
+    func testRenamedStagingCleanupFailureDisclosesCurrentLocation() throws { try HistoryDiagnosticSampleChecks.renamedStagingCleanupDisclosure() }
+    func testRenamedDestinationReturnsCurrentExportLocation() throws { try HistoryDiagnosticSampleChecks.renamedDestination() }
     func testSourcePathsRejectTraversalSymlinksAndDirectories() throws { try HistoryDiagnosticSampleChecks.sourcePathBoundaries() }
     func testOpenSourceSurvivesRetentionAndReplacement() throws { try HistoryDiagnosticSampleChecks.sourceUnlinked() }
     func testMutatedSourceCannotPublish() throws { try HistoryDiagnosticSampleChecks.sourceMutated() }

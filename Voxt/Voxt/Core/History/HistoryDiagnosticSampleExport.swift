@@ -9,7 +9,7 @@ nonisolated enum HistoryDiagnosticSampleError: Error, Equatable {
     case ioFailure
     case sourceChanged
     case privatePermissionsUnavailable
-    case cleanupFailed(URL)
+    case cleanupFailed(URL?)
 }
 
 nonisolated final class HistoryDiagnosticAudioSource: @unchecked Sendable {
@@ -108,6 +108,7 @@ nonisolated enum HistoryDiagnosticSampleExporter {
         case stagingCreated
         case copyingAudio
         case beforePublish
+        case afterPublish
         case beforeCleanup
     }
 
@@ -189,10 +190,20 @@ nonisolated enum HistoryDiagnosticSampleExporter {
             try checkpoint(.beforePublish)
             guard fsync(stagingDescriptor) == 0 else { throw HistoryDiagnosticSampleError.ioFailure }
             try Task.checkCancellation()
+            guard directoryEntryMatches(stagingDescriptor, parent: destinationDescriptor, name: stagingName) else {
+                throw HistoryDiagnosticSampleError.ioFailure
+            }
             guard renameatx_np(destinationDescriptor, stagingName, destinationDescriptor, folderName, UInt32(RENAME_EXCL)) == 0 else {
                 throw errno == EEXIST ? HistoryDiagnosticSampleError.destinationConflict : HistoryDiagnosticSampleError.ioFailure
             }
-            return destinationURL.appendingPathComponent(folderName, isDirectory: true)
+            try checkpoint(.afterPublish)
+            guard directoryEntryMatches(stagingDescriptor, parent: destinationDescriptor, name: folderName),
+                  let publishedURL = directoryURL(for: stagingDescriptor),
+                  let selectedDirectoryURL = directoryURL(for: destinationDescriptor),
+                  publishedURL.standardizedFileURL == selectedDirectoryURL.appendingPathComponent(folderName, isDirectory: true).standardizedFileURL else {
+                throw HistoryDiagnosticSampleError.ioFailure
+            }
+            return publishedURL
         } catch {
             do {
                 try checkpoint(.beforeCleanup)
@@ -201,14 +212,40 @@ nonisolated enum HistoryDiagnosticSampleExporter {
                         throw HistoryDiagnosticSampleError.cleanupFailed(stagingURL)
                     }
                 }
-                guard unlinkat(destinationDescriptor, stagingName, AT_REMOVEDIR) == 0 else {
-                    throw HistoryDiagnosticSampleError.cleanupFailed(stagingURL)
+                if let currentURL = directoryURL(for: stagingDescriptor) {
+                    let parent = open(currentURL.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+                    guard parent >= 0 else { throw HistoryDiagnosticSampleError.ioFailure }
+                    defer { close(parent) }
+                    guard directoryEntryMatches(stagingDescriptor, parent: parent, name: currentURL.lastPathComponent),
+                          unlinkat(parent, currentURL.lastPathComponent, AT_REMOVEDIR) == 0 else {
+                        throw HistoryDiagnosticSampleError.ioFailure
+                    }
+                } else {
+                    var attributes = stat()
+                    guard fstat(stagingDescriptor, &attributes) == 0, attributes.st_nlink == 0 else {
+                        throw HistoryDiagnosticSampleError.ioFailure
+                    }
                 }
             } catch {
-                throw HistoryDiagnosticSampleError.cleanupFailed(stagingURL)
+                throw HistoryDiagnosticSampleError.cleanupFailed(directoryURL(for: stagingDescriptor))
             }
             throw error
         }
+    }
+
+    private static func directoryEntryMatches(_ descriptor: Int32, parent: Int32, name: String) -> Bool {
+        var opened = stat()
+        var named = stat()
+        return fstat(descriptor, &opened) == 0
+            && fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW) == 0
+            && named.st_mode & S_IFMT == S_IFDIR
+            && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino
+    }
+
+    private static func directoryURL(for descriptor: Int32) -> URL? {
+        var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fcntl(descriptor, F_GETPATH, &path) == 0 else { return nil }
+        return URL(fileURLWithPath: String(cString: path), isDirectory: true)
     }
 
     private static func enforcePrivatePermissions(_ descriptor: Int32, mode: mode_t) throws {

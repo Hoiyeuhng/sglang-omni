@@ -19,6 +19,7 @@ struct HistoryDiagnosticSampleSheet: View {
     @State private var exportTask: Task<URL, Error>?
     @State private var statusMessage: String?
     @State private var remainingPartialURL: URL?
+    @State private var cleanupNeedsAttention = false
 
     private var request: HistoryDiagnosticSampleRequest {
         HistoryDiagnosticSampleRequest(
@@ -101,7 +102,7 @@ struct HistoryDiagnosticSampleSheet: View {
                 }
                 .disabled(isChoosingDestination)
                 Button(AppLocalization.localizedString("Choose export folder…"), action: chooseDestination)
-                    .disabled(isExporting || isChoosingDestination || remainingPartialURL != nil || (!includeHistoryText && !includeAudio))
+                    .disabled(isExporting || isChoosingDestination || cleanupNeedsAttention || (!includeHistoryText && !includeAudio))
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -153,6 +154,7 @@ struct HistoryDiagnosticSampleSheet: View {
             isExporting = true
             statusMessage = nil
             remainingPartialURL = nil
+            cleanupNeedsAttention = false
             let worker = Task.detached(priority: .utility) {
                 defer {
                     if didStartAccess { destinationURL.stopAccessingSecurityScopedResource() }
@@ -171,16 +173,19 @@ struct HistoryDiagnosticSampleSheet: View {
                     isExporting = false
                     exportTask = nil
                     if case HistoryDiagnosticSampleError.cleanupFailed(let url) = error {
+                        cleanupNeedsAttention = true
                         remainingPartialURL = url
-                        let message = AppLocalization.localizedString("Export failed and a partial private sample could not be removed. Delete the folder shown below when you no longer need it.")
+                        let message = url == nil
+                            ? AppLocalization.localizedString("Export failed and cleanup could not be confirmed. The sample folder's current location could not be determined; check the selected destination and any folders moved during export.")
+                            : AppLocalization.localizedString("Export failed and a partial private sample could not be removed. Delete the folder shown below when you no longer need it.")
                         statusMessage = message
                         if !isVisible {
                             let alert = NSAlert()
                             alert.messageText = AppLocalization.localizedString("Partial diagnostic sample remains")
-                            alert.informativeText = message + "\n\n" + url.path
-                            alert.addButton(withTitle: AppLocalization.localizedString("Show partial export in Finder"))
+                            alert.informativeText = message + (url.map { "\n\n" + $0.path } ?? "")
+                            if url != nil { alert.addButton(withTitle: AppLocalization.localizedString("Show partial export in Finder")) }
                             alert.addButton(withTitle: AppLocalization.localizedString("OK"))
-                            if alert.runModal() == .alertFirstButtonReturn {
+                            if alert.runModal() == .alertFirstButtonReturn, let url {
                                 NSWorkspace.shared.activateFileViewerSelecting([url])
                             }
                         }

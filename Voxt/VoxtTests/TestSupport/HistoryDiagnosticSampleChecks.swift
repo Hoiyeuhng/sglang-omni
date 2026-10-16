@@ -17,6 +17,8 @@ nonisolated enum HistoryDiagnosticSampleChecks {
         ("source-unlinked", sourceUnlinked), ("source-mutated", sourceMutated),
         ("manifest-privacy", manifestPrivacy), ("private-permissions", privatePermissions),
         ("inherited-acl-isolation", inheritedACLIsolation), ("permission-failure-cleanup", permissionFailureCleanup), ("stored-final-text-origin", storedFinalTextOrigin),
+        ("replaced-staging-directory", replacedStagingDirectory), ("renamed-staging-cleanup-disclosure", renamedStagingCleanupDisclosure),
+        ("renamed-destination", renamedDestination),
         ("synthetic-audio-roundtrip", syntheticAudioRoundtrip), ("retained-audio-preview", retainedAudioPreview), ("previous-audio-location", previousAudioLocation)
     ]
 
@@ -173,6 +175,71 @@ nonisolated enum HistoryDiagnosticSampleChecks {
             }
             let remaining = try files(root)
             try require(remaining.isEmpty, "Publish failure left partial sample")
+        }
+    }
+
+    static func replacedStagingDirectory() throws {
+        for replacementPhase: HistoryDiagnosticSampleExporter.Checkpoint in [.beforePublish, .afterPublish] {
+            for cancel in [false, true] {
+                try withDirectory { root in
+                    let relocated = root.appendingPathComponent("relocated-private-staging", isDirectory: true)
+                    var replacement: URL?
+                    try expectFailure {
+                        _ = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: root) { phase in
+                            if phase == replacementPhase {
+                                guard let directoryName = try files(root).first else { throw Failure.assertion("Missing export directory") }
+                                let staging = root.appendingPathComponent(directoryName, isDirectory: true)
+                                try FileManager.default.moveItem(at: staging, to: relocated)
+                                try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+                                try Data("unrelated replacement".utf8).write(to: staging.appendingPathComponent("sentinel"))
+                                replacement = staging
+                                if cancel { throw CancellationError() }
+                            }
+                        }
+                    }
+                    guard let replacement else { throw Failure.assertion("Directory replacement checkpoint was not reached") }
+                    try require(!FileManager.default.fileExists(atPath: relocated.path), "Renamed sensitive staging was not removed")
+                    let sentinel = try String(contentsOf: replacement.appendingPathComponent("sentinel"), encoding: .utf8)
+                    try require(sentinel == "unrelated replacement", "Cleanup changed a replacement directory")
+                    let remaining = try files(root)
+                    try require(remaining == [replacement.lastPathComponent], "Directory replacement published or leaked content")
+                }
+            }
+        }
+    }
+
+    static func renamedStagingCleanupDisclosure() throws {
+        try withDirectory { root in
+            let relocated = root.appendingPathComponent("relocated-private-staging", isDirectory: true)
+            var reportedURL: URL?
+            do {
+                _ = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: root) { phase in
+                    if phase == .beforePublish {
+                        guard let directoryName = try files(root).first else { throw Failure.assertion("Missing export directory") }
+                        let staging = root.appendingPathComponent(directoryName, isDirectory: true)
+                        try FileManager.default.moveItem(at: staging, to: relocated)
+                        throw Failure.injected
+                    }
+                    if phase == .beforeCleanup { throw Failure.injected }
+                }
+            } catch HistoryDiagnosticSampleError.cleanupFailed(let url) { reportedURL = url }
+            try require(reportedURL?.resolvingSymlinksInPath().path == relocated.resolvingSymlinksInPath().path, "Cleanup disclosure points to an obsolete directory name")
+            let text = try String(contentsOf: relocated.appendingPathComponent("history-text.txt"), encoding: .utf8)
+            try require(text == "private", "Cleanup failure fixture did not retain the disclosed content")
+        }
+    }
+
+    static func renamedDestination() throws {
+        try withDirectory { root in
+            let destination = root.appendingPathComponent("selected", isDirectory: true)
+            let renamed = root.appendingPathComponent("renamed", isDirectory: true)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+            let output = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: destination) { phase in
+                if phase == .beforePublish { try FileManager.default.moveItem(at: destination, to: renamed) }
+            }
+            try require(output.deletingLastPathComponent().resolvingSymlinksInPath().path == renamed.resolvingSymlinksInPath().path, "Success URL did not follow the selected directory")
+            let content = try String(contentsOf: output.appendingPathComponent("history-text.txt"), encoding: .utf8)
+            try require(content == "private", "Renamed destination lost selected content")
         }
     }
 

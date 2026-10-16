@@ -32,10 +32,12 @@ the chosen destination. Before writing content, the worker clears inherited ACLs
 descriptors and verifies owner-only mode 0600 for files and 0700 for directories.
 The destination folder's permissions are unchanged. A destination that cannot
 enforce or verify these permissions, including one without ACL support, is
-rejected before sensitive content is written. Publication is atomic and refuses existing targets.
+rejected before sensitive content is written. Publication uses an exclusive rename and refuses existing targets. The worker checks the staging directory identity before and after publication. Directory renames or replacements fail unless only the selected parent directory itself was renamed; successful output still belongs to that selected directory. Cleanup uses the opened directory and checks its current identity before removing it, leaving replacement directories untouched.
 Normal errors and cancellation remove staging files; a cleanup failure shows the
-remaining private folder. A crash or forced process termination may leave a hidden
+remaining private folder at its current location, or explicitly reports that its location could not be determined. A crash or forced process termination may leave a hidden
 .voxt-sample-*.partial directory in that destination; it can be deleted manually.
 The final exported folder belongs to the user and is outside application rotation.
 This uses temporary space up to one selected audio copy plus selected text and
 manifest; it does not keep an application sample cache.
+
+Identity checks bound normal directory-change races; they do not lock other processes out of the selected filesystem or guarantee against every malicious same-user mutation between kernel operations.

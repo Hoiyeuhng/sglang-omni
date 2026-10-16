@@ -2423,3 +2423,5 @@
 "Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output." = "已保存的最终文本可能经过增强、翻译或改写，不代表识别器的原始输出。";
 
 "This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved." = "此目标位置无法保证样本的私密访问权限。请选择其他本地文件夹。未保存任何样本。";
+
+"Export failed and cleanup could not be confirmed. The sample folder's current location could not be determined; check the selected destination and any folders moved during export." = "导出失败，且无法确认清理是否完成。无法确定样本文件夹的当前位置；请检查所选目标及导出期间移动的文件夹。";

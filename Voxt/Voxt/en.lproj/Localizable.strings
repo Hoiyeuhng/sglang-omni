@@ -2423,3 +2423,5 @@
 "Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output." = "Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output.";
 
 "This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved." = "This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved.";
+
+"Export failed and cleanup could not be confirmed. The sample folder's current location could not be determined; check the selected destination and any folders moved during export." = "Export failed and cleanup could not be confirmed. The sample folder's current location could not be determined; check the selected destination and any folders moved during export.";

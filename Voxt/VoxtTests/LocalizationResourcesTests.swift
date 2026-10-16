@@ -11,6 +11,7 @@ final class LocalizationResourcesTests: XCTestCase {
             "Include saved final text",
             "Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output.",
             "This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved.",
+            "Export failed and cleanup could not be confirmed. The sample folder's current location could not be determined; check the selected destination and any folders moved during export.",
             "Include saved audio",
             "Expected transcription (optional, included if entered)",
             "Saved audio is unavailable for this record. Exporting will not record audio or enable audio saving.",

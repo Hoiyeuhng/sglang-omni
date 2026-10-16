@@ -9,16 +9,17 @@ cat > "$build_directory/SampleContractMain.swift" <<'SWIFT'
 import Foundation
 
 @main struct SampleContractMain {
-    static func main() async throws {
+    static func main() async {
         var passed = 0
+        var failed = 0
         for (name, test) in HistoryDiagnosticSampleChecks.cases {
-            try test()
-            print("PASS \(name)")
-            passed += 1
+            do { try test(); print("PASS \(name)"); passed += 1 }
+            catch { print("FAIL \(name): \(error)"); failed += 1 }
         }
-        try await HistoryDiagnosticSampleChecks.taskCancellation()
-        print("PASS task-cancellation")
-        print("RESULT: \(passed + 1) passed, 0 failed")
+        do { try await HistoryDiagnosticSampleChecks.taskCancellation(); print("PASS task-cancellation"); passed += 1 }
+        catch { print("FAIL task-cancellation: \(error)"); failed += 1 }
+        print("RESULT: \(passed) passed, \(failed) failed")
+        if failed > 0 { exit(1) }
     }
 }
 SWIFT

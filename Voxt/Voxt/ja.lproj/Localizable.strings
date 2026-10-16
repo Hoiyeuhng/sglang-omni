@@ -2417,3 +2417,5 @@
 "Saved final text may include enhancement, translation or rewriting. It is not identified as the original recognizer output." = "保存済みの最終テキストは補正、翻訳、リライト後の内容の場合があります。元の音声認識結果としては扱いません。";
 
 "This destination cannot enforce private sample permissions. Choose a different local folder. No sample was saved." = "この保存先ではサンプルの非公開アクセス権を確保できません。別のローカルフォルダを選択してください。サンプルは保存されていません。";
+
+"Export failed and cleanup could not be confirmed. The sample folder's current location could not be determined; check the selected destination and any folders moved during export." = "エクスポートに失敗し、削除の完了を確認できませんでした。サンプルフォルダの現在の場所を特定できません。選択した保存先と、エクスポート中に移動されたフォルダを確認してください。";
