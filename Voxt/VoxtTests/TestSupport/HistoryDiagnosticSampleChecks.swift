@@ -1,0 +1,408 @@
+import AVFoundation
+import Darwin
+import Foundation
+#if !VOXT_STANDALONE_TESTS
+@testable import Voxt
+#endif
+
+nonisolated enum HistoryDiagnosticSampleChecks {
+    enum Failure: Error { case assertion(String), injected }
+
+    static let cases: [(String, () throws -> Void)] = [
+        ("text-only", textOnly), ("audio-only", audioOnly), ("both-and-expected", bothAndExpected),
+        ("nothing-selected", nothingSelected), ("missing-audio", missingAudio),
+        ("destination-conflicts", destinationConflicts), ("copy-failure-cleanup", copyFailureCleanup),
+        ("cancel-cleanup", cancelCleanup), ("publish-failure-cleanup", publishFailureCleanup),
+        ("cleanup-failure-disclosure", cleanupFailureDisclosure), ("source-path-boundaries", sourcePathBoundaries),
+        ("source-unlinked", sourceUnlinked), ("source-mutated", sourceMutated),
+        ("manifest-privacy", manifestPrivacy), ("private-permissions", privatePermissions),
+        ("inherited-acl-isolation", inheritedACLIsolation), ("permission-failure-cleanup", permissionFailureCleanup), ("stored-final-text-origin", storedFinalTextOrigin),
+        ("replaced-staging-directory", replacedStagingDirectory), ("renamed-staging-cleanup-disclosure", renamedStagingCleanupDisclosure),
+        ("renamed-destination", renamedDestination),
+        ("synthetic-audio-roundtrip", syntheticAudioRoundtrip), ("retained-audio-preview", retainedAudioPreview), ("previous-audio-location", previousAudioLocation)
+    ]
+
+    static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+        guard condition() else { throw Failure.assertion(message) }
+    }
+
+    static func withDirectory(_ test: (URL) throws -> Void) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("voxt-sample-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try test(directory)
+    }
+
+    static func source(in root: URL, contents: Data = Data(repeating: 7, count: 600_000)) throws -> HistoryDiagnosticAudioSource {
+        let folder = root.appendingPathComponent("transcription")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try contents.write(to: folder.appendingPathComponent("sample.wav"))
+        return try HistoryDiagnosticAudioSource(rootURL: root, relativePath: "transcription/sample.wav")
+    }
+
+    static func request(text: String? = nil, audio: HistoryDiagnosticAudioSource? = nil, includeAudio: Bool = false, expected: String? = nil, version: String = "1.2.3") -> HistoryDiagnosticSampleRequest {
+        HistoryDiagnosticSampleRequest(historyText: text, audio: audio, includeAudio: includeAudio, expectedTranscription: expected, appVersion: version)
+    }
+
+    static func files(_ directory: URL) throws -> Set<String> {
+        Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+    }
+
+    static func expectFailure(_ operation: () throws -> Void, matching expected: HistoryDiagnosticSampleError? = nil) throws {
+        do {
+            try operation()
+        } catch {
+            if let expected {
+                try require(error as? HistoryDiagnosticSampleError == expected, "Wrong failure: \(error)")
+            }
+            return
+        }
+        throw Failure.assertion("Operation unexpectedly succeeded")
+    }
+
+    static func textOnly() throws {
+        try withDirectory { root in
+            let audio = try source(in: root)
+            let output = try HistoryDiagnosticSampleExporter.export(request(text: "chosen text", audio: audio), to: root)
+            let outputFiles = try files(output)
+            try require(outputFiles == ["manifest.json", "history-text.txt"], "Unselected audio escaped")
+            let text = try String(contentsOf: output.appendingPathComponent("history-text.txt"), encoding: .utf8)
+            try require(text == "chosen text", "Text changed")
+        }
+    }
+
+    static func audioOnly() throws {
+        try withDirectory { root in
+            let contents = Data(repeating: 9, count: 600_000)
+            let audio = try source(in: root, contents: contents)
+            let output = try HistoryDiagnosticSampleExporter.export(request(audio: audio, includeAudio: true), to: root)
+            let outputFiles = try files(output)
+            try require(outputFiles == ["manifest.json", "recording.wav"], "Unselected text escaped")
+            let copied = try Data(contentsOf: output.appendingPathComponent("recording.wav"))
+            try require(copied == contents, "Copy changed bytes")
+            let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("manifest.json"))) as! [String: Any]
+            try require(manifest["textOrigin"] == nil, "Unselected text origin escaped")
+        }
+    }
+
+    static func bothAndExpected() throws {
+        try withDirectory { root in
+            let audio = try source(in: root)
+            let selected = request(text: "actual", audio: audio, includeAudio: true, expected: "expected")
+            let output = try HistoryDiagnosticSampleExporter.export(selected, to: root)
+            let outputFiles = try files(output)
+            try require(outputFiles == Set(selected.fileNames), "Preview and export differ")
+            let expected = try String(contentsOf: output.appendingPathComponent("expected-transcription.txt"), encoding: .utf8)
+            try require(expected == "expected", "Expected transcript missing")
+        }
+    }
+
+    static func nothingSelected() throws {
+        try withDirectory { root in
+            try expectFailure({ _ = try HistoryDiagnosticSampleExporter.export(request(expected: "not sufficient"), to: root) }, matching: .noContentSelected)
+            let remaining = try files(root)
+            try require(remaining.isEmpty, "Empty selection wrote files")
+        }
+    }
+
+    static func missingAudio() throws {
+        try withDirectory { root in
+            try expectFailure({ _ = try HistoryDiagnosticSampleExporter.export(request(text: "private", includeAudio: true), to: root) }, matching: .audioUnavailable)
+            let remaining = try files(root)
+            try require(remaining.isEmpty, "Missing audio published partial text")
+        }
+    }
+
+    static func destinationConflicts() throws {
+        try withDirectory { root in
+            for name in ["existing-file", "existing-directory", "existing-link"] {
+                let url = root.appendingPathComponent(name)
+                if name == "existing-directory" {
+                    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+                    try Data("original".utf8).write(to: url.appendingPathComponent("sentinel"))
+                } else if name == "existing-link" {
+                    try FileManager.default.createSymbolicLink(at: url, withDestinationURL: root.appendingPathComponent("existing-file"))
+                } else {
+                    try Data("original".utf8).write(to: url)
+                }
+                try expectFailure({ _ = try HistoryDiagnosticSampleExporter.export(request(text: "replacement"), to: root, folderName: name) }, matching: .destinationConflict)
+            }
+            let text = try String(contentsOf: root.appendingPathComponent("existing-file"), encoding: .utf8)
+            let sentinel = try String(contentsOf: root.appendingPathComponent("existing-directory/sentinel"), encoding: .utf8)
+            let remaining = try files(root)
+            try require(text == "original" && sentinel == "original", "Existing export overwritten")
+            try require(remaining == ["existing-file", "existing-directory", "existing-link"], "Conflict left partial files")
+        }
+    }
+
+    static func copyFailureCleanup() throws {
+        try withDirectory { root in
+            let audio = try source(in: root)
+            try expectFailure {
+                _ = try HistoryDiagnosticSampleExporter.export(request(text: "sensitive", audio: audio, includeAudio: true), to: root) { phase in
+                    if phase == .copyingAudio { throw Failure.injected }
+                }
+            }
+            let remaining = try files(root)
+            try require(remaining == ["transcription"], "Copy failure leaked partial text")
+        }
+    }
+
+    static func cancelCleanup() throws {
+        try withDirectory { root in
+            try installACL("everyone allow read,write,execute,file_inherit,directory_inherit", on: root)
+            let audio = try source(in: root)
+            for cancellationPhase: HistoryDiagnosticSampleExporter.Checkpoint in [.securingStaging, .stagingCreated, .copyingAudio, .beforePublish] {
+                var wasCancelled = false
+                do {
+                    _ = try HistoryDiagnosticSampleExporter.export(request(text: "private", audio: audio, includeAudio: true), to: root) { phase in
+                        if phase == cancellationPhase { throw CancellationError() }
+                    }
+                } catch is CancellationError { wasCancelled = true }
+                try require(wasCancelled, "Cancellation was lost")
+                let remaining = try files(root)
+                try require(remaining == ["transcription"], "Cancellation left sensitive artifacts")
+            }
+        }
+    }
+
+    static func publishFailureCleanup() throws {
+        try withDirectory { root in
+            try expectFailure {
+                _ = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: root) { phase in
+                    if phase == .beforePublish { throw Failure.injected }
+                }
+            }
+            let remaining = try files(root)
+            try require(remaining.isEmpty, "Publish failure left partial sample")
+        }
+    }
+
+    static func replacedStagingDirectory() throws {
+        for replacementPhase: HistoryDiagnosticSampleExporter.Checkpoint in [.beforePublish, .afterPublish] {
+            for cancel in [false, true] {
+                try withDirectory { root in
+                    let relocated = root.appendingPathComponent("relocated-private-staging", isDirectory: true)
+                    var replacement: URL?
+                    try expectFailure {
+                        _ = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: root) { phase in
+                            if phase == replacementPhase {
+                                guard let directoryName = try files(root).first else { throw Failure.assertion("Missing export directory") }
+                                let staging = root.appendingPathComponent(directoryName, isDirectory: true)
+                                try FileManager.default.moveItem(at: staging, to: relocated)
+                                try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+                                try Data("unrelated replacement".utf8).write(to: staging.appendingPathComponent("sentinel"))
+                                replacement = staging
+                                if cancel { throw CancellationError() }
+                            }
+                        }
+                    }
+                    guard let replacement else { throw Failure.assertion("Directory replacement checkpoint was not reached") }
+                    try require(!FileManager.default.fileExists(atPath: relocated.path), "Renamed sensitive staging was not removed")
+                    let sentinel = try String(contentsOf: replacement.appendingPathComponent("sentinel"), encoding: .utf8)
+                    try require(sentinel == "unrelated replacement", "Cleanup changed a replacement directory")
+                    let remaining = try files(root)
+                    try require(remaining == [replacement.lastPathComponent], "Directory replacement published or leaked content")
+                }
+            }
+        }
+    }
+
+    static func renamedStagingCleanupDisclosure() throws {
+        try withDirectory { root in
+            let relocated = root.appendingPathComponent("relocated-private-staging", isDirectory: true)
+            var reportedURL: URL?
+            do {
+                _ = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: root) { phase in
+                    if phase == .beforePublish {
+                        guard let directoryName = try files(root).first else { throw Failure.assertion("Missing export directory") }
+                        let staging = root.appendingPathComponent(directoryName, isDirectory: true)
+                        try FileManager.default.moveItem(at: staging, to: relocated)
+                        throw Failure.injected
+                    }
+                    if phase == .beforeCleanup { throw Failure.injected }
+                }
+            } catch HistoryDiagnosticSampleError.cleanupFailed(let url) { reportedURL = url }
+            try require(reportedURL?.resolvingSymlinksInPath().path == relocated.resolvingSymlinksInPath().path, "Cleanup disclosure points to an obsolete directory name")
+            let text = try String(contentsOf: relocated.appendingPathComponent("history-text.txt"), encoding: .utf8)
+            try require(text == "private", "Cleanup failure fixture did not retain the disclosed content")
+        }
+    }
+
+    static func renamedDestination() throws {
+        try withDirectory { root in
+            let destination = root.appendingPathComponent("selected", isDirectory: true)
+            let renamed = root.appendingPathComponent("renamed", isDirectory: true)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+            let output = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: destination) { phase in
+                if phase == .beforePublish { try FileManager.default.moveItem(at: destination, to: renamed) }
+            }
+            try require(output.deletingLastPathComponent().resolvingSymlinksInPath().path == renamed.resolvingSymlinksInPath().path, "Success URL did not follow the selected directory")
+            let content = try String(contentsOf: output.appendingPathComponent("history-text.txt"), encoding: .utf8)
+            try require(content == "private", "Renamed destination lost selected content")
+        }
+    }
+
+    static func cleanupFailureDisclosure() throws {
+        try withDirectory { root in
+            var disclosedURL: URL?
+            do {
+                _ = try HistoryDiagnosticSampleExporter.export(request(text: "private"), to: root) { phase in
+                    if phase == .beforePublish || phase == .beforeCleanup { throw Failure.injected }
+                }
+            } catch HistoryDiagnosticSampleError.cleanupFailed(let url) { disclosedURL = url }
+            try require(disclosedURL != nil, "Cleanup failure was hidden")
+            let remaining = try files(root)
+            try require(remaining == Set([disclosedURL!.lastPathComponent]), "Wrong partial sample disclosed")
+        }
+    }
+
+    static func sourcePathBoundaries() throws {
+        try withDirectory { root in
+            _ = try source(in: root)
+            try Data("unrelated-secret".utf8).write(to: root.appendingPathComponent("unrelated.wav"))
+            for path in ["../unrelated.wav", "/transcription/sample.wav", "transcription/../unrelated.wav", "transcription//sample.wav", "transcription/", "transcription/sample.wav\0"] {
+                try expectFailure({ _ = try HistoryDiagnosticAudioSource(rootURL: root, relativePath: path) }, matching: .unsafeAudioPath)
+            }
+            let link = root.appendingPathComponent("transcription/link.wav")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root.appendingPathComponent("unrelated.wav"))
+            try expectFailure { _ = try HistoryDiagnosticAudioSource(rootURL: root, relativePath: "transcription/link.wav") }
+            try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("translation"), withDestinationURL: root.appendingPathComponent("transcription"))
+            try expectFailure { _ = try HistoryDiagnosticAudioSource(rootURL: root, relativePath: "translation/sample.wav") }
+            let directory = root.appendingPathComponent("transcription/directory.wav")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            try expectFailure({ _ = try HistoryDiagnosticAudioSource(rootURL: root, relativePath: "transcription/directory.wav") }, matching: .unsafeAudioPath)
+            let unrelated = try String(contentsOf: root.appendingPathComponent("unrelated.wav"), encoding: .utf8)
+            try require(unrelated == "unrelated-secret", "Unrelated file modified")
+        }
+    }
+
+    static func sourceUnlinked() throws {
+        try withDirectory { root in
+            let contents = Data("opened-original".utf8)
+            let audio = try source(in: root, contents: contents)
+            let sourceURL = root.appendingPathComponent("transcription/sample.wav")
+            try FileManager.default.removeItem(at: sourceURL)
+            try Data("replacement".utf8).write(to: sourceURL)
+            let output = try HistoryDiagnosticSampleExporter.export(request(audio: audio, includeAudio: true), to: root)
+            let exported = try Data(contentsOf: output.appendingPathComponent("recording.wav"))
+            try require(exported == contents, "Descriptor did not protect selected source")
+        }
+    }
+
+    static func sourceMutated() throws {
+        try withDirectory { root in
+            let audio = try source(in: root)
+            let handle = try FileHandle(forWritingTo: root.appendingPathComponent("transcription/sample.wav"))
+            try handle.truncate(atOffset: 1)
+            try handle.close()
+            try expectFailure { _ = try HistoryDiagnosticSampleExporter.export(request(audio: audio, includeAudio: true), to: root) }
+            let remaining = try files(root)
+            try require(remaining == ["transcription"], "Source mutation published bad copy")
+        }
+    }
+
+    static func manifestPrivacy() throws {
+        try withDirectory { root in
+            let secrets = "private-transcript https://private.example/token sk-secret /Users/private/model"
+            try Data(secrets.utf8).write(to: root.appendingPathComponent("other-history.json"))
+            let output = try HistoryDiagnosticSampleExporter.export(request(text: "explicitly selected", version: secrets), to: root)
+            let contents = try Data(contentsOf: output.appendingPathComponent("manifest.json"))
+            let manifest = try JSONSerialization.jsonObject(with: contents) as! [String: Any]
+            try require(Set(manifest.keys) == ["schemaVersion", "appVersion", "files", "textOrigin"], "Manifest contains unapproved keys")
+            try require(manifest["appVersion"] as? String == "unknown", "Private custom version escaped")
+            for file in try files(output) {
+                let text = try String(contentsOf: output.appendingPathComponent(file), encoding: .utf8)
+                try require(!text.contains(secrets), "Other history/config leaked")
+            }
+        }
+    }
+
+    static func storedFinalTextOrigin() throws {
+        try withDirectory { root in
+            for finalText in ["Enhanced final history text", "已翻译的历史最终文本"] {
+                let output = try HistoryDiagnosticSampleExporter.export(request(text: finalText), to: root)
+                let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("manifest.json"))) as! [String: Any]
+                try require(manifest["schemaVersion"] as? Int == 2, "Wrong sample schema version")
+                try require(manifest["textOrigin"] as? String == "stored_final", "Final history text was not identified as stored final output")
+                let exportedText = try String(contentsOf: output.appendingPathComponent("history-text.txt"), encoding: .utf8)
+                try require(exportedText == finalText, "Final history text changed")
+                try require(!FileManager.default.fileExists(atPath: output.appendingPathComponent("transcription.txt").path), "Final output was named as raw transcription")
+            }
+        }
+    }
+
+    static func previousAudioLocation() throws {
+        try withDirectory { root in
+            let contents = Data("selected-previous-root".utf8)
+            _ = try source(in: root, contents: contents)
+            let currentRoot = root.appendingPathComponent("new-current-root")
+            try FileManager.default.createDirectory(at: currentRoot, withIntermediateDirectories: false)
+            let path = "transcription/sample.wav"
+            let audio = try HistoryDiagnosticAudioSource(rootURL: currentRoot, relativePath: path, resolvedAudioURL: root.appendingPathComponent(path))
+            let output = try HistoryDiagnosticSampleExporter.export(request(audio: audio, includeAudio: true), to: currentRoot)
+            let exported = try Data(contentsOf: output.appendingPathComponent("recording.wav"))
+            try require(exported == contents, "Directory switch lost the selected archive")
+            try expectFailure({
+                _ = try HistoryDiagnosticAudioSource(rootURL: currentRoot, relativePath: path, resolvedAudioURL: root.appendingPathComponent("translation/wrong.wav"))
+            }, matching: .unsafeAudioPath)
+        }
+    }
+
+    static func retainedAudioPreview() throws {
+        try withDirectory { root in
+            let url = root.appendingPathComponent("transcription/sample.wav")
+            _ = try HistoryAudioArchiveSupport.exportWAV(samples: [Float](repeating: 0, count: 16_000), sampleRate: 16_000, to: url)
+            let audio = try HistoryDiagnosticAudioSource(rootURL: root, relativePath: "transcription/sample.wav")
+            try FileManager.default.removeItem(at: url)
+            let player = try AVAudioPlayer(contentsOf: audio.previewURL)
+            try require(abs(player.duration - 1) < 0.01, "Retained audio preview cannot decode the selected archive")
+            try require(!player.isPlaying, "Preview started without user input")
+        }
+    }
+
+    static func taskCancellation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("voxt-sample-cancel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let audio = try source(in: root)
+        let selected = request(text: "private", audio: audio, includeAudio: true)
+        let started = DispatchSemaphore(value: 0)
+        let resume = DispatchSemaphore(value: 0)
+        let worker = Task.detached {
+            try HistoryDiagnosticSampleExporter.export(selected, to: root) { phase in
+                if phase == .copyingAudio {
+                    started.signal()
+                    guard resume.wait(timeout: .now() + 10) == .success else { throw Failure.injected }
+                }
+            }
+        }
+        let didStart = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: started.wait(timeout: .now() + 10) == .success)
+            }
+        }
+        worker.cancel()
+        resume.signal()
+        var wasCancelled = false
+        do { _ = try await worker.value } catch is CancellationError { wasCancelled = true }
+        try require(didStart && wasCancelled, "Task cancellation did not stop copying")
+        let remaining = try files(root)
+        try require(remaining == ["transcription"], "Cancelled task left partial files")
+    }
+
+    static func syntheticAudioRoundtrip() throws {
+        try withDirectory { root in
+            let url = root.appendingPathComponent("transcription/sample.wav")
+            let samples: [Float] = [0, 0.25, -0.25, 0.5, -0.5]
+            _ = try HistoryAudioArchiveSupport.exportWAV(samples: samples, sampleRate: 16_000, to: url)
+            let audio = try HistoryDiagnosticAudioSource(rootURL: root, relativePath: "transcription/sample.wav")
+            let output = try HistoryDiagnosticSampleExporter.export(request(text: "synthetic fixture", audio: audio, includeAudio: true), to: root)
+            let decoded = try HistoryAudioArchiveSupport.readWAVSamples(from: output.appendingPathComponent("recording.wav"))
+            try require(decoded.count == samples.count, "Sample count changed")
+            for (actual, expected) in zip(decoded, samples) {
+                try require(abs(actual - expected) < 0.001, "Fixture audio changed")
+            }
+        }
+    }
+}
