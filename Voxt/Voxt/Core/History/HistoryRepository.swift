@@ -20,6 +20,9 @@ protocol HistoryRepositoryProtocol: AnyObject, Sendable {
     func entry(id: UUID) throws -> TranscriptionHistoryEntry?
     func latestEntryText() throws -> String?
     func audioRelativePaths() throws -> [String]
+    func clearAudioReferences(path: String) throws
+    func pendingAudioDeletionPaths() throws -> [String]
+    func scheduleAudioDeletion(paths: [String]) throws
     func entryCount(kind: TranscriptionHistoryKind?, query: String) throws -> Int
     func pendingNormalEntryCount(after checkpoint: DictionaryHistoryScanCheckpoint?) throws -> Int
     func pendingNormalEntries(after checkpoint: DictionaryHistoryScanCheckpoint?) throws -> [TranscriptionHistoryEntry]
@@ -56,6 +59,22 @@ final class HistoryRepository: HistoryRepositoryProtocol, @unchecked Sendable {
         if migrateLegacyJSON {
             migrateLegacyJSONIfNeeded()
         }
+    }
+
+    func databaseStorageBytes() throws -> Int64 {
+        var bytes: Int64 = 0
+        for suffix in ["", "-wal", "-shm"] {
+            let url = URL(fileURLWithPath: database.databaseURL.path + suffix)
+            do {
+                let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
+                guard values.isRegularFile == true, values.isSymbolicLink != true,
+                      let size = values.fileSize else { throw CocoaError(.fileReadUnknown) }
+                bytes += Int64(size)
+            } catch CocoaError.fileReadNoSuchFile where !suffix.isEmpty {
+                continue
+            }
+        }
+        return bytes
     }
 
     func allEntries() throws -> [TranscriptionHistoryEntry] {
@@ -219,12 +238,52 @@ final class HistoryRepository: HistoryRepositoryProtocol, @unchecked Sendable {
                 db,
                 sql: """
                     SELECT path FROM (
-                        SELECT COALESCE(NULLIF(audioRelativePath, ''), NULLIF(transcriptAudioRelativePath, '')) AS path
-                        FROM history_entries
+                        SELECT audioRelativePath AS path FROM history_entries
+                        UNION SELECT transcriptAudioRelativePath AS path FROM history_entries
                     )
                     WHERE path IS NOT NULL AND path != ''
                     """
             )
+        }
+    }
+
+    func pendingAudioDeletionPaths() throws -> [String] {
+        try database.dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT path FROM history_audio_deletions WHERE pending = 1")
+        }
+    }
+
+    func scheduleAudioDeletion(paths: [String]) throws {
+        try database.dbQueue.write { db in try scheduleAudioDeletion(paths: paths, db: db) }
+    }
+
+    private func scheduleAudioDeletion(paths: [String], db: Database) throws {
+        for path in Set(paths) {
+            let references = try Int.fetchOne(
+                db, sql: "SELECT COUNT(*) FROM history_entries WHERE audioRelativePath = ? OR transcriptAudioRelativePath = ?",
+                arguments: [path, path]
+            ) ?? 0
+            if references == 0 {
+                try db.execute(
+                    sql: "INSERT INTO history_audio_deletions(path, pending) VALUES (?, 1) ON CONFLICT(path) DO NOTHING",
+                    arguments: [path]
+                )
+            }
+        }
+    }
+
+    func clearAudioReferences(path: String) throws {
+        try database.dbQueue.write { db in
+            try db.execute(sql: "INSERT INTO history_audio_deletions(path, pending) VALUES (?, 0) ON CONFLICT(path) DO UPDATE SET pending = 0", arguments: [path])
+            let jsonEntries = try String.fetchAll(
+                db,
+                sql: "SELECT entryJSON FROM history_entries WHERE audioRelativePath = ? OR transcriptAudioRelativePath = ?",
+                arguments: [path, path]
+            )
+            for json in jsonEntries {
+                let entry = try VoxtPersistenceCoding.decodeJSON(TranscriptionHistoryEntry.self, from: json)
+                try upsert(entry.removingAudioArchiveReference(path: path), db: db)
+            }
         }
     }
 
@@ -442,16 +501,11 @@ final class HistoryRepository: HistoryRepositoryProtocol, @unchecked Sendable {
 
     @discardableResult
     func delete(id: UUID) throws -> TranscriptionHistoryEntry? {
-        let removed = try entry(id: id)
-        try database.dbQueue.write { db in
-            try db.execute(sql: "DELETE FROM history_search WHERE historyID = ?", arguments: [id.uuidString])
-            try db.execute(sql: "DELETE FROM history_entries WHERE id = ?", arguments: [id.uuidString])
-        }
-        return removed
+        try deleteEntries(whereSQL: "id = ?", arguments: [id.uuidString]).first
     }
 
     func clearAll() throws {
-        try replaceAll([])
+        _ = try deleteEntries(whereSQL: "1", arguments: [])
     }
 
     @discardableResult
@@ -502,28 +556,38 @@ final class HistoryRepository: HistoryRepositoryProtocol, @unchecked Sendable {
         whereSQL: String,
         arguments: StatementArguments
     ) throws -> [TranscriptionHistoryEntry] {
-        let removed = try database.dbQueue.read { db in
+        try database.dbQueue.write { db in
             let jsonEntries = try String.fetchAll(
                 db,
                 sql: "SELECT entryJSON FROM history_entries WHERE \(whereSQL) ORDER BY createdAt DESC",
                 arguments: arguments
             )
-            return try jsonEntries.map {
+            let removed = try jsonEntries.map {
                 try VoxtPersistenceCoding.decodeJSON(TranscriptionHistoryEntry.self, from: $0)
             }
-        }
-
-        guard !removed.isEmpty else { return [] }
-        try database.dbQueue.write { db in
             for entry in removed {
                 try db.execute(sql: "DELETE FROM history_search WHERE historyID = ?", arguments: [entry.id.uuidString])
                 try db.execute(sql: "DELETE FROM history_entries WHERE id = ?", arguments: [entry.id.uuidString])
             }
+            try scheduleAudioDeletion(
+                paths: removed.flatMap { [$0.audioRelativePath, $0.transcriptAudioRelativePath].compactMap { $0 } }, db: db
+            )
+            return removed
         }
-        return removed
     }
 
-    private func upsert(_ entry: TranscriptionHistoryEntry, db: Database) throws {
+    private func upsert(_ originalEntry: TranscriptionHistoryEntry, db: Database) throws {
+        let previous = try Row.fetchOne(
+            db, sql: "SELECT audioRelativePath, transcriptAudioRelativePath FROM history_entries WHERE id = ?",
+            arguments: [originalEntry.id.uuidString]
+        )
+        let previousPaths: [String] = [previous?["audioRelativePath"], previous?["transcriptAudioRelativePath"]].compactMap { $0 }
+        var entry = originalEntry
+        for path in Set([entry.audioRelativePath, entry.transcriptAudioRelativePath].compactMap { $0 }) {
+            if try String.fetchOne(db, sql: "SELECT path FROM history_audio_deletions WHERE path = ?", arguments: [path]) != nil {
+                entry = entry.removingAudioArchiveReference(path: path)
+            }
+        }
         let entryJSON = try VoxtPersistenceCoding.encodeJSONString(entry)
         let dictionaryTermsText = dictionaryTerms(for: entry).joined(separator: " ")
 
@@ -626,6 +690,8 @@ final class HistoryRepository: HistoryRepositoryProtocol, @unchecked Sendable {
                 dictionaryTermsText
             ])
         )
+        let currentPaths = Set([entry.audioRelativePath, entry.transcriptAudioRelativePath].compactMap { $0 })
+        try scheduleAudioDeletion(paths: previousPaths.filter { !currentPaths.contains($0) }, db: db)
     }
 
     private func dictionaryTerms(for entry: TranscriptionHistoryEntry) -> [String] {
@@ -697,5 +763,17 @@ final class HistoryRepository: HistoryRepositoryProtocol, @unchecked Sendable {
         return appSupport
             .appendingPathComponent("Voxt", isDirectory: true)
             .appendingPathComponent("transcription-history.json")
+    }
+}
+
+extension HistoryRepositoryProtocol {
+    func pendingAudioDeletionPaths() throws -> [String] { [] }
+    func scheduleAudioDeletion(paths: [String]) throws {}
+
+    func clearAudioReferences(path: String) throws {
+        for entry in try entries(kind: nil, query: "", limit: nil, offset: 0)
+        where entry.audioRelativePath == path || entry.transcriptAudioRelativePath == path {
+            try upsert(entry.removingAudioArchiveReference(path: path))
+        }
     }
 }

@@ -2369,3 +2369,44 @@
 "Open Notes from the main window" = "メインウィンドウから「メモ」を開く";
 "Try Later" = "後で試す";
 "Less" = "折りたたむ";
+
+"Audio storage limit" = "音声保存上限";
+
+"Existing audio remains Unlimited until you choose a limit. A finite limit deletes the oldest saved audio, preserving text history." = "上限を選択するまで既存の音声は無制限で保持されます。上限を設定すると古い音声から削除され、テキスト履歴は保持されます。";
+
+"Use 100 MB and clean oldest audio" = "100 MB に設定して古い音声を削除";
+
+"Keep Unlimited" = "無制限を維持";
+
+"Other Local Storage" = "その他のローカル保存領域";
+
+"Diagnostic logs" = "診断ログ";
+
+"Diagnostic log limit" = "診断ログの上限";
+
+"Includes current, rotated and legacy Voxt logs. Default: 12 MiB. Logs rotate independently of audio." = "現在、ローテーション済み、旧形式の Voxt ログを含みます。既定値は 12 MiB。音声とは独立してローテーションします。";
+
+"Log cleanup or writing failed; storage may remain over limit." = "ログの削除または書き込みに失敗しました。上限を超えている可能性があります。";
+
+"Database files (shared)" = "データベースファイル（共有）";
+
+"Includes SQLite, WAL and SHM for history, notes and dictionaries. Text and notes are not quota caches." = "履歴、ノート、辞書の SQLite、WAL、SHM を含みます。テキストとノートは容量制限による削除対象ではありません。";
+
+"Audio imports and active files can temporarily exceed the limit. A recording larger than the limit is not saved; its text is retained." = "取り込み中または使用中の音声により一時的に上限を超える場合があります。上限より大きい録音の音声は保存されず、テキストは保持されます。";
+
+"New history audio is stored here. Previous locations remain managed; switching does not move files." = "新しい履歴音声はここに保存されます。以前の場所も管理され、切り替えてもファイルは移動しません。";
+
+"Storage usage unavailable" = "保存領域の使用量を取得できません";
+
+"Cleanup failed; retained files will be retried." = "削除に失敗しました。保持されたファイルを再試行します。";
+
+"Over limit: audio in use will be retried after release." = "上限超過：使用中の音声は解放後に再試行されます。";
+
+"Audio cleanup is waiting for files in use." = "使用中のファイルが解放されるまで音声の削除を待機しています。";
+
+"Audio folders need attention" = "音声フォルダの確認が必要です";
+"Total usage is unavailable. Automatic capacity cleanup is paused; explicit deletions in accessible folders can still finish." = "合計使用量を取得できないため、容量による自動削除を一時停止しています。アクセス可能なフォルダでの手動削除は実行できます。";
+"Reconnect folder" = "フォルダに再接続";
+"Stop managing folder" = "フォルダの管理を停止";
+"Stopping management leaves files and text history unchanged. That folder is excluded from the quota and its audio cannot be played until you select it again." = "管理を停止してもファイルやテキスト履歴は削除されません。このフォルダは容量制限の対象外となり、再度選択するまで音声を再生できなくなります。";
+"Reconnect the same folder shown above. If it is on an external disk, connect that disk first." = "上に表示された同じフォルダを選択してください。外部ディスクにある場合は、先にそのディスクを接続してください。";

@@ -12,11 +12,14 @@ final class MeetingDetailPlaybackController: ObservableObject {
     @Published var isPlaying = false
     @Published private(set) var playbackRate: Float = 1
 
+    private var audioUse: HistoryAudioFileUse?
     private var player: AVAudioPlayer?
     private var timer: Timer?
 
     init(audioURL: URL?) {
+        audioUse = nil
         guard let audioURL else { return }
+        audioUse = HistoryAudioFileUse(url: audioURL)
         player = try? AVAudioPlayer(contentsOf: audioURL)
         player?.enableRate = true
         player?.rate = playbackRate

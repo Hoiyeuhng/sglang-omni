@@ -1,11 +1,83 @@
 // TranscriptionHistoryStoreAsyncTests.swift
 
+import Combine
 import Foundation
 import XCTest
 @testable import Voxt
 
 @MainActor
 final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
+    func testQueuedQuotaUsesUnlimitedSelectedBeforeCleanupStarts() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voxt-history-quota-policy-\(UUID())", isDirectory: true)
+        let audioRootURL = directoryURL.appendingPathComponent("audio", isDirectory: true)
+        let relativePath = "transcription/fixture.wav"
+        let audioURL = audioRootURL.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: audioURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        try Data().write(to: audioURL)
+        let audioFile = try FileHandle(forWritingTo: audioURL)
+        try audioFile.truncate(atOffset: 60_000_000)
+        try audioFile.close()
+        try HistoryAudioQuota(rootURL: audioRootURL).register(path: relativePath)
+
+        let suite = "VoxtHistoryQuotaPolicyTests-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        HistoryAudioQuotaPreference.initialize(defaults: defaults, hasExistingData: false)
+        defaults.set(50, forKey: HistoryAudioQuotaPreference.limitKey)
+        let entry = makeEntry(index: 0).updatingAudioRelativePath(relativePath)
+        let repository = try makeFixture(entries: [entry])
+        repository.blockNextAudioPathsRequest()
+        let store = TranscriptionHistoryStore(
+            repository: repository,
+            audioArchive: HistoryAudioArchiveService(rootURL: audioRootURL),
+            defaults: defaults,
+            logFileStore: VoxtLogFileStore(baseDirectoryURL: directoryURL.appendingPathComponent("logs"))
+        )
+        XCTAssertTrue(repository.waitUntilRequestIsBlocked())
+        let refreshed = expectation(description: "Only the latest requested quota state is published")
+        let observation = store.$audioQuotaSnapshot.dropFirst().prefix(1).sink { snapshot in
+            XCTAssertFalse(snapshot.measurementFailed)
+            XCTAssertFalse(snapshot.cleanupFailed)
+            XCTAssertFalse(snapshot.overLimit)
+            XCTAssertEqual(snapshot.fileCount, 1)
+            XCTAssertEqual(snapshot.totalBytes, 60_000_000)
+            refreshed.fulfill()
+        }
+        defer { observation.cancel() }
+
+        defaults.set(0, forKey: HistoryAudioQuotaPreference.limitKey)
+        store.applyAudioStorageQuotaIfNeeded()
+        repository.releaseBlockedRequest()
+        await fulfillment(of: [refreshed], timeout: 3)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+        let persistedEntry = try XCTUnwrap(repository.entry(id: entry.id))
+        XCTAssertEqual(persistedEntry.audioRelativePath, relativePath)
+        XCTAssertEqual(persistedEntry.text, entry.text)
+    }
+
+    func testUsageRefreshDoesNotRepublishHistoryOrQueueEveryRequest() async throws {
+        let repository = try makeFixture(entries: [makeEntry(index: 0)])
+        repository.blockNextAudioPathsRequest()
+        let store = TranscriptionHistoryStore(repository: repository)
+        XCTAssertTrue(repository.waitUntilRequestIsBlocked())
+        let measured = expectation(description: "Coalesced usage refresh")
+        var historyPublicationCount = 0
+        let historyObservation = store.$entries.dropFirst().sink { _ in
+            historyPublicationCount += 1
+            store.applyAudioStorageQuotaIfNeeded()
+        }
+        let usageObservation = store.$audioQuotaSnapshot.dropFirst().prefix(1).sink { _ in measured.fulfill() }
+        defer { historyObservation.cancel(); usageObservation.cancel() }
+        for _ in 0..<100 { store.applyAudioStorageQuotaIfNeeded() }
+        repository.releaseBlockedRequest()
+        await fulfillment(of: [measured], timeout: 3)
+        XCTAssertEqual(repository.audioPathsRequestCount, 2)
+        XCTAssertEqual(historyPublicationCount, 0)
+    }
+
     func testClearAllInvalidatesInFlightReloadSnapshot() async throws {
         let repository = try makeFixture(entries: [makeEntry(index: 0)])
         let store = TranscriptionHistoryStore(repository: repository)
@@ -40,7 +112,9 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
     }
 
     func testRetentionCleanupPreservesMeetingHistory() async throws {
-        let defaults = UserDefaults.standard
+        let suite = "VoxtHistoryRetentionTests-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
         let cleanupEnabledKey = AppPreferenceKey.historyCleanupEnabled
         let retentionPeriodKey = AppPreferenceKey.historyRetentionPeriod
         let retentionCountKey = AppPreferenceKey.historyRetentionCount
@@ -74,7 +148,7 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
         let rewrite = makeEntry(index: 2, kind: .rewrite, createdAt: oldDate)
         let meeting = makeEntry(index: 3, kind: .transcript, createdAt: oldDate)
         let repository = try makeFixture(entries: [transcription, translation, rewrite, meeting])
-        let store = TranscriptionHistoryStore(repository: repository)
+        let store = TranscriptionHistoryStore(repository: repository, defaults: defaults)
 
         XCTAssertNil(store.entry(id: transcription.id))
         XCTAssertNil(store.entry(id: translation.id))
@@ -84,7 +158,9 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
     }
 
     func testRetentionCountCleanupKeepsNewestPerKindAndPreservesMeetings() async throws {
-        let defaults = UserDefaults.standard
+        let suite = "VoxtHistoryRetentionTests-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
         let cleanupEnabledKey = AppPreferenceKey.historyCleanupEnabled
         let retentionPeriodKey = AppPreferenceKey.historyRetentionPeriod
         let retentionCountKey = AppPreferenceKey.historyRetentionCount
@@ -136,7 +212,7 @@ final class TranscriptionHistoryStoreAsyncTests: XCTestCase {
         entries.append(meeting)
 
         let repository = try makeFixture(entries: entries)
-        let store = TranscriptionHistoryStore(repository: repository)
+        let store = TranscriptionHistoryStore(repository: repository, defaults: defaults)
 
         for id in newestNormalIDs {
             XCTAssertNotNil(store.entry(id: id))
@@ -322,7 +398,11 @@ private final class BlockingHistoryRepository: HistoryRepositoryProtocol, @unche
     private let requestStarted = DispatchSemaphore(value: 0)
     private let requestRelease = DispatchSemaphore(value: 0)
     private var shouldBlockNextEntriesRequest = false
+    private var shouldBlockNextAudioPathsRequest = false
     private var shouldFailNextUpsertRequest = false
+    private var audioPathsRequests = 0
+
+    var audioPathsRequestCount: Int { lock.withLock { audioPathsRequests } }
 
     init(base: HistoryRepositoryProtocol) {
         self.base = base
@@ -331,6 +411,12 @@ private final class BlockingHistoryRepository: HistoryRepositoryProtocol, @unche
     func blockNextEntriesRequest() {
         lock.withLock {
             shouldBlockNextEntriesRequest = true
+        }
+    }
+
+    func blockNextAudioPathsRequest() {
+        lock.withLock {
+            shouldBlockNextAudioPathsRequest = true
         }
     }
 
@@ -385,7 +471,18 @@ private final class BlockingHistoryRepository: HistoryRepositoryProtocol, @unche
     }
 
     func audioRelativePaths() throws -> [String] {
-        try base.audioRelativePaths()
+        lock.withLock { audioPathsRequests += 1 }
+        let snapshot = try base.audioRelativePaths()
+        let shouldBlock = lock.withLock {
+            let value = shouldBlockNextAudioPathsRequest
+            shouldBlockNextAudioPathsRequest = false
+            return value
+        }
+        if shouldBlock {
+            requestStarted.signal()
+            _ = requestRelease.wait(timeout: .now() + 2)
+        }
+        return snapshot
     }
 
     func entryCount(kind: TranscriptionHistoryKind?, query: String) throws -> Int {
