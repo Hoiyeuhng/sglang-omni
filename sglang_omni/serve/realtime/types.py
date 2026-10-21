@@ -7,6 +7,7 @@ from collections.abc import Awaitable
 from dataclasses import asdict, dataclass
 from typing import Protocol, get_args
 
+from sglang_omni.admission import ContextExhaustedError
 from sglang_omni.profiler.duplex_events import SessionUnitReadyObservation
 from sglang_omni.serve.realtime.control import ControlEvent
 from sglang_omni.serve.realtime.output import OutputEvent
@@ -23,6 +24,12 @@ PCM16_BYTES_PER_SAMPLE = 2
 MS_PER_SECOND = 1000
 MAX_BUFFERED_INPUT_S = 60
 SUPPORTED_OUTPUT_MODALITIES = frozenset({"text", "audio"})
+CLOSE_REASON_CLIENT_CLOSED = "client_closed"
+CLOSE_REASON_DISCONNECT = "disconnect"
+CLOSE_REASON_SESSION_UPDATE_TIMEOUT = "session_update_timeout"
+CLOSE_REASON_CONTEXT_EXHAUSTED = ContextExhaustedError.CODE
+CLOSE_REASON_INTERNAL = "internal"
+CLOSE_REASON_CLEANUP_TIMEOUT = "cleanup_timeout"
 
 
 class ProtocolError(ValueError):
