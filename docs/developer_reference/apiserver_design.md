@@ -70,6 +70,35 @@ It:
 
 Use it when you want the standard out-of-the-box server path.
 
+### Timeouts for shared sessions
+
+A shared session has two runtime timeouts. Both close the session with close code `1008`.
+
+| Timeout | `RuntimeLimits` field | Server option | Default | Close reason |
+| --- | --- | --- | --- | --- |
+| Admission | `session_update_timeout_s` | `--realtime-admission-timeout-s` | 60 s | `session_update_timeout` |
+| Idle | `idle_timeout_s` | `--realtime-idle-timeout-s` | 300 s | `idle_timeout` |
+
+The server options need `--enable-realtime` and a pipeline with `realtime_deployment_factory`, such as `MiniCPMODuplexPipelineConfig`. Python callers pass `realtime_admission_timeout_s` and `realtime_idle_timeout_s` to `launch_server` or `run_server`. Each value must be finite and greater than zero, and the server rejects a bad value before it starts the pipeline. Without an option, the deployment's own limit applies. These options are not pipeline YAML fields.
+
+One task, `SessionRuntime.watch_activity`, enforces both timeouts.
+
+**Admission.** The deadline starts when the connection starts. A failed admission does not reset it. After the deadline, a new `session.update` cannot start admission. An admission that is already running is not cut off: it may finish after the deadline, bounded by `cleanup_timeout_s`.
+
+**Idle.** The idle timer restarts when the session opens and after each of these events:
+
+- the runtime accepts audio or an image;
+- `input_audio_buffer.clear` or `sglang.input_audio.end` completes;
+- the client sends `input_audio_buffer.commit`, `response.cancel`, or `conversation.item.truncate` successfully;
+- the adapter finishes an input unit or a commit;
+- the adapter emits model output for the client.
+
+Output counts as activity because turn-based sessions stream replies after the client stops sending input.
+
+WebSocket pings, `session.update`, and rejected images do not restart it. The timer never closes a session while the adapter is processing a unit or a commit, or a client command holds the command lock. The watchdog sleeps no longer than one idle period between checks, and while the session is busy it waits one full period before it checks again, so a session can stay open for up to about two idle periods after its last activity.
+
+**Pipeline backup timer.** The pipeline has its own idle timer. It only sees full input units, so it is set long enough that it does not fire before the runtime timer for an idle client. It can still close a session whose client keeps sending audio that never fills an input unit; that close uses code `1011`. Both `CoordinatorAdapter.set_limits` and `SessionBridge.set_limits` set it to the largest of: the pipeline default (300 s), the configured pipeline idle timeout, and `2 × idle_timeout_s + cleanup_timeout_s + operation_timeout_s`. Pipeline sessions that are not managed by a realtime runtime keep their configured idle timeout.
+
 ### WebSocket close codes for shared sessions
 
 A shared session sends the last JSON events before the WebSocket Close frame. The frame gives a close code and a close reason.
@@ -77,10 +106,10 @@ A shared session sends the last JSON events before the WebSocket Close frame. Th
 | Close code | Close reason |
 | --- | --- |
 | `1000` | `client_closed` or `disconnect` |
-| `1008` | `session_update_timeout` or `context_exhausted` |
+| `1008` | `session_update_timeout`, `idle_timeout`, or `context_exhausted` |
 | `1011` | An internal error, adapter failure, or cleanup failure |
 
-The server uses code `1008` for the initial `session.update` timeout or the context limit. These conditions are application policies. [RFC 6455, section 7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1) gives the WebSocket close codes.
+The server uses code `1008` for the initial `session.update` timeout, an idle timeout, or the context limit. These conditions are application policies. [RFC 6455, section 7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1) gives the WebSocket close codes.
 
 The Close frame has a limit of 123 bytes for the close reason. The server uses UTF-8 for this text. If the text is too long, the server removes whole characters from the end. The JSON events keep the full reason.
 
@@ -103,8 +132,7 @@ The current server exposes these main routes:
 | `POST` | `/start_request_profile` | Request-level event recorder only (no torch trace) |
 | `POST` | `/stop_request_profile` | Stops the request-level event recorder |
 
-The profiling routes are mounted by the single-process `launch_server()` path. The
-current multi-process launcher path does not mount them.
+The profiling routes are mounted by the single-process `launch_server()` path. The current multi-process launcher path does not mount them.
 
 `/start_profile` accepts:
 
@@ -117,14 +145,9 @@ current multi-process launcher path does not mount them.
 }
 ```
 
-`/stop_profile` and `/stop_request_profile` both accept an optional
-`run_id`. Omitting it is a wildcard: every stage stops whatever profiler
-session is currently active.
+`/stop_profile` and `/stop_request_profile` both accept an optional `run_id`. Omitting it is a wildcard: every stage stops whatever profiler session is currently active.
 
-Request-level events are emitted as JSON lines under
-`<event_dir>/events_<stage>_<pid>.jsonl`. Use `python -m sglang_omni.profiler
-<event_dir>` to derive the timeline / stage / hop reports described in
-`docs/developer_reference/profiler.md`.
+Request-level events are emitted as JSON lines under `<event_dir>/events_<stage>_<pid>.jsonl`. Use `python -m sglang_omni.profiler <event_dir>` to derive the timeline / stage / hop reports described in `docs/developer_reference/profiler.md`.
 
 ## Request Mapping
 
@@ -169,8 +192,7 @@ It also includes `sglang-omni` extensions such as:
 - stores talker-specific generation overrides in `extra_params`
 - copies `modalities` into `output_modalities`
 
-The route hands that `GenerateRequest` to `Client`. The client then converts it
-to an `OmniRequest` before submitting it to the coordinator.
+The route hands that `GenerateRequest` to `Client`. The client then converts it to an `OmniRequest` before submitting it to the coordinator.
 
 ## Response Paths
 
@@ -211,14 +233,6 @@ The speech route reuses the same internal request path rather than introducing a
 - `task="tts"` in metadata
 - TTS-specific parameters stored under `tts_params`
 
-For non-streaming requests, `Client.speech()` collects audio chunks, encodes
-them, and returns raw audio bytes to the HTTP layer.
+For non-streaming requests, `Client.speech()` collects audio chunks, encodes them, and returns raw audio bytes to the HTTP layer.
 
-For `stream=true`, the route emits `audio/pcm` bytes directly. The HTTP response
-headers are derived from the first audio chunk and subsequent chunks must keep
-the same sample rate. TTS chunk-timing knobs such as
-`initial_codec_chunk_frames` are forwarded as request params only when the
-client provides them, including an explicit `0`, so model schedulers can consume
-them without changing Stage, Coordinator, or Relay. When the field is omitted,
-the speech route leaves it unset and each model applies its own streaming
-default.
+For `stream=true`, the route emits `audio/pcm` bytes directly. The HTTP response headers are derived from the first audio chunk and subsequent chunks must keep the same sample rate. TTS chunk-timing knobs such as `initial_codec_chunk_frames` are forwarded as request params only when the client provides them, including an explicit `0`, so model schedulers can consume them without changing Stage, Coordinator, or Relay. When the field is omitted, the speech route leaves it unset and each model applies its own streaming default.

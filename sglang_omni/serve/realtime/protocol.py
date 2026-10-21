@@ -31,6 +31,7 @@ from sglang_omni.serve.realtime.types import (
     CLOSE_REASON_CLIENT_CLOSED,
     CLOSE_REASON_CONTEXT_EXHAUSTED,
     CLOSE_REASON_DISCONNECT,
+    CLOSE_REASON_IDLE_TIMEOUT,
     CLOSE_REASON_INTERNAL,
     CLOSE_REASON_SESSION_UPDATE_TIMEOUT,
     ProtocolError,
@@ -43,6 +44,7 @@ CLOSE_CODE_BY_REASON: dict[str, int] = {
     CLOSE_REASON_CLIENT_CLOSED: WS_1000_NORMAL_CLOSURE,
     CLOSE_REASON_DISCONNECT: WS_1000_NORMAL_CLOSURE,
     CLOSE_REASON_SESSION_UPDATE_TIMEOUT: WS_1008_POLICY_VIOLATION,
+    CLOSE_REASON_IDLE_TIMEOUT: WS_1008_POLICY_VIOLATION,
     CLOSE_REASON_CONTEXT_EXHAUSTED: WS_1008_POLICY_VIOLATION,
     CLOSE_REASON_INTERNAL: WS_1011_INTERNAL_ERROR,
     CLOSE_REASON_CLEANUP_TIMEOUT: WS_1011_INTERNAL_ERROR,
@@ -60,7 +62,7 @@ class SharedRealtimeSession:
         self.session_id = runtime.session_id
 
     async def run(self) -> None:
-        self.runtime.notify_created()
+        self.runtime.start()
         reader = asyncio.create_task(self.read())
         sender = asyncio.create_task(self.send())
         is_disconnected = False

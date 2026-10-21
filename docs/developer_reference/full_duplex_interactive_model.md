@@ -52,7 +52,7 @@ curl --fail http://localhost:8000/v1/realtime/capabilities
 The results should be as follows:
 
 ```json
-{"model":"openbmb/MiniCPM-o-4_5","interaction":"native","native_full_duplex":true,"proactive_output":false,"turn_control":[null],"client_commit":false,"input_modalities":["audio","image"],"output_modalities":["audio","text"],"input_audio_format":{"type":"audio/pcm","rate":16000},"output_audio_format":{"type":"audio/pcm","rate":24000},"native_unit_ms":1000,"first_unit_ms":1000,"microturn_ms":"variable","tail_policy":"pad","supports_server_interrupt":false,"supports_truncate":false,"supports_resume":false,"partial_style":"append_only","pressure_policy":"reject","strict_order":true,"sampling_parameters":["greedy","temperature","top_k","top_p","repetition_penalty","listen_prob_scale","force_listen_count","max_new_tokens_per_unit","repetition_window_size","talker_temperature","talker_repetition_penalty"],"supports_reference_audio":true,"input_image_format":{"types":["image/jpeg","image/png"],"max_bytes":524288,"max_frames_per_unit":4,"max_slice_nums":9},"limits":{"max_input_bytes":1920000,"max_output_bytes":33554432,"max_history_chars":65536,"cleanup_timeout_s":30}}#
+{"model":"openbmb/MiniCPM-o-4_5","interaction":"native","native_full_duplex":true,"proactive_output":false,"turn_control":[null],"client_commit":false,"input_modalities":["audio","image"],"output_modalities":["audio","text"],"input_audio_format":{"type":"audio/pcm","rate":16000},"output_audio_format":{"type":"audio/pcm","rate":24000},"native_unit_ms":1000,"first_unit_ms":1000,"microturn_ms":"variable","tail_policy":"pad","supports_server_interrupt":false,"supports_truncate":false,"supports_resume":false,"partial_style":"append_only","pressure_policy":"reject","strict_order":true,"sampling_parameters":["greedy","temperature","top_k","top_p","repetition_penalty","listen_prob_scale","force_listen_count","max_new_tokens_per_unit","repetition_window_size","talker_temperature","talker_repetition_penalty"],"supports_reference_audio":true,"input_image_format":{"types":["image/jpeg","image/png"],"max_bytes":524288,"max_frames_per_unit":4,"max_slice_nums":9},"limits":{"max_input_bytes":1920000,"max_output_bytes":33554432,"max_history_chars":65536,"cleanup_timeout_s":30,"session_update_timeout_s":60,"idle_timeout_s":300}}
 ```
 
 The duplex server only accepts `/v1/realtime` requests; other chat completions or voice cloning against it fail.
@@ -79,6 +79,8 @@ Clients connect to `/v1/realtime` over WebSocket. They send 16 kHz mono PCM16 au
 1. After `session.created`, send `session.update` and wait for `session.updated`.
 2. Send audio with `input_audio_buffer.append` at the pace it is captured; replies arrive while you send.
 3. When the audio ends, send `sglang.input_audio.end`, wait for `sglang.input_audio.drained`, then send `session.close`.
+
+If there is no input and no output for 300 seconds (5 minutes), the server closes the session with `idle_timeout` (close code `1008`). Accepted audio and images, successful client clear, end, commit, cancel, and truncate commands, and model output emitted by the adapter for the client restart the idle timer. Time while the model is still processing an input unit or a commit does not count, and the timer restarts when that processing finishes. WebSocket pings and `session.update` do not count as activity. Keep sending audio (silence is fine) during pauses, or start the server with a larger `--realtime-idle-timeout-s`.
 
 For a Python client, see `warmup` in `playground/realtime/app.py`.
 
