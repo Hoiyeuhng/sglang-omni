@@ -196,22 +196,30 @@ class SessionRuntime:
                 adapter = self.adapter_factory()
                 adapter.set_limits(self.limits)
                 try:
-                    await asyncio.wait_for(
-                        adapter.open(self.session_id, candidate, self.emit),
-                        self.limits.cleanup_timeout_s,
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        f"Realtime session {self.session_id} admission failed"
-                    )
                     try:
                         await asyncio.wait_for(
-                            adapter.close(), self.limits.cleanup_timeout_s
+                            adapter.open(self.session_id, candidate, self.emit),
+                            self.limits.cleanup_timeout_s,
                         )
-                    except Exception:
-                        self.adapter = adapter
-                        raise RuntimeError("admission cleanup failed") from exc
-                    raise ProtocolError("admission_rejected", str(exc)) from exc
+                    except Exception as exc:
+                        logger.exception(
+                            f"Realtime session {self.session_id} admission failed"
+                        )
+                        try:
+                            await asyncio.wait_for(
+                                adapter.close(), self.limits.cleanup_timeout_s
+                            )
+                        except Exception:
+                            self.adapter = adapter
+                            self.state = "CLOSING"
+                            self.fail("admission cleanup failed", event_id=event_id)
+                            raise RuntimeError("admission cleanup failed") from exc
+                        raise ProtocolError("admission_rejected", str(exc)) from exc
+                except asyncio.CancelledError:
+                    self.adapter = adapter
+                    self.state = "CLOSING"
+                    self.fail("session admission cancelled", event_id=event_id)
+                    raise
                 self.adapter = adapter
                 if self.close_task is not None:
                     # Note (Junnan Li): Admission cleanup belongs to the closing owner; do not publish OPEN here.
@@ -541,6 +549,14 @@ class SessionRuntime:
                         )
                     )
                     return
+        except asyncio.CancelledError:
+            if self.close_task is None:
+                logger.error(f"Realtime session {self.session_id} input pump cancelled")
+                self.state = "CLOSING"
+                self.fail("input processing cancelled")
+            else:
+                pass
+            raise
         except ProtocolError as exc:
             self.fail(str(exc), exc.code)
         except Exception as exc:
