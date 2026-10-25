@@ -71,6 +71,7 @@ from sglang_omni.serve.stage_routes import (
     export_server_port,
 )
 from sglang_omni.serve.transcriptions import TRANSCRIPTIONS_ENDPOINT
+from sglang_omni.serve.websocket_protocol import BoundedCloseWebSocketProtocol
 from sglang_omni.utils.gpu_compat import apply_gpu_compat_env_defaults
 from sglang_omni.utils.gpu_memory import (
     GpuDeviceInfo,
@@ -760,6 +761,7 @@ async def run_server(
 
             config = uvicorn.Config(
                 app,
+                ws=BoundedCloseWebSocketProtocol,
                 host=host,
                 port=port,
                 log_level=log_level,
