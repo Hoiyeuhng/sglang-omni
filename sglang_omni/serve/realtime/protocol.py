@@ -19,6 +19,7 @@ from sglang_omni.admission import ContextExhaustedError
 from sglang_omni.serve.realtime.constants import (
     CLOSE_REASON_CLIENT_CLOSED,
     CLOSE_REASON_DISCONNECT,
+    CLOSE_REASON_HEARTBEAT_TIMEOUT,
     CLOSE_REASON_IDLE_TIMEOUT,
     CLOSE_REASON_SESSION_UPDATE_TIMEOUT,
 )
@@ -31,6 +32,7 @@ from sglang_omni.serve.realtime.schema import (
     AudioAppendEvent,
     ConversationItemTruncateEvent,
     ImageAppendEvent,
+    SessionHeartbeatEvent,
     SessionUpdateEvent,
 )
 from sglang_omni.serve.realtime.types import ProtocolError
@@ -42,6 +44,7 @@ POLICY_CLOSE_REASONS = frozenset(
     {
         CLOSE_REASON_SESSION_UPDATE_TIMEOUT,
         CLOSE_REASON_IDLE_TIMEOUT,
+        CLOSE_REASON_HEARTBEAT_TIMEOUT,
         ContextExhaustedError.CODE,
     }
 )
@@ -151,6 +154,7 @@ class SharedRealtimeSession:
                 return True
             else:
                 pass
+            self.runtime.mark_peer_activity()
             event_id: str | None = None
             try:
                 if message.get("bytes") is not None:
@@ -189,6 +193,8 @@ class SharedRealtimeSession:
                 logger.exception(f"Realtime session {self.session_id} dispatch failed")
                 self.runtime.fail(str(exc), event_id=event_id)
                 return False
+            finally:
+                self.runtime.mark_peer_activity()
         return False
 
     async def dispatch(self, raw_event: object) -> None:
@@ -206,6 +212,8 @@ class SharedRealtimeSession:
             ) from exc
         if isinstance(event, SessionUpdateEvent):
             await self.runtime.update(event.session, event.event_id)
+        elif isinstance(event, SessionHeartbeatEvent):
+            self.runtime.heartbeat(event.event_id)
         elif isinstance(event, AudioAppendEvent):
             max_encoded_audio_chars = (self.runtime.limits.max_input_bytes + 2) // 3 * 4
             if len(event.audio) > max_encoded_audio_chars:

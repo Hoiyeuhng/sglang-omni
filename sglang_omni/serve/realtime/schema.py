@@ -112,6 +112,7 @@ class AudioReference(BaseModel):
 
 
 class SessionExtension(TypedDict, total=False):
+    heartbeat: bool
     interaction: Interaction
     tail_policy: TailPolicy
     timebase: TimebaseConfig
@@ -187,6 +188,10 @@ class SessionUpdateEvent(ClientEvent):
     session: dict[str, object]
 
 
+class SessionHeartbeatEvent(ClientEvent):
+    type: Literal["sglang.session.heartbeat"]
+
+
 class AppendMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
@@ -232,6 +237,7 @@ class SessionCommandEvent(ClientEvent):
 
 CLIENT_EVENT: TypeAdapter[
     SessionUpdateEvent
+    | SessionHeartbeatEvent
     | AudioAppendEvent
     | ImageAppendEvent
     | ConversationItemTruncateEvent
@@ -239,6 +245,7 @@ CLIENT_EVENT: TypeAdapter[
 ] = TypeAdapter(
     Annotated[
         SessionUpdateEvent
+        | SessionHeartbeatEvent
         | AudioAppendEvent
         | ImageAppendEvent
         | ConversationItemTruncateEvent

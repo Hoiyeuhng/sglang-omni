@@ -14,6 +14,7 @@ from sglang_omni.serve.realtime.control import (
     Drained,
     Ended,
     Failure,
+    HeartbeatAcknowledged,
     ImageAccepted,
     UnitCompleted,
     Updated,
@@ -262,7 +263,12 @@ def project_output(
 
 
 def project_control(event: ControlEvent) -> ServerEvent:
-    if isinstance(event, UnitCompleted):
+    if isinstance(event, HeartbeatAcknowledged):
+        return dict(
+            type="sglang.session.heartbeat_ack",
+            client_event_id=event.client_event_id,
+        )
+    elif isinstance(event, UnitCompleted):
         return dict(type="sglang.unit.done", unit_id=event.unit_id)
     elif isinstance(event, Created):
         return dict(

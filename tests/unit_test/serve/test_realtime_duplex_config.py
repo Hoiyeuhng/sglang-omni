@@ -43,7 +43,11 @@ from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits
 from sglang_omni.utils.imports import import_string
 from tests.unit_test.fixtures.realtime_fakes import ScriptedAdapter
 
-TIMEOUT_FIELDS = ["realtime_session_update_timeout_s", "realtime_idle_timeout_s"]
+TIMEOUT_FIELDS = [
+    "realtime_session_update_timeout_s",
+    "realtime_idle_timeout_s",
+    "realtime_heartbeat_timeout_s",
+]
 INVALID_TIMEOUTS = ["0", "-1", "nan", "inf", "-inf"]
 
 
@@ -101,12 +105,12 @@ def invoke_serve(
 @pytest.mark.parametrize(
     ("config_type", "pipeline_timeouts", "cli_timeouts", "expected_timeouts"),
     [
-        (DuplexPipelineConfig, {}, [], (60, 300)),
+        (DuplexPipelineConfig, {}, [], (60, 300, 30)),
         (
             DuplexPipelineConfig,
             {"realtime_session_update_timeout_s": 15, "realtime_idle_timeout_s": 45},
             [],
-            (15, 45),
+            (15, 45, 30),
         ),
         (
             DuplexPipelineConfig,
@@ -117,32 +121,44 @@ def invoke_serve(
                 "--realtime-idle-timeout-s",
                 "120",
             ],
-            (20, 120),
+            (20, 120, 30),
         ),
         (
             DuplexPipelineConfig,
             {"realtime_session_update_timeout_s": 15, "realtime_idle_timeout_s": 45},
             ["--realtime-idle-timeout-s", "600"],
-            (15, 600),
+            (15, 600, 30),
         ),
         (
             DuplexPipelineConfig,
             {"realtime_session_update_timeout_s": 15, "realtime_idle_timeout_s": 45},
             ["--realtime-session-update-timeout-s", "20"],
-            (20, 45),
+            (20, 45, 30),
         ),
-        (StreamingCascadePipelineConfig, {}, [], (60, 21600)),
+        (StreamingCascadePipelineConfig, {}, [], (60, 21600, 30)),
         (
             StreamingCascadePipelineConfig,
             {"realtime_idle_timeout_s": 900},
             [],
-            (60, 900),
+            (60, 900, 30),
         ),
         (
             StreamingCascadePipelineConfig,
             {},
             ["--realtime-idle-timeout-s", "30"],
-            (60, 30),
+            (60, 30, 30),
+        ),
+        (
+            DuplexPipelineConfig,
+            {"realtime_heartbeat_timeout_s": 17},
+            [],
+            (60, 300, 17),
+        ),
+        (
+            DuplexPipelineConfig,
+            {"realtime_heartbeat_timeout_s": 17},
+            ["--realtime-heartbeat-timeout-s", "29"],
+            (60, 300, 29),
         ),
     ],
 )
@@ -152,7 +168,7 @@ def test_timeout_configuration_reaches_served_capabilities(
     config_type: type[PipelineConfig],
     pipeline_timeouts: dict[str, float],
     cli_timeouts: list[str],
-    expected_timeouts: tuple[float, float],
+    expected_timeouts: tuple[float, float, float],
 ) -> None:
     """The served limits must honor CLI, YAML and pipeline defaults in that order."""
     config_text = f"config_cls: {config_type.__name__}\nmodel_path: duplex-test\n"
@@ -194,6 +210,7 @@ def test_timeout_configuration_reaches_served_capabilities(
         assert (
             limits["session_update_timeout_s"],
             limits["idle_timeout_s"],
+            limits["heartbeat_timeout_s"],
         ) == expected_timeouts
         assert limits["max_output_bytes"] == deployment_limits.max_output_bytes
         assert limits["cleanup_timeout_s"] == deployment_limits.cleanup_timeout_s
@@ -281,6 +298,7 @@ def test_direct_deployment_exposes_pipeline_timeouts(
     expected_timeouts: tuple[float, float],
 ) -> None:
     """Embedded apps must receive configured timeouts without the server launcher."""
+    pipeline_timeouts = {"realtime_heartbeat_timeout_s": 23, **pipeline_timeouts}
     (tmp_path / "voices").mkdir()
     if config_type is StreamingCascadePipelineConfig:
         pipeline_config = config_type(
@@ -308,6 +326,7 @@ def test_direct_deployment_exposes_pipeline_timeouts(
         limits["session_update_timeout_s"],
         limits["idle_timeout_s"],
     ) == expected_timeouts
+    assert limits["heartbeat_timeout_s"] == 23
 
 
 @pytest.mark.parametrize("has_pipeline_config", [False, True])

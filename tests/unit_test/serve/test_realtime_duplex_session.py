@@ -646,3 +646,38 @@ def test_connection_that_never_opens_is_closed_and_frees_its_slot(
     assert errors[-1]["sglang"]["fatal"] is True
     assert reopened["type"] == "session.created"
     assert close_frame == (1008, "session_update_timeout")
+
+
+def test_heartbeat_opt_in_is_echoed_and_acknowledged() -> None:
+    """Clients must negotiate heartbeat support before sending heartbeat frames."""
+    client = build_test_client(ScriptedAdapter())
+    with client.websocket_connect("/v1/realtime") as websocket:
+        assert websocket.receive_json()["type"] == "session.created"
+        send_event(websocket, "session.update", session={"sglang": {"heartbeat": True}})
+        updated = receive_until(websocket, "session.updated")[-1]
+        assert updated["session"]["sglang"]["heartbeat"] is True
+        assert (
+            updated["session"]["sglang"]["granted"]["limits"]["heartbeat_timeout_s"]
+            == 30
+        )
+        send_event(websocket, "sglang.session.heartbeat")
+        acknowledgement = websocket.receive_json()
+        assert acknowledgement["type"] == "sglang.session.heartbeat_ack"
+        assert acknowledgement["client_event_id"] == "client_sglang.session.heartbeat"
+        send_event(websocket, "session.close")
+        receive_until(websocket, "session.closed")
+        assert receive_close_frame(websocket) == (1000, "client_closed")
+
+
+def test_heartbeat_opt_in_cannot_change_after_admission() -> None:
+    """A hot update must not silently enable a new liveness obligation."""
+    client = build_test_client(ScriptedAdapter())
+    with client.websocket_connect("/v1/realtime") as websocket:
+        open_session(websocket)
+        send_event(websocket, "session.update", session={"sglang": {"heartbeat": True}})
+        assert websocket.receive_json()["error"]["code"] == "invalid_state"
+        send_event(websocket, "sglang.session.heartbeat")
+        assert websocket.receive_json()["error"]["code"] == "not_applicable"
+        send_event(websocket, "session.close")
+        receive_until(websocket, "session.closed")
+        assert receive_close_frame(websocket) == (1000, "client_closed")

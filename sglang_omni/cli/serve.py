@@ -500,6 +500,18 @@ def serve(
             ),
         ),
     ] = None,
+    realtime_heartbeat_timeout_s: Annotated[
+        float | None,
+        typer.Option(
+            "--realtime-heartbeat-timeout-s",
+            callback=validate_realtime_timeout,
+            help=(
+                "Set the client-contact timeout for shared sessions that opt into "
+                "heartbeats, in seconds. Use --enable-realtime with this option. "
+                "If unset, the server uses the pipeline configuration."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Serve the pipeline.
 
@@ -619,6 +631,7 @@ def serve(
         enable_realtime=enable_realtime,
         realtime_session_update_timeout_s=realtime_session_update_timeout_s,
         realtime_idle_timeout_s=realtime_idle_timeout_s,
+        realtime_heartbeat_timeout_s=realtime_heartbeat_timeout_s,
         allowed_local_media_path=validate_allowed_local_media_path(
             allowed_local_media_path
         ),

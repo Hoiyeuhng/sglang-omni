@@ -52,6 +52,7 @@ def runtime_limits_for_pipeline(
             resolved_limits,
             session_update_timeout_s=pipeline_config.realtime_session_update_timeout_s,
             idle_timeout_s=pipeline_config.realtime_idle_timeout_s,
+            heartbeat_timeout_s=pipeline_config.realtime_heartbeat_timeout_s,
         )
 
 
