@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from sglang_omni.admission import QueueFullError
-from sglang_omni.config.session_audio import AudioSessionPipelineConfig
 from sglang_omni.models.qwen3_omni.session_node import SESSION_PORTS as QWEN3_OMNI_PORTS
+from sglang_omni.models.streaming_cascade.config import StreamingCascadePipelineConfig
 from sglang_omni.proto.session import SessionLimits
 from sglang_omni.proto.streams import (
     AUDIO,
@@ -110,23 +110,26 @@ async def test_runtime_limits_raise_pipeline_idle_backup_before_open() -> None:
 
 @pytest.mark.parametrize(
     ("configured_idle_seconds", "runtime_idle_seconds", "pipeline_idle_seconds"),
-    [(7200, 20, 7200), (10, 300, 930)],
+    [(7200, 20, 21600), (10, 300, 21600), (30, 30, 21600)],
 )
 @pytest.mark.asyncio
-async def test_configured_idle_limit_reaches_pipeline_session(
+async def test_realtime_idle_limit_preserves_pipeline_session_timeout(
     configured_idle_seconds: float,
     runtime_idle_seconds: float,
     pipeline_idle_seconds: float,
 ) -> None:
-    """Audio graph overrides must reach the pipeline without racing runtime expiry."""
-    pipeline_config = AudioSessionPipelineConfig(
+    """Realtime idle overrides must preserve the independent backend idle policy."""
+    pipeline_config = StreamingCascadePipelineConfig(
         model_path="unused",
         session_nodes={"vad": {"stages": ["vad"], "inputs": ["input:pcm16"]}},
         session_publish={"vad": ["session"]},
         realtime_idle_timeout_s=configured_idle_seconds,
     )
+    assert pipeline_config.session_limits().idle_timeout_s == 6 * 3600
     client = FakeSessionClient()
     deployment = build_realtime_deployment(client, pipeline_config)
+    assert deployment.session_limits.idle_timeout_s == 6 * 3600
+    assert deployment.limits.idle_timeout_s == configured_idle_seconds
     runtime = SessionRuntime(
         "configured-graph",
         deployment.capabilities,
