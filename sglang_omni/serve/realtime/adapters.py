@@ -16,7 +16,6 @@ from sglang_omni.proto.session import (
     SessionLimits,
     TimedChunk,
 )
-from sglang_omni.serve.realtime.constants import CLOSE_REASON_INTERNAL
 from sglang_omni.serve.realtime.output import OutputEvent, TurnFailure
 from sglang_omni.serve.realtime.schema import SessionConfiguration
 from sglang_omni.serve.realtime.task_cleanup import cancel_local_tasks
@@ -140,18 +139,16 @@ class CoordinatorAdapter(InteractionAdapter):
             else:
                 pass
         except Exception as exc:
+            failure = TurnFailure.from_exception(exc)
             if ContextExhaustedError.matches(exc):
-                failure_code = ContextExhaustedError.CODE
+                pass
             else:
                 logger.exception("Realtime session output reader failed")
-                failure_code = CLOSE_REASON_INTERNAL
             self.reader_error = exc
             if self.unit_completion is not None and not self.unit_completion.done():
                 self.unit_completion.set_exception(exc)
             else:
-                await self.output_sink(
-                    TurnFailure("server_error", failure_code, str(exc))
-                )
+                await self.output_sink(failure)
 
     async def process(self, unit: Unit) -> int:
         assert (

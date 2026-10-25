@@ -90,7 +90,9 @@ When the session ends, the server closes the WebSocket with one of these codes:
 |---|---|---|
 | `1000` | Normal close | `client_closed`, `disconnect` |
 | `1008` | A server limit was reached | `session_update_timeout`, `context_exhausted` |
-| `1011` | Server error | For example `internal` or `cleanup_timeout` |
+| `1011` | Server error | For example `internal`, `backend_timeout`, or `cleanup_timeout` |
+
+Backend `TimeoutError` failures are reported in the JSON error event as `backend_timeout`, with the backend's message or `Realtime backend timed out.` when it has none. This code does not imply that the client was idle. Admission and cleanup failures keep their existing `admission_rejected` and `cleanup_timeout` codes while also receiving a nonempty timeout message.
 
 For a Python client, see `warmup` in `playground/realtime/app.py`.
 

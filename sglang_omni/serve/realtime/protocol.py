@@ -22,6 +22,7 @@ from sglang_omni.serve.realtime.constants import (
     CLOSE_REASON_SESSION_UPDATE_TIMEOUT,
 )
 from sglang_omni.serve.realtime.control import ControlEvent, Failure
+from sglang_omni.serve.realtime.output import TurnFailure
 from sglang_omni.serve.realtime.projection import project_control, project_output
 from sglang_omni.serve.realtime.runtime import SessionRuntime
 from sglang_omni.serve.realtime.schema import (
@@ -172,7 +173,8 @@ class SharedRealtimeSession:
                     return False
             except Exception as exc:
                 logger.exception(f"Realtime session {self.session_id} dispatch failed")
-                self.runtime.fail(str(exc), event_id=event_id)
+                failure = TurnFailure.from_exception(exc)
+                self.runtime.fail(failure.message, failure.code, event_id=event_id)
                 return False
         return False
 

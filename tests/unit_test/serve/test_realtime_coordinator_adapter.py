@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterable
+from typing import Literal
 from unittest.mock import Mock
 
 import pytest
@@ -215,6 +216,35 @@ async def test_unexpected_output_stream_end_fails_the_session(
     ]
     assert len(adapter_records) == 1
     assert adapter_records[0].exc_info is not None
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "message"),
+    [
+        (TimeoutError(), "backend_timeout", "Realtime backend timed out."),
+        (
+            TimeoutError("session append timed out"),
+            "backend_timeout",
+            "session append timed out",
+        ),
+        (RuntimeError("backend failed"), "internal", "backend failed"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_output_reader_preserves_backend_failure_semantics(
+    error: Exception, code: Literal["backend_timeout", "internal"], message: str
+) -> None:
+    """Asynchronous backend timeouts must retain a meaningful event code and message."""
+    coordinator = SessionCoordinator([])
+    sink = RecordingSink()
+    adapter = build_adapter(coordinator)
+    await adapter.open("sess_1", SESSION_CONFIG, sink)
+    try:
+        coordinator.outputs.put_nowait(error)
+        await asyncio.wait_for(sink.has_published.wait(), PROCESS_TIMEOUT_S)
+        assert sink.published == [(TurnFailure("server_error", code, message), None)]
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.asyncio

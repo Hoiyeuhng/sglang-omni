@@ -48,7 +48,6 @@ from sglang_omni.proto.streams import (
     ImagePort,
     SessionPorts,
 )
-from sglang_omni.serve.realtime.constants import CLOSE_REASON_INTERNAL
 from sglang_omni.serve.realtime.output import (
     AudioDelta,
     AudioFinished,
@@ -346,18 +345,16 @@ class SessionBridge(InteractionAdapter):
             else:
                 pass
         except Exception as exc:
+            failure = TurnFailure.from_exception(exc)
             if ContextExhaustedError.matches(exc):
-                failure_code = ContextExhaustedError.CODE
+                pass
             else:
                 logger.exception("Session bridge output reader failed")
-                failure_code = CLOSE_REASON_INTERNAL
             self.reader_error = exc
             if self.input_done is not None and not self.input_done.done():
                 self.input_done.set_exception(exc)
             elif not self.is_closing:
-                await self.output_sink(
-                    TurnFailure("server_error", failure_code, str(exc))
-                )
+                await self.output_sink(failure)
             else:
                 pass
 

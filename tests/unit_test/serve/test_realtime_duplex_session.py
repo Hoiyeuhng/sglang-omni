@@ -24,8 +24,17 @@ from sglang_omni.serve.realtime.output import (
     TextFinished,
     TurnFailure,
 )
-from sglang_omni.serve.realtime.schema import JsonObject, JsonValue
-from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits
+from sglang_omni.serve.realtime.schema import (
+    JsonObject,
+    JsonValue,
+    SessionConfiguration,
+)
+from sglang_omni.serve.realtime.types import (
+    Capabilities,
+    OutputSink,
+    RuntimeLimits,
+    Unit,
+)
 from tests.unit_test.fixtures.realtime_fakes import (
     MODEL_NAME,
     HealthCoordinator,
@@ -46,6 +55,44 @@ AUDIO_REPLY: list[OutputEvent] = [
     TextFinished("resp", "item", "hi"),
     ResponseFinished("resp", "item", "hi", True, "completed", "turn_complete"),
 ]
+
+
+class FailingAdapter(ScriptedAdapter):
+    def __init__(
+        self,
+        error: Exception,
+        operation: Literal["open", "process", "update", "close"],
+    ) -> None:
+        super().__init__()
+        self.error: Exception = error
+        self.operation: Literal["open", "process", "update", "close"] = operation
+
+    async def open(
+        self, session_id: str, config: SessionConfiguration, emit: OutputSink
+    ) -> None:
+        if self.operation == "open":
+            raise self.error
+        else:
+            await super().open(session_id, config, emit)
+
+    async def process(self, unit: Unit) -> int | tuple[int, int]:
+        if self.operation == "process":
+            raise self.error
+        else:
+            return await super().process(unit)
+
+    async def update(self, config: SessionConfiguration) -> None:
+        if self.operation == "update":
+            raise self.error
+        else:
+            await super().update(config)
+
+    async def close(self) -> None:
+        await super().close()
+        if self.operation == "close":
+            raise self.error
+        else:
+            pass
 
 
 def text_reply(text: str, *, is_finished: bool) -> list[OutputEvent]:
@@ -477,6 +524,73 @@ def test_failed_admission_is_reported_and_releases_adapter() -> None:
     assert error["error"]["message"] == "no capacity"
     assert error["sglang"]["fatal"] is False
     assert adapter.is_closed is True
+
+
+@pytest.mark.parametrize("operation", ["process", "update"])
+@pytest.mark.parametrize(
+    ("error", "code", "message"),
+    [
+        (TimeoutError(), "backend_timeout", "Realtime backend timed out."),
+        (
+            TimeoutError("session append timed out"),
+            "backend_timeout",
+            "session append timed out",
+        ),
+        (RuntimeError("backend failed"), "internal", "backend failed"),
+    ],
+)
+def test_backend_failure_keeps_its_semantics_in_error_event(
+    operation: Literal["process", "update"],
+    error: Exception,
+    code: Literal["backend_timeout", "internal"],
+    message: str,
+) -> None:
+    """Backend timeouts must be distinguishable from other faults before the close frame."""
+    adapter = FailingAdapter(error, operation)
+    with build_test_client(adapter).websocket_connect("/v1/realtime") as websocket:
+        open_session(websocket)
+        if operation == "process":
+            append_audio(websocket, b"\1" * UNIT_BYTES, 0)
+        else:
+            send_event(websocket, "session.update", session={})
+        events = receive_until(websocket, "session.closed")
+        close_frame = receive_close_frame(websocket)
+
+    failure = events_of_type(events, "error")[0]
+    assert failure["error"]["code"] == code
+    assert failure["error"]["message"] == message
+    assert failure["sglang"]["fatal"] is True
+    assert close_frame == (1011, code)
+    assert adapter.is_closed
+
+
+def test_admission_timeout_preserves_rejection_code_with_nonempty_message() -> None:
+    """A backend admission timeout keeps the retryable rejection contract and explains the failure."""
+    adapter = FailingAdapter(TimeoutError(), "open")
+    with build_test_client(adapter).websocket_connect("/v1/realtime") as websocket:
+        websocket.receive_json()
+        send_event(websocket, "session.update", session={})
+        failure = websocket.receive_json()
+
+    assert failure["error"]["code"] == "admission_rejected"
+    assert failure["error"]["message"] == "Realtime backend timed out."
+    assert failure["sglang"]["fatal"] is False
+    assert adapter.is_closed
+
+
+def test_cleanup_timeout_preserves_close_code_with_nonempty_message() -> None:
+    """A cleanup timeout must carry an explanation while preserving its specific close reason."""
+    adapter = FailingAdapter(TimeoutError(), "close")
+    with build_test_client(adapter).websocket_connect("/v1/realtime") as websocket:
+        open_session(websocket)
+        send_event(websocket, "session.close")
+        failure = websocket.receive_json()
+        close_frame = receive_close_frame(websocket)
+
+    assert failure["error"]["code"] == "cleanup_timeout"
+    assert failure["error"]["message"] == "Realtime backend timed out."
+    assert failure["sglang"]["fatal"] is True
+    assert close_frame == (1011, "cleanup_timeout")
 
 
 @pytest.mark.parametrize(
