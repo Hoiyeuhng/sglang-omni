@@ -106,6 +106,7 @@ class SessionRuntime:
         self.pump_task: asyncio.Task[None] | None = None
         self.watchdog_task: asyncio.Task[None] | None = None
         self.close_task: asyncio.Task[None] | None = None
+        self.closed_event: asyncio.Event = asyncio.Event()
         self.close_reason: str | None = None
         self.processing_unit: ContextVar[Unit | None] = ContextVar(
             "realtime_unit", default=None
@@ -241,6 +242,7 @@ class SessionRuntime:
             else:
                 assert self.adapter is not None
                 await self.adapter.update(candidate)
+                self.mark_activity()
             self.config, self.granted = candidate, granted
             public_config = {
                 **candidate,
@@ -728,3 +730,4 @@ class SessionRuntime:
         finally:
             self.state = "CLOSED"
             self.output_buffer.output_ready.set()
+            self.closed_event.set()
