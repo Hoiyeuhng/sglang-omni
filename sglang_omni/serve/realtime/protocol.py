@@ -61,31 +61,37 @@ class SharedRealtimeSession:
         self.runtime.start()
         reader = asyncio.create_task(self.read())
         sender = asyncio.create_task(self.send())
+        runtime_closed = asyncio.create_task(self.runtime.closed_event.wait())
         is_disconnected = False
         try:
             finished_tasks, _ = await asyncio.wait(
-                (reader, sender), return_when=asyncio.FIRST_COMPLETED
+                (reader, sender, runtime_closed), return_when=asyncio.FIRST_COMPLETED
             )
-            for task in finished_tasks:
+            for task in finished_tasks - {runtime_closed}:
                 try:
                     has_client_left = task.result() is True
                 except WebSocketDisconnect:
                     has_client_left = True
                 is_disconnected = is_disconnected or has_client_left
         finally:
-            await self.runtime.close(CLOSE_REASON_DISCONNECT)
-            if not is_disconnected and not sender.done():
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(sender), self.runtime.limits.cleanup_timeout_s
-                    )
-                except (asyncio.TimeoutError, WebSocketDisconnect):
+            try:
+                await self.runtime.close(CLOSE_REASON_DISCONNECT)
+                if not is_disconnected and not sender.done():
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(sender),
+                            self.runtime.limits.cleanup_timeout_s,
+                        )
+                    except (asyncio.TimeoutError, WebSocketDisconnect):
+                        pass
+                else:
                     pass
-            else:
-                pass
-            for task in (reader, sender):
-                task.cancel()
-            await asyncio.gather(reader, sender, return_exceptions=True)
+            finally:
+                for task in (reader, sender, runtime_closed):
+                    task.cancel()
+                await asyncio.gather(
+                    reader, sender, runtime_closed, return_exceptions=True
+                )
 
     async def teardown(self) -> None:
         await self.runtime.close(CLOSE_REASON_DISCONNECT)

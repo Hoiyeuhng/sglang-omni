@@ -17,6 +17,7 @@ from starlette.types import Message
 from starlette.websockets import WebSocket
 
 import sglang_omni.serve.realtime.runtime as runtime_module
+from sglang_omni.client.client import Client
 from sglang_omni.profiler.duplex_events import SessionUnitReadyObservation
 from sglang_omni.profiler.event_recorder import get_recorder
 from sglang_omni.serve.realtime.control import (
@@ -25,6 +26,10 @@ from sglang_omni.serve.realtime.control import (
     Failure,
     UnitCompleted,
     Updated,
+)
+from sglang_omni.serve.realtime.manager import (
+    RealtimeDeployment,
+    RealtimeSessionManager,
 )
 from sglang_omni.serve.realtime.output import (
     AudioDelta,
@@ -53,7 +58,7 @@ from sglang_omni.serve.realtime.types import (
     RuntimeLimits,
     Unit,
 )
-from tests.unit_test.fixtures.realtime_fakes import FakeClock
+from tests.unit_test.fixtures.realtime_fakes import FakeClock, HealthCoordinator
 
 MODEL_NAME = "duplex-test"
 SAMPLE_RATE = 16000
@@ -127,6 +132,18 @@ class GatedClearAdapter(GatedAdapter):
         return 0
 
 
+class GatedUpdateAdapter(GatedAdapter):
+    should_reject_update: bool = False
+
+    async def update(self, config: SessionConfiguration) -> None:
+        self.has_started.set()
+        await self.release.wait()
+        if self.should_reject_update:
+            raise ProtocolError("invalid_request", "hot update rejected")
+        else:
+            pass
+
+
 class CommandAdapter(GatedAdapter):
     """Supports turn commands and can pause commit until released."""
 
@@ -165,9 +182,11 @@ class GatedWebSocketTransport:
         self.send_started: asyncio.Queue[ServerEvent] = asyncio.Queue()
         self.send_releases: asyncio.Queue[None] = asyncio.Queue()
         self.close_frame: tuple[int, str] | None = None
+        self.incoming_messages: asyncio.Queue[Message] = asyncio.Queue()
+        self.incoming_messages.put_nowait({"type": "websocket.connect"})
 
     async def receive(self) -> Message:
-        return {"type": "websocket.connect"}
+        return await self.incoming_messages.get()
 
     async def send(self, message: Message) -> None:
         if message["type"] == "websocket.send":
@@ -179,6 +198,11 @@ class GatedWebSocketTransport:
                 pass
             self.sent_events.append(server_event)
         elif message["type"] == "websocket.close":
+            if "websocket.close" in self.gated_event_types:
+                self.send_started.put_nowait({"type": "websocket.close"})
+                await self.send_releases.get()
+            else:
+                pass
             self.close_frame = (message["code"], message["reason"])
         else:
             pass
@@ -1049,6 +1073,67 @@ async def test_client_commands_restart_idle_timeout(
         await assert_idle_closed(runtime)
 
 
+@pytest.mark.parametrize("is_slow_update", [False, True])
+@pytest.mark.asyncio
+async def test_successful_hot_update_restarts_idle_timeout(
+    fake_clock: FakeClock,
+    is_slow_update: bool,
+) -> None:
+    """An accepted hot update gets a fresh idle window after it finishes."""
+    adapter = GatedUpdateAdapter([])
+    async with open_runtime(
+        adapter, ACTIVITY_LIMITS, Capabilities(supports_instruction_updates=True)
+    ) as runtime:
+        await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.75)
+        update_task = asyncio.create_task(
+            runtime.update({"instructions": "Updated instructions"}, "client_update")
+        )
+        await adapter.has_started.wait()
+        if is_slow_update:
+            await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.5)
+            assert runtime.state == "OPEN"
+            assert not update_task.done()
+            await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.25)
+        else:
+            pass
+        adapter.release.set()
+        await update_task
+        assert runtime.config["instructions"] == "Updated instructions"
+
+        await fake_clock.advance(
+            ACTIVITY_TIMEOUT_SECONDS * 0.75 + DEADLINE_EPSILON_SECONDS
+        )
+        assert runtime.state == "OPEN"
+        await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.25)
+        await assert_idle_closed(runtime)
+
+
+@pytest.mark.parametrize(
+    ("is_adapter_rejection", "error_message"),
+    [(False, "session field is frozen"), (True, "hot update rejected")],
+)
+@pytest.mark.asyncio
+async def test_rejected_hot_update_does_not_restart_idle_timeout(
+    fake_clock: FakeClock,
+    is_adapter_rejection: bool,
+    error_message: str,
+) -> None:
+    """An invalid hot update must not extend an otherwise idle session."""
+    adapter = GatedUpdateAdapter([])
+    adapter.should_reject_update = True
+    adapter.release.set()
+    async with open_runtime(
+        adapter,
+        ACTIVITY_LIMITS,
+        Capabilities(supports_instruction_updates=is_adapter_rejection),
+    ) as runtime:
+        await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.75)
+        with pytest.raises(ProtocolError, match=error_message):
+            await runtime.update({"instructions": "Rejected instructions"}, "rejected")
+        await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.5)
+        await assert_idle_closed(runtime)
+
+
 @pytest.mark.parametrize("command", ["commit", "end"])
 @pytest.mark.asyncio
 async def test_command_accepted_before_idle_deadline_reaches_adapter_when_watchdog_runs_first(
@@ -1334,3 +1419,86 @@ async def test_idle_timeout_shorter_than_admission_is_honored_after_open(
         await runtime.update({}, "client_update")
         await advance_past_deadline(fake_clock, runtime, ACTIVITY_TIMEOUT_SECONDS)
         await assert_idle_closed(runtime)
+
+
+@pytest.mark.parametrize(
+    "blocked_event_type",
+    ["session.created", "response.output_audio.delta", "websocket.close"],
+)
+@pytest.mark.asyncio
+async def test_timeout_releases_connection_with_blocked_websocket_send(
+    fake_clock: FakeClock,
+    blocked_event_type: Literal[
+        "session.created", "response.output_audio.delta", "websocket.close"
+    ],
+) -> None:
+    """A blocked socket must release its connection slot after runtime cleanup."""
+    adapter = GatedAdapter([])
+    manager = RealtimeSessionManager(
+        deployment=RealtimeDeployment(
+            capabilities=Capabilities(output_modalities=("audio",)),
+            adapter_factory=lambda: adapter,
+            limits=RuntimeLimits(
+                idle_timeout_s=ACTIVITY_TIMEOUT_SECONDS,
+                session_update_timeout_s=ACTIVITY_TIMEOUT_SECONDS,
+                cleanup_timeout_s=ACTIVITY_TIMEOUT_SECONDS / 10,
+            ),
+            max_connections=1,
+        ),
+        client=Client(HealthCoordinator(True)),
+        model_name=MODEL_NAME,
+    )
+    transport = GatedWebSocketTransport({blocked_event_type})
+    websocket = WebSocket(
+        {"type": "websocket"}, receive=transport.receive, send=transport.send
+    )
+    await websocket.accept()
+    session = manager.open(websocket)
+    assert isinstance(session, SharedRealtimeSession)
+
+    async def run_connection() -> None:
+        try:
+            await session.run()
+        finally:
+            await manager.close(session.session_id)
+
+    connection_task = asyncio.create_task(run_connection())
+    try:
+        await fake_clock.advance(0)
+        if blocked_event_type == "session.created":
+            expected_reason = "session_update_timeout"
+        else:
+            expected_reason = "idle_timeout"
+            await session.runtime.update({}, "client_update")
+            if blocked_event_type == "response.output_audio.delta":
+                await session.runtime.emit(ResponseStarted("response_0"))
+                await session.runtime.emit(AudioDelta("response_0", "item_0", b"\1\2"))
+            else:
+                pass
+        if blocked_event_type != "websocket.close":
+            await asyncio.wait_for(
+                transport.send_started.get(), TEST_WAIT_TIMEOUT_SECONDS
+            )
+        else:
+            pass
+
+        await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 1.25)
+        assert session.runtime.state == "CLOSED"
+        assert session.runtime.close_reason == expected_reason
+        if blocked_event_type == "websocket.close":
+            await asyncio.wait_for(
+                transport.send_started.get(), TEST_WAIT_TIMEOUT_SECONDS
+            )
+        else:
+            pass
+        await asyncio.wait_for(connection_task, TEST_WAIT_TIMEOUT_SECONDS)
+
+        assert manager.active_sessions() == []
+        assert adapter.close_call_count == (
+            0 if blocked_event_type == "session.created" else 1
+        )
+        assert session.runtime.watchdog_task is not None
+        assert session.runtime.watchdog_task.done()
+    finally:
+        connection_task.cancel()
+        await asyncio.gather(connection_task, return_exceptions=True)
