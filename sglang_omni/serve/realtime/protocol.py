@@ -33,6 +33,7 @@ from sglang_omni.serve.realtime.schema import (
     ImageAppendEvent,
     SessionUpdateEvent,
 )
+from sglang_omni.serve.realtime.task_cleanup import cancel_local_tasks
 from sglang_omni.serve.realtime.types import ProtocolError
 
 logger = logging.getLogger(__name__)
@@ -87,10 +88,9 @@ class SharedRealtimeSession:
                 else:
                     pass
             finally:
-                for task in (reader, sender, runtime_closed):
-                    task.cancel()
-                await asyncio.gather(
-                    reader, sender, runtime_closed, return_exceptions=True
+                await cancel_local_tasks(
+                    (reader, sender, runtime_closed),
+                    self.runtime.limits.cleanup_timeout_s,
                 )
 
     async def teardown(self) -> None:

@@ -12,6 +12,7 @@ from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
+import anyio
 import pytest
 from starlette.types import Message
 from starlette.websockets import WebSocket
@@ -1502,3 +1503,55 @@ async def test_timeout_releases_connection_with_blocked_websocket_send(
     finally:
         connection_task.cancel()
         await asyncio.gather(connection_task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("cancellation_kind", ["scope", "task"])
+@pytest.mark.asyncio
+async def test_cancellation_during_connection_cleanup_preserves_its_origin(
+    monkeypatch: pytest.MonkeyPatch, cancellation_kind: Literal["scope", "task"]
+) -> None:
+    """Closing a session must not replace the caller's cancellation with a child task's cancellation."""
+    adapter = GatedAdapter([])
+    runtime = SessionRuntime(
+        MODEL_NAME, Capabilities(), lambda: adapter, RuntimeLimits()
+    )
+    transport = GatedWebSocketTransport({"session.created"})
+    websocket = WebSocket(
+        {"type": "websocket"}, receive=transport.receive, send=transport.send
+    )
+    await websocket.accept()
+    transport.incoming_messages.put_nowait(
+        {
+            "type": "websocket.receive",
+            "text": json.dumps(
+                {"type": "session.update", "event_id": "open", "session": {}}
+            ),
+        }
+    )
+    transport.incoming_messages.put_nowait(
+        {"type": "websocket.disconnect", "code": 1000}
+    )
+    close_runtime = runtime.close
+    connection_task = asyncio.current_task()
+    assert connection_task is not None
+    cancel_scope = anyio.CancelScope()
+
+    async def close_then_cancel(reason: str, event_id: str | None = None) -> None:
+        assert (await transport.send_started.get())["type"] == "session.created"
+        await close_runtime(reason, event_id)
+        if cancellation_kind == "scope":
+            cancel_scope.cancel()
+        else:
+            connection_task.cancel("connection cancelled")
+
+    monkeypatch.setattr(runtime, "close", close_then_cancel)
+    session = SharedRealtimeSession(websocket, runtime)
+    if cancellation_kind == "scope":
+        with cancel_scope:
+            await session.run()
+        assert cancel_scope.cancelled_caught
+    else:
+        with pytest.raises(asyncio.CancelledError, match="connection cancelled"):
+            await session.run()
+    assert runtime.state == "CLOSED"
+    assert adapter.close_call_count == 1

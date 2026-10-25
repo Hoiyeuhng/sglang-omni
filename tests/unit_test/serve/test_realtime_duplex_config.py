@@ -426,7 +426,7 @@ def test_pipeline_rejects_invalid_timeouts(
 
 def test_serving_timeouts_appear_in_cli_help(cli_app: typer.Typer) -> None:
     result = CliRunner().invoke(
-        cli_app, ["--help"], env={"COLUMNS": "200", "TERM": "dumb"}
+        cli_app, ["--help"], env={"COLUMNS": "200", "LINES": "50", "TERM": "dumb"}
     )
     assert result.exit_code == 0
     for field_name in TIMEOUT_FIELDS:
