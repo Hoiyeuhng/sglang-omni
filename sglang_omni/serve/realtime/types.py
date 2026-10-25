@@ -9,6 +9,7 @@ from typing import Protocol, get_args
 
 from sglang_omni.profiler.duplex_events import SessionUnitReadyObservation
 from sglang_omni.proto.session import (
+    DEFAULT_HEARTBEAT_TIMEOUT_S,
     DEFAULT_IDLE_TIMEOUT_S,
     DEFAULT_SESSION_UPDATE_TIMEOUT_S,
 )
@@ -50,6 +51,7 @@ class RuntimeLimits:
     cleanup_timeout_s: float = 30
     session_update_timeout_s: float = DEFAULT_SESSION_UPDATE_TIMEOUT_S
     idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S
+    heartbeat_timeout_s: float = DEFAULT_HEARTBEAT_TIMEOUT_S
 
     def __post_init__(self) -> None:
         if any(

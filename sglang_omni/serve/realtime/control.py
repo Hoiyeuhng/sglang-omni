@@ -41,6 +41,11 @@ class ImageAccepted:
 
 
 @dataclass(frozen=True)
+class HeartbeatAcknowledged:
+    client_event_id: str
+
+
+@dataclass(frozen=True)
 class Cleared:
     discarded_ms: float
     client_event_id: str
@@ -87,6 +92,7 @@ ControlEvent = (
     | Updated
     | Accepted
     | ImageAccepted
+    | HeartbeatAcknowledged
     | Cleared
     | Ended
     | Drained

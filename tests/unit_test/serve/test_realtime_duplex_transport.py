@@ -52,13 +52,22 @@ class LiveServer:
 
 
 @asynccontextmanager
-async def serve_live(limits: RuntimeLimits) -> AsyncIterator[LiveServer]:
+async def serve_live(
+    limits: RuntimeLimits, *, max_connections: int = 1
+) -> AsyncIterator[LiveServer]:
     adapter = ScriptedAdapter()
+    adapters: list[ScriptedAdapter] = []
+
+    def create_adapter() -> ScriptedAdapter:
+        current_adapter = ScriptedAdapter() if adapters else adapter
+        adapters.append(current_adapter)
+        return current_adapter
+
     deployment = RealtimeDeployment(
         capabilities=Capabilities(),
-        adapter_factory=lambda: adapter,
+        adapter_factory=create_adapter,
         limits=limits,
-        max_connections=1,
+        max_connections=max_connections,
     )
     app = create_app(
         Client(HealthCoordinator(True)),
@@ -141,6 +150,58 @@ async def test_client_close_releases_session() -> None:
         )
         await assert_released(live_server, RELEASE_MARGIN_SECONDS)
         assert live_server.adapter.is_closed
+
+
+@pytest.mark.asyncio
+async def test_opted_in_heartbeat_expires_without_closing_other_connections() -> None:
+    """Application heartbeats preserve only the peer that sends them."""
+    timeout_seconds = IDLE_TIMEOUT_SECONDS
+    limits = RuntimeLimits(heartbeat_timeout_s=timeout_seconds, idle_timeout_s=10)
+    async with serve_live(limits, max_connections=2) as live_server:
+        async with (
+            connect(live_server.url, ping_interval=None) as heartbeat_peer,
+            connect(live_server.url, ping_interval=None) as legacy_peer,
+        ):
+            await receive_until(heartbeat_peer, "session.created")
+            await heartbeat_peer.send(
+                json.dumps(
+                    {
+                        "type": "session.update",
+                        "event_id": "enable",
+                        "session": {"sglang": {"heartbeat": True}},
+                    }
+                )
+            )
+            await receive_until(heartbeat_peer, "session.updated")
+            await open_session(legacy_peer)
+            for sequence in range(3):
+                await asyncio.sleep(timeout_seconds * 0.4)
+                await heartbeat_peer.send(
+                    json.dumps(
+                        {
+                            "type": "sglang.session.heartbeat",
+                            "event_id": f"heartbeat_{sequence}",
+                        }
+                    )
+                )
+                await receive_until(heartbeat_peer, "sglang.session.heartbeat_ack")
+            await asyncio.wait_for(
+                heartbeat_peer.wait_closed(), timeout_seconds + RELEASE_MARGIN_SECONDS
+            )
+            assert (heartbeat_peer.close_code, heartbeat_peer.close_reason) == (
+                1008,
+                "heartbeat_timeout",
+            )
+            await legacy_peer.send(
+                json.dumps(
+                    {
+                        "type": "session.update",
+                        "event_id": "still_open",
+                        "session": {},
+                    }
+                )
+            )
+            await receive_until(legacy_peer, "session.updated")
 
 
 @pytest.mark.asyncio

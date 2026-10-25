@@ -101,7 +101,7 @@ When the session ends, the server closes the WebSocket with one of these codes:
 | Close code | Meaning | Close reason |
 |---|---|---|
 | `1000` | Normal close | `client_closed`, `disconnect` |
-| `1008` | A server limit was reached | `session_update_timeout`, `idle_timeout`, `context_exhausted` |
+| `1008` | A server limit was reached | `session_update_timeout`, `idle_timeout`, `heartbeat_timeout`, `context_exhausted` |
 | `1011` | Server error | For example `internal` or `cleanup_timeout` |
 
 If a session has no input and no output for `realtime_idle_timeout_s`, the server closes it with `idle_timeout`. The pipeline configuration defaults to 300 seconds for native sessions and 6 hours for audio Session graphs, including the streaming cascade. WebSocket pings do not count as activity. Set `realtime_idle_timeout_s` in the pipeline YAML or override it with `--realtime-idle-timeout-s`. The server also waits for the first `session.update` up to `realtime_session_update_timeout_s` (default 60 seconds), which can be overridden with `--realtime-session-update-timeout-s`.
@@ -119,6 +119,28 @@ Session settings go in the `sglang` field of `session.update`, before the first 
 Send camera frames with `sglang.input_image.append`: a base64 JPEG or PNG in `image`, and its position on the audio timeline in `sglang.t_ms`. By default up to 4 frames per second are accepted; `session.updated` reports the actual limit.
 
 [Full-Duplex-Bench](full_duplex_bench.md) measures a native full-duplex deployment.
+
+### Application heartbeats
+
+Clients can opt into application-level dead-peer detection in the first `session.update`; existing clients have no heartbeat obligation. The opt-in stays fixed for the connection:
+
+```json
+{"type":"session.update","event_id":"open","session":{"sglang":{"heartbeat":true}}}
+```
+
+Wait for `session.updated` to echo `session.sglang.heartbeat: true`. Its `session.sglang.granted.limits.heartbeat_timeout_s` gives the server's client-contact timeout, which defaults to 30 seconds. Configure it with pipeline YAML `realtime_heartbeat_timeout_s` or override it with `--realtime-heartbeat-timeout-s`; the same pipeline settings apply to direct deployment-factory embedding.
+
+Send a heartbeat when no other application input is being sent, preferably every third of that timeout:
+
+```json
+{"type":"sglang.session.heartbeat","event_id":"heartbeat-1"}
+```
+
+The server answers with `sglang.session.heartbeat_ack` and `client_event_id: "heartbeat-1"`. When no client command is pending, the client should close or reconnect if the acknowledgement does not arrive within its timeout. Heartbeat acknowledgements can wait behind a command already being dispatched; use that command's operation deadline while it is pending. This exchange crosses the application's WebSocket path, including proxies and gateways, without relying on their WebSocket ping/pong handling.
+
+Any received application frame proves peer connectivity; model output and WebSocket ping/pong do not. Missing client contact closes an opted-in connection with error code and close reason `heartbeat_timeout` and WebSocket code `1008`. The peer deadline pauses while a client command is being dispatched, because that command temporarily owns the receive loop; ordinary model processing does not pause it.
+
+Heartbeats and rejected requests do not restart the separate idle timeout. A connected client sending only heartbeats still releases its model session once useful input and model output stop for the configured idle period.
 
 ## Native Full Duplex: PersonaPlex
 

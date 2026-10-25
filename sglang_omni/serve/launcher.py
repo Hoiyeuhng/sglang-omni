@@ -640,6 +640,7 @@ async def run_server(
     enable_realtime: bool = False,
     realtime_session_update_timeout_s: float | None = None,
     realtime_idle_timeout_s: float | None = None,
+    realtime_heartbeat_timeout_s: float | None = None,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
     tts_batch_max_items: int = DEFAULT_TTS_BATCH_MAX_ITEMS,
@@ -656,6 +657,7 @@ async def run_server(
         for timeout_name, timeout_seconds in (
             ("session_update_timeout_s", realtime_session_update_timeout_s),
             ("idle_timeout_s", realtime_idle_timeout_s),
+            ("heartbeat_timeout_s", realtime_heartbeat_timeout_s),
         )
         if timeout_seconds is not None
     }
@@ -899,6 +901,7 @@ def launch_server(
     enable_realtime: bool = False,
     realtime_session_update_timeout_s: float | None = None,
     realtime_idle_timeout_s: float | None = None,
+    realtime_heartbeat_timeout_s: float | None = None,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
     tts_batch_max_items: int = DEFAULT_TTS_BATCH_MAX_ITEMS,
@@ -919,6 +922,7 @@ def launch_server(
             endpoint (OpenAI Realtime API).
         realtime_session_update_timeout_s: Set the timeout for the first session.update, in seconds. To keep the pipeline configuration, use None.
         realtime_idle_timeout_s: Set the idle timeout for shared sessions, in seconds. To keep the pipeline configuration, use None.
+        realtime_heartbeat_timeout_s: Set the client-contact timeout for sessions that opt into heartbeats, in seconds. To keep the pipeline configuration, use None.
         allowed_local_media_path: Directory that local media references in TTS
             requests must resolve inside. ``file://`` references are disabled
             when omitted; bare local paths remain allowed by default but are
@@ -950,6 +954,7 @@ def launch_server(
             enable_realtime=enable_realtime,
             realtime_session_update_timeout_s=realtime_session_update_timeout_s,
             realtime_idle_timeout_s=realtime_idle_timeout_s,
+            realtime_heartbeat_timeout_s=realtime_heartbeat_timeout_s,
             allowed_local_media_path=allowed_local_media_path,
             allowed_media_domains=allowed_media_domains,
             tts_batch_max_items=tts_batch_max_items,

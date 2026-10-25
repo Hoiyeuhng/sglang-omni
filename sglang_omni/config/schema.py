@@ -13,6 +13,7 @@ from pydantic.main import IncEx
 from typing_extensions import Unpack
 
 from sglang_omni.proto.session import (
+    DEFAULT_HEARTBEAT_TIMEOUT_S,
     DEFAULT_IDLE_TIMEOUT_S,
     DEFAULT_MAX_OUTPUT_LEAD_MS,
     DEFAULT_SESSION_UPDATE_TIMEOUT_S,
@@ -782,6 +783,10 @@ class PipelineConfig(BaseModel):
         default=DEFAULT_IDLE_TIMEOUT_S, gt=0, allow_inf_nan=False
     )
     "Seconds without input or output before a shared realtime session closes."
+    realtime_heartbeat_timeout_s: float = Field(
+        default=DEFAULT_HEARTBEAT_TIMEOUT_S, gt=0, allow_inf_nan=False
+    )
+    "Seconds without client contact before an opted-in shared session closes."
     services: list[ServiceConfig] = Field(default_factory=list)
     "The services started in this order before the pipeline, each waited for until its /v1/models answers."
 

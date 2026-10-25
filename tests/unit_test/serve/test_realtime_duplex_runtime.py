@@ -241,6 +241,7 @@ async def open_runtime(
     adapter: GatedAdapter,
     limits: RuntimeLimits | None = None,
     capabilities: Capabilities | None = None,
+    configuration: SessionConfiguration | None = None,
 ) -> AsyncIterator[SessionRuntime]:
     runtime = SessionRuntime(
         MODEL_NAME,
@@ -249,7 +250,7 @@ async def open_runtime(
         limits or RuntimeLimits(),
     )
     async with running_runtime(runtime):
-        await runtime.update({}, "client_update")
+        await runtime.update(configuration or {}, "client_update")
         yield runtime
 
 
@@ -1502,3 +1503,177 @@ async def test_timeout_releases_connection_with_blocked_websocket_send(
     finally:
         connection_task.cancel()
         await asyncio.gather(connection_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_timeout_is_opt_in(fake_clock: FakeClock) -> None:
+    """An existing client is governed only by idle expiry until it opts in."""
+    async with open_runtime(
+        GatedAdapter([]), RuntimeLimits(idle_timeout_s=5, heartbeat_timeout_s=0.5)
+    ) as runtime:
+        await fake_clock.advance(1)
+        assert runtime.state == "OPEN"
+        with pytest.raises(ProtocolError, match="not enabled"):
+            runtime.heartbeat("unexpected")
+
+
+@pytest.mark.asyncio
+async def test_output_does_not_replace_client_heartbeats(fake_clock: FakeClock) -> None:
+    """Continuing model output must not hide a peer that has stopped responding."""
+    adapter = GatedAdapter([])
+    async with open_runtime(
+        adapter,
+        RuntimeLimits(idle_timeout_s=5, heartbeat_timeout_s=0.5),
+        configuration={"sglang": {"heartbeat": True}},
+    ) as runtime:
+        await runtime.emit(ResponseStarted("response"))
+        for _ in range(2):
+            await fake_clock.advance(0.2)
+            await runtime.emit(TextDelta("response", "item", "reply"))
+        await fake_clock.advance(0.2)
+        envelopes = await receive_until(runtime, Closed)
+        assert closing_failure(envelopes) == ("heartbeat_timeout", "heartbeat_timeout")
+        assert adapter.close_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_heartbeats_do_not_extend_idle_timeout(fake_clock: FakeClock) -> None:
+    """Heartbeats prove connectivity without retaining an unused model session."""
+    async with open_runtime(
+        GatedAdapter([]),
+        RuntimeLimits(idle_timeout_s=0.5, heartbeat_timeout_s=1),
+        configuration={"sglang": {"heartbeat": True}},
+    ) as runtime:
+        for sequence in range(2):
+            await fake_clock.advance(0.2)
+            runtime.heartbeat(f"heartbeat_{sequence}")
+        await fake_clock.advance(0.2)
+        await assert_idle_closed(runtime)
+
+
+@pytest.mark.asyncio
+async def test_processing_unit_does_not_suspend_peer_timeout(
+    fake_clock: FakeClock,
+) -> None:
+    """A stalled peer must release a session even while a model unit is running."""
+    adapter = GatedAdapter([])
+    async with open_runtime(
+        adapter,
+        RuntimeLimits(idle_timeout_s=5, heartbeat_timeout_s=0.5),
+        configuration={"sglang": {"heartbeat": True}},
+    ) as runtime:
+        await runtime.append(b"\1" * UNIT_BYTES, 0, None, "append")
+        await adapter.has_started.wait()
+        await fake_clock.advance(0.6)
+        envelopes = await receive_until(runtime, Closed)
+        assert closing_failure(envelopes) == ("heartbeat_timeout", "heartbeat_timeout")
+        assert runtime.pump_task is not None and runtime.pump_task.done()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_starts_after_admission_without_waiting_for_update_deadline(
+    fake_clock: FakeClock,
+) -> None:
+    """A short peer deadline must be checked even when admission had a long deadline."""
+    runtime = SessionRuntime(
+        MODEL_NAME,
+        Capabilities(),
+        lambda: GatedAdapter([]),
+        RuntimeLimits(
+            session_update_timeout_s=60, idle_timeout_s=300, heartbeat_timeout_s=0.5
+        ),
+    )
+    async with running_runtime(runtime):
+        await fake_clock.advance(0)
+        await runtime.update({"sglang": {"heartbeat": True}}, "open")
+        await fake_clock.advance(0.6)
+        envelopes = await receive_until(runtime, Closed)
+        assert closing_failure(envelopes) == ("heartbeat_timeout", "heartbeat_timeout")
+
+
+@pytest.mark.parametrize("reject_update", [False, True])
+@pytest.mark.parametrize("queue_heartbeat", [False, True])
+@pytest.mark.asyncio
+async def test_busy_command_restarts_peer_deadline_after_dispatch(
+    fake_clock: FakeClock, reject_update: bool, queue_heartbeat: bool
+) -> None:
+    """A slow command must leave time for the next peer frame after dispatch."""
+    adapter = GatedUpdateAdapter([])
+    adapter.should_reject_update = reject_update
+    runtime = SessionRuntime(
+        MODEL_NAME,
+        Capabilities(supports_instruction_updates=True),
+        lambda: adapter,
+        RuntimeLimits(idle_timeout_s=5, heartbeat_timeout_s=0.5),
+    )
+    transport = GatedWebSocketTransport(set())
+    websocket = WebSocket(
+        {"type": "websocket"}, receive=transport.receive, send=transport.send
+    )
+    await websocket.accept()
+    connection = asyncio.create_task(SharedRealtimeSession(websocket, runtime).run())
+    try:
+        transport.incoming_messages.put_nowait(
+            {
+                "type": "websocket.receive",
+                "text": json.dumps(
+                    {
+                        "type": "session.update",
+                        "event_id": "open",
+                        "session": {"sglang": {"heartbeat": True}},
+                    }
+                ),
+            }
+        )
+        await fake_clock.advance(0)
+        assert runtime.state == "OPEN"
+        await fake_clock.advance(0.4)
+        transport.incoming_messages.put_nowait(
+            {
+                "type": "websocket.receive",
+                "text": json.dumps(
+                    {
+                        "type": "session.update",
+                        "event_id": "slow_update",
+                        "session": {"instructions": "Updated instructions"},
+                    }
+                ),
+            }
+        )
+        await adapter.has_started.wait()
+        await fake_clock.advance(1)
+        assert runtime.state == "OPEN"
+        if queue_heartbeat:
+            transport.incoming_messages.put_nowait(
+                {
+                    "type": "websocket.receive",
+                    "text": json.dumps(
+                        {
+                            "type": "sglang.session.heartbeat",
+                            "event_id": "queued_heartbeat",
+                        }
+                    ),
+                }
+            )
+        else:
+            pass
+        adapter.release.set()
+        await fake_clock.advance(0)
+        if queue_heartbeat:
+            assert any(
+                event["type"] == "sglang.session.heartbeat_ack"
+                and event["client_event_id"] == "queued_heartbeat"
+                for event in transport.sent_events
+            )
+        else:
+            pass
+        await fake_clock.advance(0.4)
+        assert runtime.state == "OPEN"
+        await fake_clock.advance(0.2)
+        await asyncio.wait_for(connection, TEST_WAIT_TIMEOUT_SECONDS)
+        assert runtime.close_reason == "heartbeat_timeout"
+        assert adapter.close_call_count == 1
+    finally:
+        adapter.release.set()
+        connection.cancel()
+        await asyncio.gather(connection, return_exceptions=True)

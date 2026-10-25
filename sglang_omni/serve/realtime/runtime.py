@@ -20,6 +20,7 @@ from sglang_omni.serve.realtime.constants import (
     CLOSE_REASON_CLEANUP_TIMEOUT,
     CLOSE_REASON_CLIENT_CLOSED,
     CLOSE_REASON_DISCONNECT,
+    CLOSE_REASON_HEARTBEAT_TIMEOUT,
     CLOSE_REASON_IDLE_TIMEOUT,
     CLOSE_REASON_INTERNAL,
     CLOSE_REASON_SESSION_UPDATE_TIMEOUT,
@@ -33,6 +34,7 @@ from sglang_omni.serve.realtime.control import (
     Drained,
     Ended,
     Failure,
+    HeartbeatAcknowledged,
     ImageAccepted,
     UnitCompleted,
     Updated,
@@ -99,6 +101,7 @@ class SessionRuntime:
         self.command_lock = asyncio.Lock()
         self.input_ready = asyncio.Event()
         self.last_activity_seconds: float = time.monotonic()
+        self.last_peer_activity_seconds: float = time.monotonic()
         self.admission_deadline_seconds: float | None = None
         self.is_admitting: bool = False
         self.is_unit_in_flight: bool = False
@@ -143,6 +146,20 @@ class SessionRuntime:
     def mark_activity(self) -> None:
         """Restart the idle timeout."""
         self.last_activity_seconds = time.monotonic()
+
+    def mark_peer_activity(self) -> None:
+        """Record client contact independently of model output and idle activity."""
+        self.last_peer_activity_seconds = time.monotonic()
+
+    def heartbeat(self, event_id: str) -> None:
+        self.require_open()
+        if not self.config.get("sglang", {}).get("heartbeat", False):
+            raise ProtocolError(
+                "not_applicable", "session heartbeat was not enabled at admission"
+            )
+        else:
+            self.mark_peer_activity()
+            self.notify(HeartbeatAcknowledged(event_id))
 
     def start(self) -> None:
         self.admission_deadline_seconds = (
@@ -238,6 +255,7 @@ class SessionRuntime:
                     pass
                 self.state = "OPEN"
                 self.mark_activity()
+                self.mark_peer_activity()
                 self.pump_task = asyncio.create_task(self.pump())
             else:
                 assert self.adapter is not None
@@ -628,9 +646,16 @@ class SessionRuntime:
             self.fail(str(exc), failure_code)
 
     async def watch_activity(self) -> None:
-        # note (Haiyang Luo): OPEN has no wake-up event; cap waits at the idle timeout.
-        maximum_wait_seconds = self.limits.idle_timeout_s
         while self.state in ("CREATED", "OPEN"):
+            is_heartbeat_enabled = self.config.get("sglang", {}).get("heartbeat", False)
+            wait_limit_seconds = self.limits.idle_timeout_s
+            if self.state == "CREATED" or is_heartbeat_enabled:
+                # note (Haiyang Luo): Admission can enable heartbeats without waking this task.
+                wait_limit_seconds = min(
+                    wait_limit_seconds, self.limits.heartbeat_timeout_s
+                )
+            else:
+                pass
             # note (Haiyang Luo): No await between the idle check and CLOSING avoids command races.
             if self.state == "CREATED":
                 timeout_seconds = self.limits.session_update_timeout_s
@@ -643,10 +668,30 @@ class SessionRuntime:
                 remaining_seconds = (
                     self.last_activity_seconds + timeout_seconds - time.monotonic()
                 )
+                if is_heartbeat_enabled and (not self.command_lock.locked()):
+                    peer_remaining_seconds = (
+                        self.last_peer_activity_seconds
+                        + self.limits.heartbeat_timeout_s
+                        - time.monotonic()
+                    )
+                    if peer_remaining_seconds <= 0:
+                        self.state = "CLOSING"
+                        self.fail(
+                            "no client contact within "
+                            f"{self.limits.heartbeat_timeout_s:g}s",
+                            CLOSE_REASON_HEARTBEAT_TIMEOUT,
+                        )
+                        return
+                    else:
+                        wait_limit_seconds = min(
+                            wait_limit_seconds, peer_remaining_seconds
+                        )
+                else:
+                    pass
             if is_busy:
-                await asyncio.sleep(min(timeout_seconds, maximum_wait_seconds))
+                await asyncio.sleep(min(timeout_seconds, wait_limit_seconds))
             elif remaining_seconds > 0:
-                await asyncio.sleep(min(remaining_seconds, maximum_wait_seconds))
+                await asyncio.sleep(min(remaining_seconds, wait_limit_seconds))
             elif self.state == "CREATED":
                 self.expire_admission_if_due()
                 return
