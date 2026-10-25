@@ -94,6 +94,16 @@ When the session ends, the server closes the WebSocket with one of these codes:
 
 For a Python client, see `warmup` in `playground/realtime/app.py`.
 
+The server launcher uses a WebSocket protocol that bounds TCP cleanup after the application exits. If a peer stops reading and the pending writes cannot drain within the protocol's close timeout, the transport is aborted. Applications embedding `create_app()` in Uvicorn should select the same protocol explicitly:
+
+```python
+import uvicorn
+
+from sglang_omni.serve.websocket_protocol import BoundedCloseWebSocketProtocol
+
+uvicorn.run(app, ws=BoundedCloseWebSocketProtocol)
+```
+
 Session settings go in the `sglang` field of `session.update`, before the first audio packet, and stay fixed for the session:
 
 | Setting | Field | Notes |
