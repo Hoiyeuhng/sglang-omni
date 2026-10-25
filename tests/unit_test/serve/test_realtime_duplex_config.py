@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, Literal
 from unittest.mock import MagicMock, patch
@@ -15,15 +16,31 @@ from pydantic import Field
 from typer.testing import CliRunner, Result
 
 from sglang_omni.cli.serve import serve
+from sglang_omni.client.client import Client
 from sglang_omni.config.manager import ConfigManager
 from sglang_omni.config.placement import StagePlacementPlan
 from sglang_omni.config.schema import PipelineConfig, StageConfig
 from sglang_omni.config.topology import ProcessTopologyPlan
+from sglang_omni.models.minicpm_o.native_config import MiniCPMODuplexPipelineConfig
+from sglang_omni.models.nemotron3_5_asr.config import Nemotron3_5ASRPipelineConfig
+from sglang_omni.models.nemotron_voicechat.duplex_config import (
+    NemotronVoiceChatDuplexPipelineConfig,
+)
+from sglang_omni.models.nemotron_voicechat.realtime import (
+    deployment as voicechat_deployment,
+)
+from sglang_omni.models.personaplex.config import PersonaPlexSessionPipelineConfig
 from sglang_omni.models.registry import PIPELINE_CONFIG_REGISTRY
 from sglang_omni.models.streaming_cascade.config import StreamingCascadePipelineConfig
+from sglang_omni.proto.session import SessionLimits
 from sglang_omni.serve.launcher import PipelineUvicornServer, launch_server, run_server
-from sglang_omni.serve.realtime.manager import RealtimeDeployment
+from sglang_omni.serve.openai_api import create_app
+from sglang_omni.serve.realtime.manager import (
+    RealtimeDeployment,
+    runtime_limits_for_pipeline,
+)
 from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits
+from sglang_omni.utils.imports import import_string
 from tests.unit_test.fixtures.realtime_fakes import ScriptedAdapter
 
 TIMEOUT_FIELDS = ["realtime_session_update_timeout_s", "realtime_idle_timeout_s"]
@@ -184,6 +201,14 @@ def test_timeout_configuration_reaches_served_capabilities(
     async def wait_for_pipeline_failure() -> None:
         await asyncio.Event().wait()
 
+    def build_deployment(
+        client: Client, pipeline_config: PipelineConfig
+    ) -> RealtimeDeployment:
+        return replace(
+            deployment,
+            limits=runtime_limits_for_pipeline(pipeline_config, deployment.limits),
+        )
+
     with (
         patch("sglang_omni.serve.launcher.find_available_port", return_value=8000),
         patch(
@@ -191,7 +216,7 @@ def test_timeout_configuration_reaches_served_capabilities(
         ) as runner_factory,
         patch(
             "sglang_omni.serve.launcher.import_string",
-            return_value=lambda client, pipeline_config: deployment,
+            return_value=build_deployment,
         ),
         patch.object(
             PipelineUvicornServer,
@@ -216,6 +241,108 @@ def test_timeout_configuration_reaches_served_capabilities(
         runner.stop.assert_awaited_once()
 
     assert deployment.limits is deployment_limits
+
+
+@pytest.mark.parametrize(
+    ("config_type", "pipeline_timeouts", "expected_timeouts"),
+    [
+        (StreamingCascadePipelineConfig, {}, (60, 21600)),
+        (
+            StreamingCascadePipelineConfig,
+            {"realtime_session_update_timeout_s": 11, "realtime_idle_timeout_s": 47},
+            (11, 47),
+        ),
+        (
+            MiniCPMODuplexPipelineConfig,
+            {"realtime_session_update_timeout_s": 11, "realtime_idle_timeout_s": 47},
+            (11, 47),
+        ),
+        (
+            Nemotron3_5ASRPipelineConfig,
+            {"realtime_session_update_timeout_s": 11, "realtime_idle_timeout_s": 47},
+            (11, 47),
+        ),
+        (
+            NemotronVoiceChatDuplexPipelineConfig,
+            {"realtime_session_update_timeout_s": 11, "realtime_idle_timeout_s": 47},
+            (11, 47),
+        ),
+        (
+            PersonaPlexSessionPipelineConfig,
+            {"realtime_session_update_timeout_s": 11, "realtime_idle_timeout_s": 47},
+            (11, 47),
+        ),
+    ],
+)
+def test_direct_deployment_exposes_pipeline_timeouts(
+    tmp_path: Path,
+    config_type: type[PipelineConfig],
+    pipeline_timeouts: dict[str, float],
+    expected_timeouts: tuple[float, float],
+) -> None:
+    """Embedded apps must receive configured timeouts without the server launcher."""
+    (tmp_path / "voices").mkdir()
+    if config_type is StreamingCascadePipelineConfig:
+        pipeline_config = config_type(
+            model_path=str(tmp_path),
+            session_nodes={"vad": {"stages": ["vad"], "inputs": ["input:pcm16"]}},
+            session_publish={"vad": ["session"]},
+            **pipeline_timeouts,
+        )
+    else:
+        pipeline_config = config_type(model_path=str(tmp_path), **pipeline_timeouts)
+    assert pipeline_config.realtime_deployment_factory is not None
+    client = MagicMock(spec=Client)
+    client.health.return_value = {"running": True}
+    deployment_factory = import_string(pipeline_config.realtime_deployment_factory)
+    deployment = deployment_factory(client, pipeline_config)
+    with TestClient(
+        create_app(
+            client, model_name="direct-deployment", realtime_deployment=deployment
+        )
+    ) as application:
+        response = application.get("/v1/realtime/capabilities")
+    assert response.status_code == 200
+    limits = response.json()["limits"]
+    assert (
+        limits["session_update_timeout_s"],
+        limits["idle_timeout_s"],
+    ) == expected_timeouts
+
+
+@pytest.mark.parametrize("has_pipeline_config", [False, True])
+def test_direct_voicechat_keeps_session_cleanup_limit(
+    has_pipeline_config: bool,
+) -> None:
+    """Applying pipeline timeouts must preserve VoiceChat's session cleanup policy."""
+    if has_pipeline_config:
+        pipeline_config = NemotronVoiceChatDuplexPipelineConfig(
+            model_path="unused",
+            realtime_session_update_timeout_s=11,
+            realtime_idle_timeout_s=47,
+        )
+        expected_timeouts = (11, 47)
+    else:
+        pipeline_config = None
+        expected_timeouts = (60, 300)
+    client = MagicMock(spec=Client)
+    client.health.return_value = {"running": True}
+    deployment = voicechat_deployment(
+        client,
+        pipeline_config,
+        session_limits=SessionLimits(operation_timeout_s=17),
+    )
+    with TestClient(
+        create_app(client, model_name="voicechat", realtime_deployment=deployment)
+    ) as application:
+        response = application.get("/v1/realtime/capabilities")
+    assert response.status_code == 200
+    limits = response.json()["limits"]
+    assert (
+        limits["session_update_timeout_s"],
+        limits["idle_timeout_s"],
+    ) == expected_timeouts
+    assert limits["cleanup_timeout_s"] == 17
 
 
 @pytest.mark.parametrize("field_name", TIMEOUT_FIELDS)
