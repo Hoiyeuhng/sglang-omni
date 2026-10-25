@@ -3,6 +3,12 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from sglang_omni.admission import ContextExhaustedError
+from sglang_omni.serve.realtime.constants import (
+    CLOSE_REASON_BACKEND_TIMEOUT,
+    CLOSE_REASON_INTERNAL,
+)
+
 ResponseStatus = Literal["completed", "cancelled", "failed", "incomplete"]
 
 
@@ -71,6 +77,20 @@ class TurnFailure:
     error_type: str
     code: str
     message: str
+
+    @classmethod
+    def from_exception(cls, error: Exception) -> "TurnFailure":
+        """Keep backend timeout failures distinct without inferring that the client was idle."""
+        if ContextExhaustedError.matches(error):
+            return cls("server_error", ContextExhaustedError.CODE, str(error))
+        elif isinstance(error, TimeoutError):
+            return cls(
+                "server_error",
+                CLOSE_REASON_BACKEND_TIMEOUT,
+                str(error) or "Realtime backend timed out.",
+            )
+        else:
+            return cls("server_error", CLOSE_REASON_INTERNAL, str(error))
 
 
 @dataclass(frozen=True)

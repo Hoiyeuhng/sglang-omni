@@ -3,6 +3,7 @@
 
 import asyncio
 from dataclasses import replace
+from typing import Literal
 
 import numpy as np
 import pytest
@@ -43,6 +44,7 @@ from sglang_omni.serve.realtime.output import (
     AudioDelta,
     AudioFinished,
     InputTranscription,
+    OutputEvent,
     ResponseFinished,
     ResponseHeard,
     ResponseProgress,
@@ -298,6 +300,39 @@ async def test_reader_failure_reports_turn_failure_and_fails_the_next_unit():
     with pytest.raises(RuntimeError, match="output stream closed"):
         await h.bridge.process(unit(0))
     await h.bridge.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "message"),
+    [
+        (TimeoutError(), "backend_timeout", "Realtime backend timed out."),
+        (
+            TimeoutError("session append timed out"),
+            "backend_timeout",
+            "session append timed out",
+        ),
+        (RuntimeError("backend failed"), "internal", "backend failed"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_graph_output_reader_preserves_backend_failure_semantics(
+    error: Exception, code: Literal["backend_timeout", "internal"], message: str
+) -> None:
+    """A graph reader's timeout must retain meaningful semantics without changing other faults."""
+    client = FakeSessionClient()
+    bridge = SessionBridge(client, PORTS)
+    published: asyncio.Queue[OutputEvent] = asyncio.Queue()
+
+    async def publish(event: OutputEvent, unit: Unit | None = None) -> None:
+        published.put_nowait(event)
+
+    await bridge.open("rt", CONFIG, publish)
+    try:
+        client.outputs.put_nowait(error)
+        failure = await asyncio.wait_for(published.get(), 5)
+        assert failure == TurnFailure("server_error", code, message)
+    finally:
+        await bridge.close()
 
 
 @pytest.mark.asyncio

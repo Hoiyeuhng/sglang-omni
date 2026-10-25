@@ -212,7 +212,9 @@ class SessionRuntime:
                     except Exception:
                         self.adapter = adapter
                         raise RuntimeError("admission cleanup failed") from exc
-                    raise ProtocolError("admission_rejected", str(exc)) from exc
+                    raise ProtocolError(
+                        "admission_rejected", TurnFailure.from_exception(exc).message
+                    ) from exc
                 self.adapter = adapter
                 if self.close_task is not None:
                     # Note (Junnan Li): Admission cleanup belongs to the closing owner; do not publish OPEN here.
@@ -545,15 +547,14 @@ class SessionRuntime:
         except ProtocolError as exc:
             self.fail(str(exc), exc.code)
         except Exception as exc:
+            failure = TurnFailure.from_exception(exc)
             if ContextExhaustedError.matches(exc):
                 logger.error(f"Realtime session {self.session_id} closed: {exc}")
-                failure_code = ContextExhaustedError.CODE
             else:
                 logger.exception(
                     f"Realtime session {self.session_id} input pump failed"
                 )
-                failure_code = CLOSE_REASON_INTERNAL
-            self.fail(str(exc), failure_code)
+            self.fail(failure.message, failure.code)
 
     def fail(
         self,
@@ -612,7 +613,9 @@ class SessionRuntime:
                 self.output_buffer.enqueue_terminal(
                     Failure(
                         CLOSE_REASON_CLEANUP_TIMEOUT,
-                        str(cleanup_error)[:MAX_FAILURE_MESSAGE_CHARS],
+                        TurnFailure.from_exception(cleanup_error).message[
+                            :MAX_FAILURE_MESSAGE_CHARS
+                        ],
                         True,
                         event_id,
                     )
