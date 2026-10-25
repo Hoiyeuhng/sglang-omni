@@ -144,7 +144,7 @@ async def test_client_close_releases_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admission_timeout_reports_policy_close_over_socket() -> None:
+async def test_session_update_timeout_reports_policy_close_over_socket() -> None:
     """An initial session.update timeout must close the socket with 1008 policy violation."""
     limits = RuntimeLimits(session_update_timeout_s=ADMISSION_TIMEOUT_SECONDS)
     async with serve_live(limits) as live_server:

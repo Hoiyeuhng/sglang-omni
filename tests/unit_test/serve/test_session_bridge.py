@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from sglang_omni.admission import QueueFullError
+from sglang_omni.config.session_audio import AudioSessionPipelineConfig
 from sglang_omni.models.qwen3_omni.session_node import SESSION_PORTS as QWEN3_OMNI_PORTS
 from sglang_omni.proto.session import SessionLimits
 from sglang_omni.proto.streams import (
@@ -56,6 +57,7 @@ from sglang_omni.serve.realtime.output import (
 )
 from sglang_omni.serve.realtime.runtime import SessionRuntime
 from sglang_omni.serve.realtime.session_bridge import SessionBridge, capabilities_of
+from sglang_omni.serve.realtime.session_deployment import build_realtime_deployment
 from sglang_omni.serve.realtime.types import ProtocolError, RuntimeLimits, Unit
 from tests.unit_test.fixtures.session_client import PORTS, FakeSessionClient
 
@@ -104,6 +106,42 @@ async def test_runtime_limits_raise_pipeline_idle_backup_before_open() -> None:
         assert session_limits.max_output_chunks == 7
     finally:
         await harness.bridge.close()
+
+
+@pytest.mark.parametrize(
+    ("configured_idle_seconds", "runtime_idle_seconds", "pipeline_idle_seconds"),
+    [(7200, 20, 7200), (10, 300, 930)],
+)
+@pytest.mark.asyncio
+async def test_configured_idle_limit_reaches_pipeline_session(
+    configured_idle_seconds: float,
+    runtime_idle_seconds: float,
+    pipeline_idle_seconds: float,
+) -> None:
+    """Audio graph overrides must reach the pipeline without racing runtime expiry."""
+    pipeline_config = AudioSessionPipelineConfig(
+        model_path="unused",
+        session_nodes={"vad": {"stages": ["vad"], "inputs": ["input:pcm16"]}},
+        session_publish={"vad": ["session"]},
+        realtime_idle_timeout_s=configured_idle_seconds,
+    )
+    client = FakeSessionClient()
+    deployment = build_realtime_deployment(client, pipeline_config)
+    runtime = SessionRuntime(
+        "configured-graph",
+        deployment.capabilities,
+        deployment.adapter_factory,
+        replace(deployment.limits, idle_timeout_s=runtime_idle_seconds),
+    )
+    runtime.start()
+    try:
+        await runtime.update({}, "open")
+        session_limits = client.opened[0][1]
+        assert isinstance(session_limits, SessionLimits)
+        assert session_limits.idle_timeout_s == pipeline_idle_seconds
+        assert session_limits.idle_timeout_s > runtime_idle_seconds
+    finally:
+        await runtime.close("client_closed")
 
 
 @pytest.mark.asyncio
