@@ -119,6 +119,10 @@ class SharedRealtimeSession:
                 pass
             self.runtime.output_buffer.before_send(envelope)
             await self.websocket.send_text(json.dumps(server_event, allow_nan=False))
+            if not isinstance(envelope.event, ControlEvent):
+                self.runtime.mark_activity()
+            else:
+                pass
             self.runtime.output_buffer.sent(envelope)
         close_reason = self.runtime.close_reason
         assert close_reason is not None

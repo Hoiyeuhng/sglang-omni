@@ -104,7 +104,7 @@ When the session ends, the server closes the WebSocket with one of these codes:
 | `1008` | A server limit was reached | `session_update_timeout`, `idle_timeout`, `context_exhausted` |
 | `1011` | Server error | For example `internal` or `cleanup_timeout` |
 
-If a session has no input and no output for 300 seconds, the server closes it with `idle_timeout`. WebSocket pings do not count, so keep sending audio (silence is fine) during long pauses, or raise `--realtime-idle-timeout-s`. The server also waits at most 60 seconds for the first `session.update` (`--realtime-admission-timeout-s`).
+If a session has no input and no output for `realtime_idle_timeout_s`, the server closes it with `idle_timeout`. The pipeline configuration defaults to 300 seconds for native sessions and 6 hours for audio Session graphs, including the streaming cascade. WebSocket pings do not count as activity. Set `realtime_idle_timeout_s` in the pipeline YAML or override it with `--realtime-idle-timeout-s`. The server also waits for the first `session.update` up to `realtime_session_update_timeout_s` (default 60 seconds), which can be overridden with `--realtime-session-update-timeout-s`.
 
 For a Python client, see `warmup` in `playground/realtime/app.py`.
 

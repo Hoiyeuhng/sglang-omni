@@ -20,12 +20,13 @@ from sglang_omni.config.placement import StagePlacementPlan
 from sglang_omni.config.schema import PipelineConfig, StageConfig
 from sglang_omni.config.topology import ProcessTopologyPlan
 from sglang_omni.models.registry import PIPELINE_CONFIG_REGISTRY
+from sglang_omni.models.streaming_cascade.config import StreamingCascadePipelineConfig
 from sglang_omni.serve.launcher import PipelineUvicornServer, launch_server, run_server
 from sglang_omni.serve.realtime.manager import RealtimeDeployment
 from sglang_omni.serve.realtime.types import Capabilities, RuntimeLimits
 from tests.unit_test.fixtures.realtime_fakes import ScriptedAdapter
 
-TIMEOUT_FIELDS = ["realtime_admission_timeout_s", "realtime_idle_timeout_s"]
+TIMEOUT_FIELDS = ["realtime_session_update_timeout_s", "realtime_idle_timeout_s"]
 INVALID_TIMEOUTS = ["0", "-1", "nan", "inf", "-inf"]
 
 
@@ -50,6 +51,9 @@ def config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setitem(
         PIPELINE_CONFIG_REGISTRY.configs, "duplex-test", DuplexPipelineConfig
     )
+    monkeypatch.setitem(
+        PIPELINE_CONFIG_REGISTRY.configs, "cascade-test", StreamingCascadePipelineConfig
+    )
     config_path = tmp_path / "duplex.yaml"
     config_path.write_text(
         "config_cls: DuplexPipelineConfig\nmodel_path: duplex-test\n"
@@ -69,7 +73,7 @@ def cli_app() -> typer.Typer:
 def invoke_serve(
     cli_app: typer.Typer, config_file: Path, options: list[str]
 ) -> tuple[Result, MagicMock]:
-    """Run `serve` with a realtime config, returning the result and the launch_server mock."""
+    """Run serve with a realtime config and capture the requested launch."""
     with patch("sglang_omni.cli.serve.launch_server") as requested_launch:
         result = CliRunner().invoke(
             cli_app, ["--config", str(config_file), "--enable-realtime", *options]
@@ -78,44 +82,83 @@ def invoke_serve(
 
 
 @pytest.mark.parametrize(
-    ("cli_timeouts", "deployment_limits", "expected_timeouts"),
+    ("config_type", "pipeline_timeouts", "cli_timeouts", "expected_timeouts"),
     [
-        ([], RuntimeLimits(), (60, 300)),
+        (DuplexPipelineConfig, {}, [], (60, 300)),
         (
+            DuplexPipelineConfig,
+            {"realtime_session_update_timeout_s": 15, "realtime_idle_timeout_s": 45},
             [],
-            RuntimeLimits(session_update_timeout_s=15, idle_timeout_s=45),
             (15, 45),
         ),
         (
+            DuplexPipelineConfig,
+            {"realtime_session_update_timeout_s": 15, "realtime_idle_timeout_s": 45},
             [
-                "--realtime-admission-timeout-s",
+                "--realtime-session-update-timeout-s",
                 "20",
                 "--realtime-idle-timeout-s",
                 "120",
             ],
-            RuntimeLimits(max_output_bytes=4096),
             (20, 120),
         ),
         (
+            DuplexPipelineConfig,
+            {"realtime_session_update_timeout_s": 15, "realtime_idle_timeout_s": 45},
             ["--realtime-idle-timeout-s", "600"],
-            RuntimeLimits(session_update_timeout_s=15),
             (15, 600),
         ),
         (
-            ["--realtime-admission-timeout-s", "20"],
-            RuntimeLimits(idle_timeout_s=45),
+            DuplexPipelineConfig,
+            {"realtime_session_update_timeout_s": 15, "realtime_idle_timeout_s": 45},
+            ["--realtime-session-update-timeout-s", "20"],
             (20, 45),
+        ),
+        (StreamingCascadePipelineConfig, {}, [], (60, 21600)),
+        (
+            StreamingCascadePipelineConfig,
+            {"realtime_idle_timeout_s": 900},
+            [],
+            (60, 900),
+        ),
+        (
+            StreamingCascadePipelineConfig,
+            {},
+            ["--realtime-idle-timeout-s", "30"],
+            (60, 30),
         ),
     ],
 )
 def test_timeout_configuration_reaches_served_capabilities(
     config_file: Path,
     cli_app: typer.Typer,
+    config_type: type[PipelineConfig],
+    pipeline_timeouts: dict[str, float],
     cli_timeouts: list[str],
-    deployment_limits: RuntimeLimits,
     expected_timeouts: tuple[float, float],
 ) -> None:
+    """The served limits must honor CLI, YAML and pipeline defaults in that order."""
+    config_text = f"config_cls: {config_type.__name__}\nmodel_path: duplex-test\n"
+    if config_type is StreamingCascadePipelineConfig:
+        config_text += (
+            "session_nodes:\n"
+            "  vad: {stages: [vad], inputs: ['input:pcm16']}\n"
+            "session_publish: {vad: [session]}\n"
+        )
+    else:
+        pass
+    config_text += "".join(
+        f"{field_name}: {timeout_seconds}\n"
+        for field_name, timeout_seconds in pipeline_timeouts.items()
+    )
+    config_file.write_text(config_text)
     adapter = ScriptedAdapter()
+    deployment_limits = RuntimeLimits(
+        session_update_timeout_s=8,
+        idle_timeout_s=9,
+        cleanup_timeout_s=17,
+        max_output_bytes=4096,
+    )
     deployment = RealtimeDeployment(
         capabilities=Capabilities(),
         adapter_factory=lambda: adapter,
@@ -136,6 +179,7 @@ def test_timeout_configuration_reaches_served_capabilities(
             limits["idle_timeout_s"],
         ) == expected_timeouts
         assert limits["max_output_bytes"] == deployment_limits.max_output_bytes
+        assert limits["cleanup_timeout_s"] == deployment_limits.cleanup_timeout_s
 
     async def wait_for_pipeline_failure() -> None:
         await asyncio.Event().wait()
@@ -241,10 +285,14 @@ def test_unsupported_timeout_overrides_fail_before_pipeline_start(
 
 
 @pytest.mark.parametrize("field_name", TIMEOUT_FIELDS)
-def test_serving_timeouts_are_not_pipeline_yaml_fields(
-    config_file: Path, field_name: str
+@pytest.mark.parametrize("invalid_timeout", INVALID_TIMEOUTS)
+def test_pipeline_rejects_invalid_timeouts(
+    config_file: Path, field_name: str, invalid_timeout: str
 ) -> None:
-    config_file.write_text(config_file.read_text() + f"{field_name}: 20\n")
+    """Invalid YAML timeouts must fail before a pipeline can start."""
+    config_file.write_text(
+        config_file.read_text() + f"{field_name}: {invalid_timeout}\n"
+    )
     with pytest.raises(ValueError, match=field_name):
         ConfigManager.from_file(str(config_file))
 

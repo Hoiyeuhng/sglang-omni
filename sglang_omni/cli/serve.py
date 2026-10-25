@@ -476,15 +476,15 @@ def serve(
             help="Report ready without sending the pipeline's warmup requests first.",
         ),
     ] = False,
-    realtime_admission_timeout_s: Annotated[
+    realtime_session_update_timeout_s: Annotated[
         float | None,
         typer.Option(
-            "--realtime-admission-timeout-s",
+            "--realtime-session-update-timeout-s",
             callback=validate_realtime_timeout,
             help=(
-                "Set the admission timeout for shared sessions, in seconds. "
+                "Set the timeout for the first session.update, in seconds. "
                 "Use --enable-realtime with this option. "
-                "If you do not set this option, the server uses the deployment limit."
+                "If you do not set this option, the server uses the pipeline configuration."
             ),
         ),
     ] = None,
@@ -496,7 +496,7 @@ def serve(
             help=(
                 "Set the idle timeout for shared sessions, in seconds. "
                 "Use --enable-realtime with this option. "
-                "If you do not set this option, the server uses the deployment limit."
+                "If you do not set this option, the server uses the pipeline configuration."
             ),
         ),
     ] = None,
@@ -617,7 +617,7 @@ def serve(
         model_name=model_name,
         log_level=log_level,
         enable_realtime=enable_realtime,
-        realtime_admission_timeout_s=realtime_admission_timeout_s,
+        realtime_session_update_timeout_s=realtime_session_update_timeout_s,
         realtime_idle_timeout_s=realtime_idle_timeout_s,
         allowed_local_media_path=validate_allowed_local_media_path(
             allowed_local_media_path

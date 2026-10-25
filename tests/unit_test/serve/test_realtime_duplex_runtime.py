@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from starlette.types import Message
+from starlette.websockets import WebSocket
 
 import sglang_omni.serve.realtime.runtime as runtime_module
 from sglang_omni.profiler.duplex_events import SessionUnitReadyObservation
@@ -37,6 +40,8 @@ from sglang_omni.serve.realtime.output_buffer import (
     OutputBuffer,
     envelope_size_bytes,
 )
+from sglang_omni.serve.realtime.projection import ServerEvent
+from sglang_omni.serve.realtime.protocol import SharedRealtimeSession
 from sglang_omni.serve.realtime.runtime import SessionRuntime
 from sglang_omni.serve.realtime.schema import SessionConfiguration
 from sglang_omni.serve.realtime.types import (
@@ -151,6 +156,49 @@ class RejectedOpenAdapter(GatedAdmissionAdapter):
     async def close(self) -> None:
         self.cleanup_started.set()
         await self.cleanup_release.wait()
+
+
+class GatedWebSocketTransport:
+    def __init__(self, gated_event_types: set[str]) -> None:
+        self.gated_event_types = gated_event_types
+        self.sent_events: list[ServerEvent] = []
+        self.send_started: asyncio.Queue[ServerEvent] = asyncio.Queue()
+        self.send_releases: asyncio.Queue[None] = asyncio.Queue()
+        self.close_frame: tuple[int, str] | None = None
+
+    async def receive(self) -> Message:
+        return {"type": "websocket.connect"}
+
+    async def send(self, message: Message) -> None:
+        if message["type"] == "websocket.send":
+            server_event: ServerEvent = json.loads(message["text"])
+            if server_event["type"] in self.gated_event_types:
+                self.send_started.put_nowait(server_event)
+                await self.send_releases.get()
+            else:
+                pass
+            self.sent_events.append(server_event)
+        elif message["type"] == "websocket.close":
+            self.close_frame = (message["code"], message["reason"])
+        else:
+            pass
+
+
+@asynccontextmanager
+async def sending_session(
+    runtime: SessionRuntime, gated_event_types: set[str]
+) -> AsyncIterator[tuple[GatedWebSocketTransport, asyncio.Task[None]]]:
+    transport = GatedWebSocketTransport(gated_event_types)
+    websocket = WebSocket(
+        {"type": "websocket"}, receive=transport.receive, send=transport.send
+    )
+    await websocket.accept()
+    sender = asyncio.create_task(SharedRealtimeSession(websocket, runtime).send())
+    try:
+        yield transport, sender
+    finally:
+        sender.cancel()
+        await asyncio.gather(sender, return_exceptions=True)
 
 
 @asynccontextmanager
@@ -830,7 +878,7 @@ async def advance_past_deadline(
 
 
 @pytest.mark.asyncio
-async def test_slow_pipeline_open_is_not_an_admission_timeout(
+async def test_slow_pipeline_open_is_not_a_session_update_timeout(
     fake_clock: FakeClock,
 ) -> None:
     adapter = GatedAdmissionAdapter([])
@@ -1047,6 +1095,131 @@ async def test_asynchronous_output_restarts_idle_timeout(fake_clock: FakeClock) 
         assert runtime.state == "OPEN"
         await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.5)
         await assert_idle_closed(runtime)
+
+
+@pytest.mark.asyncio
+async def test_queued_audio_delivery_restarts_idle_timeout(
+    fake_clock: FakeClock,
+) -> None:
+    """Buffered audio must finish delivery when socket progress outlasts production."""
+    adapter = GatedAdapter([])
+    audio_chunks = [b"\1\2", b"\3\4", b"\5\6"]
+    async with open_runtime(
+        adapter, ACTIVITY_LIMITS, Capabilities(output_modalities=("audio",))
+    ) as runtime:
+        assert adapter.output_sink is not None
+        await adapter.output_sink(ResponseStarted("response_0"))
+        for pcm in audio_chunks:
+            await adapter.output_sink(AudioDelta("response_0", "item_0", pcm))
+        await adapter.output_sink(AudioFinished("response_0", "item_0"))
+        await adapter.output_sink(
+            ResponseFinished("response_0", "item_0", "", True, "completed", "stop")
+        )
+
+        async with sending_session(runtime, {"response.output_audio.delta"}) as (
+            transport,
+            sender,
+        ):
+            for pcm in audio_chunks:
+                event = await asyncio.wait_for(
+                    transport.send_started.get(), TEST_WAIT_TIMEOUT_SECONDS
+                )
+                assert base64.b64decode(event["delta"]) == pcm
+                await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.75)
+                assert runtime.state == "OPEN"
+                transport.send_releases.put_nowait(None)
+                await fake_clock.advance(0)
+
+            assert [
+                base64.b64decode(event["delta"])
+                for event in transport.sent_events
+                if event["type"] == "response.output_audio.delta"
+            ] == audio_chunks
+            assert [
+                event["type"]
+                for event in transport.sent_events
+                if event["type"].startswith("response.")
+            ] == [
+                "response.created",
+                "response.output_audio.delta",
+                "response.output_audio.delta",
+                "response.output_audio.delta",
+                "response.output_audio.done",
+                "response.done",
+            ]
+            assert transport.sent_events[-1]["response"]["status"] == "completed"
+            await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.75)
+            assert runtime.state == "OPEN"
+            await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.5)
+            await asyncio.wait_for(sender, TEST_WAIT_TIMEOUT_SECONDS)
+            assert transport.close_frame == (1008, "idle_timeout")
+
+
+@pytest.mark.asyncio
+async def test_stalled_audio_send_with_queued_output_still_expires(
+    fake_clock: FakeClock,
+) -> None:
+    """An unfinished socket send must not keep queued audio and adapter resources alive."""
+    adapter = GatedAdapter([])
+    async with open_runtime(
+        adapter, ACTIVITY_LIMITS, Capabilities(output_modalities=("audio",))
+    ) as runtime:
+        assert adapter.output_sink is not None
+        await adapter.output_sink(ResponseStarted("response_0"))
+        await adapter.output_sink(AudioDelta("response_0", "item_0", b"\1\2"))
+        await adapter.output_sink(AudioDelta("response_0", "item_0", b"\3\4"))
+        async with sending_session(runtime, {"response.output_audio.delta"}) as (
+            transport,
+            sender,
+        ):
+            await asyncio.wait_for(
+                transport.send_started.get(), TEST_WAIT_TIMEOUT_SECONDS
+            )
+            await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 1.25)
+
+            assert runtime.state == "CLOSED"
+            assert runtime.close_reason == "idle_timeout"
+            assert adapter.close_call_count == 1
+            assert not sender.done()
+
+            transport.send_releases.put_nowait(None)
+            await asyncio.wait_for(sender, TEST_WAIT_TIMEOUT_SECONDS)
+            assert [
+                base64.b64decode(event["delta"])
+                for event in transport.sent_events
+                if event["type"] == "response.output_audio.delta"
+            ] == [b"\1\2"]
+            assert transport.close_frame == (1008, "idle_timeout")
+
+
+@pytest.mark.asyncio
+async def test_error_delivery_does_not_restart_idle_timeout(
+    fake_clock: FakeClock,
+) -> None:
+    """Sending rejection errors must not extend an otherwise idle session."""
+    adapter = GatedAdapter([])
+    async with open_runtime(adapter, ACTIVITY_LIMITS) as runtime:
+        async with sending_session(runtime, {"error"}) as (transport, sender):
+            await fake_clock.advance(0)
+            for _ in range(2):
+                await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.25)
+                runtime.notify(Failure("invalid_request", "invalid command", False))
+                event = await asyncio.wait_for(
+                    transport.send_started.get(), TEST_WAIT_TIMEOUT_SECONDS
+                )
+                assert event["error"]["code"] == "invalid_request"
+                transport.send_releases.put_nowait(None)
+                await fake_clock.advance(0)
+
+            await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.75)
+            assert runtime.state == "CLOSED"
+            event = await asyncio.wait_for(
+                transport.send_started.get(), TEST_WAIT_TIMEOUT_SECONDS
+            )
+            assert event["error"]["code"] == "idle_timeout"
+            transport.send_releases.put_nowait(None)
+            await asyncio.wait_for(sender, TEST_WAIT_TIMEOUT_SECONDS)
+            assert transport.close_frame == (1008, "idle_timeout")
 
 
 @pytest.mark.asyncio
