@@ -651,24 +651,19 @@ async def run_server(
     """
     export_media_policy(allowed_local_media_path, allowed_media_domains)
     deployment_factory = type(pipeline_config).realtime_deployment_factory
-    realtime_timeouts_seconds = {
-        "session_update_timeout_s": (
-            pipeline_config.realtime_session_update_timeout_s
-            if realtime_session_update_timeout_s is None
-            else realtime_session_update_timeout_s
-        ),
-        "idle_timeout_s": (
-            pipeline_config.realtime_idle_timeout_s
-            if realtime_idle_timeout_s is None
-            else realtime_idle_timeout_s
-        ),
+    realtime_timeout_overrides_seconds = {
+        timeout_name: timeout_seconds
+        for timeout_name, timeout_seconds in (
+            ("session_update_timeout_s", realtime_session_update_timeout_s),
+            ("idle_timeout_s", realtime_idle_timeout_s),
+        )
+        if timeout_seconds is not None
     }
     # note (Haiyang Luo): Validate overrides before starting any pipeline process.
-    RuntimeLimits(**realtime_timeouts_seconds)
-    if (
-        realtime_session_update_timeout_s is not None
-        or realtime_idle_timeout_s is not None
-    ) and (not enable_realtime or deployment_factory is None):
+    RuntimeLimits(**realtime_timeout_overrides_seconds)
+    if realtime_timeout_overrides_seconds and (
+        not enable_realtime or deployment_factory is None
+    ):
         raise ValueError(
             "Realtime timeout overrides require --enable-realtime and a pipeline "
             "with a shared duplex realtime deployment"
@@ -727,13 +722,16 @@ async def run_server(
                 realtime_deployment: RealtimeDeployment | None = import_string(
                     deployment_factory
                 )(client, pipeline_config)
-                realtime_deployment = replace(
-                    realtime_deployment,
-                    limits=replace(
-                        realtime_deployment.limits,
-                        **realtime_timeouts_seconds,
-                    ),
-                )
+                if realtime_timeout_overrides_seconds:
+                    realtime_deployment = replace(
+                        realtime_deployment,
+                        limits=replace(
+                            realtime_deployment.limits,
+                            **realtime_timeout_overrides_seconds,
+                        ),
+                    )
+                else:
+                    pass
             else:
                 realtime_deployment = None
             app = create_app(

@@ -160,7 +160,7 @@ class RejectedOpenAdapter(GatedAdmissionAdapter):
 
 class GatedWebSocketTransport:
     def __init__(self, gated_event_types: set[str]) -> None:
-        self.gated_event_types = gated_event_types
+        self.gated_event_types: set[str] = gated_event_types
         self.sent_events: list[ServerEvent] = []
         self.send_started: asyncio.Queue[ServerEvent] = asyncio.Queue()
         self.send_releases: asyncio.Queue[None] = asyncio.Queue()
