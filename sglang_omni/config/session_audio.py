@@ -184,7 +184,7 @@ class AudioSessionPipelineConfig(PipelineConfig):
     def session_limits(self) -> SessionLimits:
         return SessionLimits(
             operation_timeout_s=REALTIME_OPERATION_TIMEOUT_S,
-            idle_timeout_s=self.realtime_idle_timeout_s,
+            idle_timeout_s=REALTIME_IDLE_TIMEOUT_S,
             max_pending_chunks=REALTIME_MAX_PENDING_CHUNKS,
             max_output_chunks=self.max_pending_output_chunks,
             max_output_bytes=self.max_pending_output_bytes,
