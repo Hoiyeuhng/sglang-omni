@@ -155,7 +155,7 @@ class CommandAdapter(GatedAdapter):
     async def cancel(self) -> None:
         pass
 
-    async def truncate(self, audio_end_ms: float) -> None:
+    async def truncate(self, item_id: str, audio_end_ms: float) -> None:
         pass
 
 
@@ -1065,7 +1065,7 @@ async def test_client_commands_restart_idle_timeout(
         elif command == "cancel":
             await runtime.cancel()
         else:
-            await runtime.truncate(0.0)
+            await runtime.truncate("item_1", 0.0)
         await fake_clock.advance(0)
 
         await fake_clock.advance(ACTIVITY_TIMEOUT_SECONDS * 0.75)
